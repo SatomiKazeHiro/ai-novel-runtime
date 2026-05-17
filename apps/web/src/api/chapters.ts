@@ -1,0 +1,34 @@
+import { api } from '../utils/api'
+
+export interface ChapterCreate {
+  title: string
+  outline?: string
+}
+
+export interface ChapterUpdate {
+  title?: string
+  outline?: string
+  content?: string
+  status?: string
+  sceneLocation?: string
+  sceneMood?: string
+  sceneGoal?: string
+}
+
+export const chaptersApi = {
+  list: (storyId: string) => api.get(`/api/stories/${storyId}/chapters`),
+  get: (chapterId: string) => api.get(`/api/chapters/${chapterId}`),
+  create: (storyId: string, data: ChapterCreate) => api.post(`/api/stories/${storyId}/chapters`, data),
+  update: (chapterId: string, data: ChapterUpdate) => api.put(`/api/chapters/${chapterId}`, data),
+  remove: (chapterId: string) => api.delete(`/api/chapters/${chapterId}`),
+  preview: (chapterId: string, data: any) => api.post(`/api/chapters/${chapterId}/preview`, data),
+  generate: (chapterId: string, data: any) => api.post(`/api/chapters/${chapterId}/generate`, data, { timeout: 120000 }),
+  selectDraft: (chapterId: string, draftId: string) => api.post(`/api/chapters/${chapterId}/select`, { draftId }),
+  archive: (chapterId: string) => api.post(`/api/chapters/${chapterId}/archive`)
+}
+
+export const draftsApi = {
+  list: (chapterId: string) => api.get(`/api/chapters/${chapterId}/drafts`),
+  get: (draftId: string) => api.get(`/api/drafts/${draftId}`),
+  score: (draftId: string) => api.post(`/api/drafts/${draftId}/score`)
+}

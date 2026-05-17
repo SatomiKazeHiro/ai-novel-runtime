@@ -1,0 +1,37 @@
+{
+  "name": "@novel-runtime/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.0",
+    "@fastify/env": "^5.0.0",
+    "@fastify/swagger": "^9.0.0",
+    "@fastify/swagger-ui": "^5.0.0",
+    "@novel-runtime/ai-provider": "workspace:*",
+    "@novel-runtime/knowledge-graph": "workspace:*",
+    "@novel-runtime/memory-engine": "workspace:*",
+    "@novel-runtime/prompt-runtime": "workspace:*",
+    "@novel-runtime/scoring-engine": "workspace:*",
+    "@novel-runtime/shared": "workspace:*",
+    "bullmq": "^5.76.8",
+    "dotenv": "^16.4.0",
+    "fastify": "^5.0.0",
+    "fastify-plugin": "^5.0.0",
+    "ioredis": "^5.10.1",
+    "js-tiktoken": "^1.0.21",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

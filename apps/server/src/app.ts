@@ -1,0 +1,71 @@
+import Fastify from 'fastify'
+import cors from '@fastify/cors'
+import swagger from '@fastify/swagger'
+import swaggerUi from '@fastify/swagger-ui'
+import { prismaPlugin } from './plugins/prisma.js'
+import { healthRoutes } from './routes/health.js'
+import { storyRoutes } from './routes/stories.js'
+import { characterRoutes } from './routes/characters.js'
+import { loreRoutes } from './routes/lore.js'
+import { timelineRoutes } from './routes/timeline.js'
+import { chapterRoutes } from './routes/chapters.js'
+import { draftRoutes } from './routes/drafts.js'
+import { graphRoutes } from './routes/graph.js'
+import { memoryRoutes } from './routes/memories.js'
+import { scoreRoutes } from './routes/scores.js'
+import { runtimeProfileRoutes } from './routes/runtime-profile.js'
+import { workerTaskRoutes } from './routes/worker-task.js'
+import { initAiProviderConfig } from './services/ai-provider-init.js'
+import { createGenerateProcessor } from './services/generate-processor.js'
+import { registerGenerateProcessor } from './queue/index.js'
+
+export async function buildApp() {
+  const app = Fastify({
+    logger: true
+  })
+
+  // Plugins
+  await app.register(cors, { origin: true })
+  await app.register(swagger, {
+    openapi: {
+      info: {
+        title: 'AI Novel Runtime API',
+        description: 'API documentation for AI Novel Runtime',
+        version: '0.1.0'
+      }
+    }
+  })
+  await app.register(swaggerUi, { routePrefix: '/documentation' })
+  await app.register(prismaPlugin)
+
+  // Init AI Provider config from env
+  await initAiProviderConfig(app)
+
+  // Register queue processors
+  registerGenerateProcessor(createGenerateProcessor(app))
+
+  // Routes
+  await app.register(healthRoutes, { prefix: '/api/health' })
+  await app.register(storyRoutes, { prefix: '/api/stories' })
+  await app.register(characterRoutes)
+  await app.register(loreRoutes)
+  await app.register(timelineRoutes)
+  await app.register(chapterRoutes)
+  await app.register(draftRoutes)
+  await app.register(graphRoutes)
+  await app.register(memoryRoutes)
+  await app.register(scoreRoutes)
+  await app.register(runtimeProfileRoutes)
+  await app.register(workerTaskRoutes)
+
+  // Global error handler
+  app.setErrorHandler((error: any, request, reply) => {
+    app.log.error(error)
+    reply.status(error.statusCode || 500).send({
+      success: false,
+      error: error.message || 'Internal Server Error'
+    })
+  })
+
+  return app
+}
