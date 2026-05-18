@@ -25,12 +25,7 @@ export class RuleBasedScorer {
 export class AIScorer {
   async score(text: string, context: any): Promise<Partial<ScoreResult>> {
     // TODO: integrate AI provider for real scoring
-    return {
-      styleSimilarity: 75 + Math.random() * 20,
-      emotionalTension: 70 + Math.random() * 25,
-      pacing: 72 + Math.random() * 20,
-      proseQuality: 78 + Math.random() * 18
-    }
+    throw new Error('AIScorer not yet implemented')
   }
 }
 

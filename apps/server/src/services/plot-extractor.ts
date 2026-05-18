@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify'
-import { createProvider, RuntimePromptCompiler } from '@novel-runtime/ai-provider'
+import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
+import { cleanJsonBlock } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
+import { callAIWithLog } from './ai-call-logger.js'
 
 export interface PlotArcAnalysis {
   arcs: Array<{
@@ -33,25 +35,7 @@ export async function extractPlotArcs(
     orderBy: { updatedAt: 'desc' }
   })
 
-  // 2. 获取 AI Provider
-  const aiConfig = await prisma.aiProviderConfig.findFirst({ where: { isDefault: true } })
-  const provider = aiConfig
-    ? createProvider({
-        name: aiConfig.name,
-        apiKey: aiConfig.apiKey || undefined,
-        baseUrl: aiConfig.baseUrl || undefined,
-        model: aiConfig.model,
-        maxTokens: aiConfig.maxTokens,
-        temperature: aiConfig.temperature
-      })
-    : null
-
-  if (!provider?.generateWithRuntime) {
-    app.log.warn('[PlotExtractor] No provider configured, skipping plot arc extraction')
-    return null
-  }
-
-  // 3. 构建提示
+  // 2. 构建提示
   const existingArcsText = existingArcs.length > 0
     ? existingArcs.map(a => {
         const stages = JSON.parse(a.stages || '[]')
@@ -65,7 +49,7 @@ export async function extractPlotArcs(
 1. 如果章节推进了某个已有弧线，更新其进度和阶段
 2. 如果章节开启了全新剧情线，创建新弧线
 3. 区分主线（推动整体故事）和支线（角色个人线/旁支）
-4. 标注未解悬念（成昆逃去哪了？赵敏下一步做什么？）
+4. 标注未解悬念（反派的真实去向？主角下一步计划是什么？）
 
 现有弧线：
 ${existingArcsText}
@@ -98,59 +82,71 @@ ${content.slice(0, 5000)}
     const compiler = new RuntimePromptCompiler()
     const compiled = compiler.compile(base, task, extractPrompt)
 
-    const raw = await provider.generateWithRuntime(compiled, {
-      temperature: 0.3,
-      maxTokens: 2048
+    const raw = await callAIWithLog(app, {
+      storyId, chapterId, callType: 'plot_extract',
+      compiled, temperature: 0.3, maxTokens: 2048
     })
+    if (!raw) return null
 
-    const jsonStr = raw.replace(/```json\s*/g, '').replace(/```\s*$/g, '').trim()
-    const result: PlotArcAnalysis = JSON.parse(jsonStr)
+    const result: PlotArcAnalysis = JSON.parse(cleanJsonBlock(raw))
 
     // 4. 保存到数据库
-    for (const arc of result.arcs || []) {
-      const existing = await prisma.plotArc.findFirst({
-        where: { storyId, name: arc.name }
-      })
-
-      const stages = existing
-        ? JSON.parse(existing.stages || '[]')
-        : []
-
-      // 如果当前阶段是新的，添加到 stages 列表
-      if (arc.currentStage && !stages.some((s: any) => s.stage === arc.currentStage)) {
-        stages.push({ stage: arc.currentStage, completed: arc.status === 'completed', description: arc.summary })
-      }
-
-      const data = {
-        type: arc.type,
-        status: arc.status,
-        progress: arc.progress,
-        stages: JSON.stringify(stages),
-        currentStage: arc.currentStage,
-        nextGoal: arc.nextGoal,
-        unresolved: JSON.stringify(arc.unresolved || []),
-        summary: arc.summary
-      }
-
-      if (existing) {
-        await prisma.plotArc.update({ where: { id: existing.id }, data })
-        app.log.info(`[PlotExtractor] Updated arc: ${arc.name} -> ${arc.status} ${arc.progress}%`)
-      } else {
-        await prisma.plotArc.create({
-          data: {
-            storyId,
-            name: arc.name,
-            ...data
-          }
-        })
-        app.log.info(`[PlotExtractor] Created new arc: ${arc.name}`)
-      }
-    }
+    await savePlotArcs(app, storyId, result.arcs || [])
 
     return result
   } catch (err: any) {
     app.log.error(`[PlotExtractor] Failed: ${err.message}`)
     return null
+  }
+}
+
+/**
+ * 保存提取的剧情弧线到数据库
+ */
+export async function savePlotArcs(
+  app: FastifyInstance,
+  storyId: string,
+  arcs: PlotArcAnalysis['arcs']
+) {
+  const prisma = app.prisma
+  for (const arc of arcs || []) {
+    const existing = await prisma.plotArc.findFirst({
+      where: { storyId, name: arc.name }
+    })
+
+    const stages = existing
+      ? JSON.parse(existing.stages || '[]')
+      : []
+
+    // 如果当前阶段是新的，添加到 stages 列表
+    if (arc.currentStage && !stages.some((s: any) => s.stage === arc.currentStage)) {
+      stages.push({ stage: arc.currentStage, completed: arc.status === 'completed', description: arc.summary })
+    }
+
+    const data = {
+      type: arc.type,
+      status: arc.status,
+      progress: arc.progress,
+      stages: JSON.stringify(stages),
+      currentStage: arc.currentStage,
+      nextGoal: arc.nextGoal,
+      unresolved: JSON.stringify(arc.unresolved || []),
+      summary: arc.summary
+    }
+
+    if (existing) {
+      await prisma.plotArc.update({ where: { id: existing.id }, data })
+      app.log.info(`[PlotExtractor] Updated arc: ${arc.name} -> ${arc.status} ${arc.progress}%`)
+    } else {
+      await prisma.plotArc.create({
+        data: {
+          storyId,
+          name: arc.name,
+          ...data
+        }
+      })
+      app.log.info(`[PlotExtractor] Created new arc: ${arc.name}`)
+    }
   }
 }
 

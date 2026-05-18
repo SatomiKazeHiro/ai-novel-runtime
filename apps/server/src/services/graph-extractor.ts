@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify'
-import { createProvider, RuntimePromptCompiler } from '@novel-runtime/ai-provider'
+import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
+import { cleanJsonBlock } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
+import { callAIWithLog } from './ai-call-logger.js'
 
 export interface ExtractedNode {
   type: 'character' | 'faction' | 'realm' | 'event' | 'item'
@@ -31,23 +33,6 @@ export async function extractGraphFromChapter(
 ): Promise<GraphExtractionResult | null> {
   const prisma = app.prisma
 
-  const aiConfig = await prisma.aiProviderConfig.findFirst({ where: { isDefault: true } })
-  const provider = aiConfig
-    ? createProvider({
-        name: aiConfig.name,
-        apiKey: aiConfig.apiKey || undefined,
-        baseUrl: aiConfig.baseUrl || undefined,
-        model: aiConfig.model,
-        maxTokens: aiConfig.maxTokens,
-        temperature: aiConfig.temperature
-      })
-    : null
-
-  if (!provider?.generateWithRuntime) {
-    app.log.warn('[GraphExtractor] No provider configured, skipping graph extraction')
-    return null
-  }
-
   // 加载 Runtime Base + Graph Worker Task
   const base = await loadRuntimeBase(storyId, prisma)
   const task = await loadWorkerTask(storyId, 'graph', prisma)
@@ -67,7 +52,7 @@ export async function extractGraphFromChapter(
 返回严格 JSON 格式，不要 markdown 代码块：
 {
   "nodes": [
-    { "type": "character", "key": "zhangwuji", "label": "张无忌", "importance": 10, "data": { "realm": "先天境" } },
+    { "type": "character", "key": "zhangwuji", "label": "张无忌", "importance": 10, "data": { "rank": "先天境" } },
     { "type": "faction", "key": "mingjiao", "label": "明教", "importance": 9, "data": { "location": "光明顶" } },
     { "type": "event", "key": "guangmingding_siege", "label": "六大门派围攻光明顶", "importance": 10, "data": { "outcome": "张无忌化解恩怨" } }
   ],
@@ -76,7 +61,7 @@ export async function extractGraphFromChapter(
   ]
 }
 
-type 可选值：character(角色), faction(势力/宗门), realm(境界), event(事件), item(物品)
+type 可选值：character(角色), faction(势力/组织), event(事件), item(物品/道具)
 relation 建议值：隶属、对抗、师徒、配偶、兄弟、持有、发生地点、涉及
 
 已有实体（不要重复提取，但可补充新属性）：${Array.from(existingKeys).join(', ') || '无'}
@@ -90,13 +75,13 @@ ${content.slice(0, 8000)}`
     const compiler = new RuntimePromptCompiler()
     const compiled = compiler.compile(base, task, extractPrompt)
 
-    const raw = await provider.generateWithRuntime(compiled, {
-      temperature: 0.3,
-      maxTokens: 2048
+    const raw = await callAIWithLog(app, {
+      storyId, chapterId, callType: 'graph_extract',
+      compiled, temperature: 0.3, maxTokens: 2048
     })
+    if (!raw) return null
 
-    const jsonStr = raw.replace(/```json\s*/g, '').replace(/```\s*$/g, '').trim()
-    const result: GraphExtractionResult = JSON.parse(jsonStr)
+    const result: GraphExtractionResult = JSON.parse(cleanJsonBlock(raw))
 
     // 过滤低重要性实体
     const filteredNodes = (result.nodes || []).filter(n => n.importance >= 6)

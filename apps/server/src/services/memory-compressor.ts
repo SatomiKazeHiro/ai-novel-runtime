@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify'
-import { createProvider, RuntimePromptCompiler } from '@novel-runtime/ai-provider'
+import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
+import { cleanJsonBlock } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
+import { callAIWithLog } from './ai-call-logger.js'
 
 const COMPRESS_INTERVAL = 5 // 每 5 章压缩一次
 
@@ -108,23 +110,6 @@ async function compressWithAI(
 ): Promise<string[]> {
   const prisma = app.prisma
 
-  const aiConfig = await prisma.aiProviderConfig.findFirst({ where: { isDefault: true } })
-  const provider = aiConfig
-    ? createProvider({
-        name: aiConfig.name,
-        apiKey: aiConfig.apiKey || undefined,
-        baseUrl: aiConfig.baseUrl || undefined,
-        model: aiConfig.model,
-        maxTokens: aiConfig.maxTokens,
-        temperature: aiConfig.temperature
-      })
-    : null
-
-  if (!provider?.generateWithRuntime) {
-    app.log.warn('[MemoryCompressor] No provider, falling back to simple merge')
-    return simpleMerge(memories)
-  }
-
   const base = await loadRuntimeBase(storyId, prisma)
   const task = await loadWorkerTask(storyId, 'memory', prisma)
 
@@ -146,13 +131,16 @@ ${memoryTexts.slice(0, 12000)}`
     const compiler = new RuntimePromptCompiler()
     const compiled = compiler.compile(base, task, prompt)
 
-    const raw = await provider.generateWithRuntime(compiled, {
-      temperature: 0.3,
-      maxTokens: 2048
+    const raw = await callAIWithLog(app, {
+      storyId, callType: 'compress',
+      compiled, temperature: 0.3, maxTokens: 2048
     })
+    if (!raw) {
+      app.log.warn('[MemoryCompressor] No provider or AI call failed, falling back to simple merge')
+      return simpleMerge(memories)
+    }
 
-    const jsonStr = raw.replace(/```json\s*/g, '').replace(/```\s*$/g, '').trim()
-    const result: string[] = JSON.parse(jsonStr)
+    const result: string[] = JSON.parse(cleanJsonBlock(raw))
     return result.slice(0, 5)
   } catch (err: any) {
     app.log.error(`[MemoryCompressor] AI compression failed: ${err.message}`)

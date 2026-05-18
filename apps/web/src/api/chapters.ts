@@ -3,6 +3,8 @@ import { api } from '../utils/api'
 export interface ChapterCreate {
   title: string
   outline?: string
+  isSideStory?: boolean
+  number?: number
 }
 
 export interface ChapterUpdate {
@@ -22,7 +24,7 @@ export const chaptersApi = {
   update: (chapterId: string, data: ChapterUpdate) => api.put(`/api/chapters/${chapterId}`, data),
   remove: (chapterId: string) => api.delete(`/api/chapters/${chapterId}`),
   preview: (chapterId: string, data: any) => api.post(`/api/chapters/${chapterId}/preview`, data),
-  generate: (chapterId: string, data: any) => api.post(`/api/chapters/${chapterId}/generate`, data, { timeout: 120000 }),
+  generate: (chapterId: string, data: any) => api.post(`/api/chapters/${chapterId}/generate`, data, { timeout: 0 }),
   selectDraft: (chapterId: string, draftId: string) => api.post(`/api/chapters/${chapterId}/select`, { draftId }),
   archive: (chapterId: string) => api.post(`/api/chapters/${chapterId}/archive`)
 }

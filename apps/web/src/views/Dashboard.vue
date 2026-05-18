@@ -16,21 +16,12 @@
     <n-alert v-else title="后端服务" type="warning">
       连接中...
     </n-alert>
-
-    <n-divider />
-    <n-h3>快速入口</n-h3>
-    <n-space>
-      <n-button @click="$router.push('/stories')">小说管理</n-button>
-      <n-button @click="$router.push('/novel-design/characters')">角色管理</n-button>
-      <n-button @click="$router.push('/novel-design/lore')">世界观</n-button>
-      <n-button @click="$router.push('/novel-design/chapters')">章节工作台</n-button>
-    </n-space>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
-import { NH1, NH3, NP, NStatistic, NSpace, NDivider, NAlert, NButton } from 'naive-ui'
+import { NH1, NH3, NP, NStatistic, NSpace, NDivider, NAlert } from 'naive-ui'
 import { api } from '../utils/api'
 import { useStoryStore } from '../stores/story'
 

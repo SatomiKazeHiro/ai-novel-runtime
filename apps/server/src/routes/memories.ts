@@ -9,9 +9,15 @@ export async function memoryRoutes(app: FastifyInstance) {
     if (layer) where.layer = layer
     const items = await app.prisma.memory.findMany({
       where,
+      include: { chapter: { select: { number: true, title: true } } },
       orderBy: { createdAt: 'desc' }
     })
-    return { success: true, data: items }
+    const data = items.map((m: any) => ({
+      ...m,
+      chapterNumber: m.chapter?.number,
+      chapterTitle: m.chapter?.title
+    }))
+    return { success: true, data }
   })
 
   // POST /api/stories/:storyId/memory

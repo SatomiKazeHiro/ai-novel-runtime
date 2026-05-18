@@ -1,4 +1,20 @@
+import { createProvider } from '@novel-runtime/ai-provider'
 import type { FastifyInstance } from 'fastify'
+
+export async function getDefaultProvider(prisma: any) {
+  const aiConfig = await prisma.aiProviderConfig.findFirst({
+    where: { isDefault: true }
+  })
+  if (!aiConfig) return null
+  return createProvider({
+    name: aiConfig.name,
+    apiKey: aiConfig.apiKey || undefined,
+    baseUrl: aiConfig.baseUrl || undefined,
+    model: aiConfig.model,
+    maxTokens: aiConfig.maxTokens,
+    temperature: aiConfig.temperature
+  })
+}
 
 export async function initAiProviderConfig(app: FastifyInstance) {
   const existing = await app.prisma.aiProviderConfig.findFirst({
@@ -13,6 +29,7 @@ export async function initAiProviderConfig(app: FastifyInstance) {
   const apiKey = process.env.DEEPSEEK_API_KEY
   const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
   const model = process.env.DEEPSEEK_MODEL || 'deepseek-chat'
+  const contextLength = parseInt(process.env.DEEPSEEK_CONTEXT_LENGTH || '64000', 10)
 
   if (!apiKey) {
     app.log.warn('DEEPSEEK_API_KEY not found in env, skipping AI provider init')
@@ -25,6 +42,7 @@ export async function initAiProviderConfig(app: FastifyInstance) {
       apiKey,
       baseUrl,
       model,
+      contextLength,
       maxTokens: 4096,
       temperature: 0.7,
       isDefault: true

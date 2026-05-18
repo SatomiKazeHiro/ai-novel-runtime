@@ -117,7 +117,6 @@ const nodeTypeOptions = [
   { label: '角色', value: 'character' },
   { label: '势力', value: 'faction' },
   { label: '事件', value: 'event' },
-  { label: '境界', value: 'realm' },
   { label: '物品', value: 'item' }
 ]
 
@@ -125,7 +124,6 @@ const typeLegend = [
   { type: 'character', label: '角色', color: '#3b82f6' },
   { type: 'faction', label: '势力', color: '#ef4444' },
   { type: 'event', label: '事件', color: '#f97316' },
-  { type: 'realm', label: '境界', color: '#22c55e' },
   { type: 'item', label: '物品', color: '#a855f7' }
 ]
 

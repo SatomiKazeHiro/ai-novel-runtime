@@ -9,7 +9,7 @@
       <n-tab-pane v-for="layer in layerOptions" :key="layer.value" :name="layer.value" :tab="layer.label" />
     </n-tabs>
 
-    <n-data-table :columns="columns" :data="memories" style="margin-top: 16px" />
+    <n-data-table :columns="columns" :data="memories" :loading="loading" style="margin-top: 16px" />
 
     <n-modal v-model:show="showModal" title="添加记忆" preset="card" style="width: 500px">
       <n-form :model="form" label-placement="left" label-width="80">
@@ -49,11 +49,23 @@ const layerOptions = [
 const route = useRoute()
 const activeLayer = ref('global')
 const memories = ref<any[]>([])
+const loading = ref(false)
 const showModal = ref(false)
 const form = ref({ layer: 'global', content: '', importance: 5 })
 
 const columns = [
-  { title: '层级', key: 'layer', width: 100 },
+  { title: '层级', key: 'layer', width: 90 },
+  {
+    title: '章节',
+    key: 'chapter',
+    width: 140,
+    render(row: any) {
+      if (!row.chapterNumber && !row.chapterTitle) return '-'
+      const num = row.chapterNumber !== undefined ? `第${row.chapterNumber}章` : ''
+      const title = row.chapterTitle || ''
+      return title ? `${num} · ${title}` : num
+    }
+  },
   { title: '内容', key: 'content', ellipsis: { tooltip: true } },
   { title: '重要度', key: 'importance', width: 80 },
   { title: '创建时间', key: 'createdAt', width: 170 }
@@ -64,8 +76,13 @@ async function loadMemory() {
     memories.value = []
     return
   }
-  const res = await memoryApi.list(route.params.storyId as string, activeLayer.value)
-  memories.value = res.data.data
+  loading.value = true
+  try {
+    const res = await memoryApi.list(route.params.storyId as string, activeLayer.value)
+    memories.value = res.data.data
+  } finally {
+    loading.value = false
+  }
 }
 
 async function handleCreate() {

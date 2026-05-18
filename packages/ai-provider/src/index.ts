@@ -2,11 +2,18 @@ import { CompiledPrompt } from './runtime-compiler.js'
 
 export { CompiledPrompt, RuntimePromptCompiler, SharedRuntimeBase, WorkerTask } from './runtime-compiler.js'
 
+export interface TokenUsage {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+}
+
 export interface AIProvider {
   generate(prompt: string, options?: any): Promise<string>
   generateWithRuntime?(compiled: CompiledPrompt, options?: any): Promise<string>
   streamGenerate(prompt: string, options?: any): AsyncIterable<string>
   embedding?(text: string): Promise<number[]>
+  readonly lastUsage?: TokenUsage | null
 }
 
 export interface AIProviderConfig {
@@ -23,26 +30,25 @@ export class OpenAIProvider implements AIProvider {
   constructor(config: AIProviderConfig) { this.config = config }
 
   async generate(prompt: string, options?: any): Promise<string> {
-    console.log('[OpenAIProvider] generate called', this.config.model)
-    return `[Generated content placeholder for: ${prompt.slice(0, 50)}...]`
+    throw new Error('OpenAIProvider not yet implemented')
   }
 
   async generateWithRuntime(compiled: CompiledPrompt, options?: any): Promise<string> {
-    console.log('[OpenAIProvider] generateWithRuntime called', this.config.model)
-    return `[Generated content placeholder for: ${compiled.userMessage.slice(0, 50)}...]`
+    throw new Error('OpenAIProvider not yet implemented')
   }
 
   async *streamGenerate(prompt: string, options?: any): AsyncIterable<string> {
-    yield '[Streaming placeholder]'
+    throw new Error('OpenAIProvider streaming not yet implemented')
   }
 
   async embedding(text: string): Promise<number[]> {
-    return new Array(1536).fill(0).map(() => Math.random() - 0.5)
+    throw new Error('OpenAIProvider embedding not yet implemented')
   }
 }
 
 export class DeepSeekProvider implements AIProvider {
   private config: AIProviderConfig
+  lastUsage: TokenUsage | null = null
   constructor(config: AIProviderConfig) { this.config = config }
 
   async generate(prompt: string, options?: any): Promise<string> {
@@ -51,7 +57,7 @@ export class DeepSeekProvider implements AIProvider {
     const model = this.config.model || 'deepseek-chat'
     const temperature = options?.temperature ?? this.config.temperature ?? 0.7
     const maxTokens = options?.maxTokens ?? this.config.maxTokens ?? 4096
-    const systemContent = options?.system ?? '你是一位专精玄幻修仙小说的资深作者，擅长构建完整修炼体系、门派势力格局与长生大道。'
+    const systemContent = options?.system ?? '你是一位专精长篇小说创作的资深作者，擅长构建完整的世界观、人物关系与情节张力。'
 
     if (!apiKey) {
       throw new Error('DeepSeek API key is not configured')
@@ -97,6 +103,12 @@ export class DeepSeekProvider implements AIProvider {
     if (!content) {
       throw new Error('DeepSeek API returned empty content')
     }
+
+    this.lastUsage = data.usage ? {
+      promptTokens: data.usage.prompt_tokens || 0,
+      completionTokens: data.usage.completion_tokens || 0,
+      totalTokens: data.usage.total_tokens || 0
+    } : null
 
     return content
   }
@@ -152,6 +164,12 @@ export class DeepSeekProvider implements AIProvider {
     if (!content) {
       throw new Error('DeepSeek API returned empty content')
     }
+
+    this.lastUsage = data.usage ? {
+      promptTokens: data.usage.prompt_tokens || 0,
+      completionTokens: data.usage.completion_tokens || 0,
+      totalTokens: data.usage.total_tokens || 0
+    } : null
 
     return content
   }

@@ -30,6 +30,7 @@ model Story {
   scores      Score[]
   plotArcs    PlotArc[]
   aiProviderConfigs AiProviderConfig[]
+  promptLogs       PromptLog[]
   runtimeProfile   RuntimeProfile? @relation(fields: [runtimeProfileId], references: [id])
   runtimeProfileId String?
   workerTasks  WorkerTask[]
@@ -39,7 +40,8 @@ model Story {
 model Chapter {
   id          String   @id @default(uuid())
   storyId     String
-  number      Int
+  number      Float
+  isSideStory Boolean  @default(false)
   title       String
   outline     String?
   content     String?
@@ -262,17 +264,49 @@ model Score {
 
 // AI Provider 配置
 model AiProviderConfig {
-  id          String   @id @default(uuid())
-  storyId     String?
-  name        String   // openai, claude, deepseek, gemini, etc.
-  apiKey      String?
-  baseUrl     String?
-  model       String
-  maxTokens   Int      @default(4096)
-  temperature Float    @default(0.7)
-  isDefault   Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String   @id @default(uuid())
+  storyId       String?
+  name          String   // openai, claude, deepseek, gemini, etc.
+  apiKey        String?
+  baseUrl       String?
+  model         String
+  contextLength Int      @default(64000)
+  maxTokens     Int      @default(4096)
+  temperature   Float    @default(0.7)
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  story       Story?   @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  story         Story?   @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  promptLogs    PromptLog[]
+}
+
+// Prompt 调用日志（每次 AI API 调用一条记录）
+model PromptLog {
+  id                 String   @id @default(uuid())
+  storyId            String
+  chapterId          String?
+  callType           String   // generate | memory_extract | graph_extract | plot_extract | combined_extract | compress
+  aiProviderConfigId String
+  providerName       String   // deepseek | openai
+  model              String   // deepseek-chat | gpt-4 等
+  systemMessage      String   // 完整的 system message
+  userMessage        String   // 完整的 user message
+  responseContent    String   // AI 返回的完整内容
+  promptTokens       Int      // API 返回的 usage.prompt_tokens
+  completionTokens   Int      // API 返回的 usage.completion_tokens
+  totalTokens        Int      // API 返回的 usage.total_tokens
+  estimatedTokens    Int      // CompiledPrompt.meta.totalTokens（预估值）
+  temperature        Float?
+  maxTokens          Int?
+  durationMs         Int?     // 调用耗时（毫秒）
+  status             String   @default("success") // success | error
+  errorMessage       String?  // 失败时的错误信息
+  createdAt          DateTime @default(now())
+
+  story              Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  aiProviderConfig   AiProviderConfig @relation(fields: [aiProviderConfigId], references: [id], onDelete: Cascade)
+
+  @@index([storyId, createdAt])
+  @@index([callType, createdAt])
 }

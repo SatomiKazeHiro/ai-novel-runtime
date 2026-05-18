@@ -12,6 +12,8 @@ import Memory from '../views/Memory.vue'
 import RuntimeProfile from '../views/RuntimeProfile.vue'
 import WorkerTask from '../views/WorkerTask.vue'
 import StoryWorkerTask from '../views/StoryWorkerTask.vue'
+import ModelManager from '../views/ModelManager.vue'
+import PromptLogs from '../views/PromptLogs.vue'
 
 const routes = [
   {
@@ -21,7 +23,8 @@ const routes = [
       { path: '', name: 'Dashboard', component: Dashboard },
       { path: 'stories', name: 'Stories', component: Stories },
       { path: 'runtime-profiles', name: 'RuntimeProfiles', component: RuntimeProfile },
-      { path: 'worker-tasks', name: 'WorkerTasks', component: WorkerTask }
+      { path: 'worker-tasks', name: 'WorkerTasks', component: WorkerTask },
+      { path: 'models', name: 'ModelManager', component: ModelManager }
     ]
   },
   {
@@ -34,7 +37,8 @@ const routes = [
       { path: 'graph', name: 'Graph', component: Graph },
       { path: 'memory', name: 'Memory', component: Memory },
       { path: 'timeline', name: 'Timeline', component: Timeline },
-      { path: 'worker-tasks', name: 'StoryWorkerTasks', component: StoryWorkerTask }
+      { path: 'worker-tasks', name: 'StoryWorkerTasks', component: StoryWorkerTask },
+      { path: 'prompt-logs', name: 'PromptLogs', component: PromptLogs }
     ]
   },
   // 旧路由重定向

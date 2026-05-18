@@ -46,20 +46,20 @@ import {
 import { loreApi } from '../api/lore'
 
 const categories = [
-  { key: 'realm', label: '境界' },
+  { key: 'rank', label: '等级' },
   { key: 'map', label: '地图' },
-  { key: 'technique', label: '功法' },
+  { key: 'skill', label: '技能' },
   { key: 'faction', label: '势力' },
   { key: 'item', label: '物品' },
   { key: 'rule', label: '规则' }
 ]
 
 const route = useRoute()
-const activeCategory = ref('realm')
+const activeCategory = ref('rank')
 const loreItems = ref<any[]>([])
 const loading = ref(false)
 const showModal = ref(false)
-const form = ref({ category: 'realm', slug: '', name: '', content: '' })
+const form = ref({ category: 'rank', slug: '', name: '', content: '' })
 
 const columns: DataTableColumns<any> = [
   { title: '标识', key: 'slug', width: 120 },

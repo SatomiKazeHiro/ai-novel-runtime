@@ -83,14 +83,19 @@ novel-runtime/
 │   │       │   ├── memories.ts
 │   │       │   ├── scores.ts
 │   │       │   ├── runtime-profile.ts
-│   │       │   └── worker-task.ts
+│   │       │   ├── worker-task.ts
+│   │       │   ├── ai-provider.ts
+│   │       │   └── prompt-logs.ts       # Prompt 调用日志查询
 │   │       ├── services/    # 业务处理器
 │   │       │   ├── ai-provider-init.ts      # 从 DB 初始化默认 AI Provider
 │   │       │   ├── generate-processor.ts    # 章节生成队列处理器（核心）
-│   │       │   ├── memory-extractor.ts      # 记忆提取
-│   │       │   ├── graph-extractor.ts       # 图谱提取
-│   │       │   ├── plot-extractor.ts        # 剧情弧线提取
-│   │       │   ├── memory-compressor.ts     # 记忆压缩
+│   │       │   ├── memory-extractor.ts      # 记忆提取（单一职责，archive 时由 combined 调用）
+│   │       │   ├── graph-extractor.ts       # 图谱提取（单一职责，archive 时由 combined 调用）
+│   │       │   ├── plot-extractor.ts        # 剧情弧线提取（单一职责，archive 时由 combined 调用）
+│   │       │   ├── combined-extractor.ts    # 合并提取：记忆+图谱+弧线，一次 API 调用
+│   │       │   ├── ai-call-logger.ts        # AI 调用统一 wrapper + PromptLog 自动记录
+│   │       │   ├── memory-compressor.ts     # 记忆压缩（每5章触发，规则式摘要）
+│   │       │   ├── memory-organizer.ts      # AI 记忆整理器（archive 后触发，语义 merge/update/delete）
 │   │       │   └── runtime-loader.ts        # 加载 RuntimeProfile + WorkerTask
 │   │       └── queue/
 │   │           └── index.ts                 # BullMQ / 内存队列封装 + Worker 启动
@@ -112,7 +117,9 @@ novel-runtime/
 │           │   ├── Memory.vue
 │           │   ├── RuntimeProfile.vue
 │           │   ├── WorkerTask.vue
-│           │   └── StoryWorkerTask.vue
+│           │   ├── StoryWorkerTask.vue
+│           │   ├── ModelManager.vue
+│           │   └── PromptLogs.vue
 │           └── utils/
 │               └── api.ts     # Axios 实例配置
 ├── packages/                  # 共享包（Monorepo）
@@ -122,8 +129,22 @@ novel-runtime/
 │   ├── memory-engine/         # 分层记忆管理 + 语义检索
 │   ├── knowledge-graph/       # graphology 图引擎封装
 │   ├── scoring-engine/        # 7 维度评分引擎
-│   ├── warning-engine/        # 预警检测引擎（当前为空）
-│   └── story-engine/          # 预留包（当前为空）
+│   └── warning-engine/        # 预警检测引擎（当前为空）
+├── docs/
+│   ├── sql-reference.md            # 完整 Schema 字段说明、关系图、迁移历史
+│   ├── frenesis-v2-profile.json    # 原始默认写作人格（保留兼容）
+│   └── profiles/                   # 预设写作人格目录
+│       ├── default.json            # 基础写作助手（默认）
+│       ├── xianxia.json            # 修仙长生
+│       ├── xuanhuan.json           # 玄幻争霸
+│       ├── gufeng.json             # 古风权谋
+│       ├── gudai-richang.json      # 古代日常
+│       ├── chuanyue-gudai.json     # 穿越古代
+│       ├── dushi.json              # 都市风云
+│       ├── kehuan.json             # 科幻未来
+│       ├── xuanyi.json             # 悬疑推理
+│       ├── guize.json              # 规则怪谈
+│       └── qingxiaoshuo.json       # 轻小说
 ├── prisma/
 │   ├── schema.prisma          # 数据库模型定义
 │   ├── dev.db                 # SQLite 开发数据库
@@ -180,9 +201,13 @@ pnpm db:seed          # 运行种子脚本
 
 ```
 Draft → Generated → Scored → Selected → Archived
-  ↓         ↓          ↓
-Rejected  Rejected   Rejected
+  ↓         ↓          ↓                        ↑
+Rejected  Rejected   Rejected         合并提取（记忆+图谱+弧线）+ AI记忆整理
 ```
+
+- **提取时机**：仅在 `archive` 时执行，不再在 `generate`/`select` 阶段对 candidate draft 提取
+- **提取方式**：`combined-extractor.ts` 一次 API 调用同时完成记忆提取、图谱提取、剧情弧线分析，成本约为之前的 1/4
+- **AI 记忆整理**：`memory-organizer.ts` 在 archive 后自动触发，对新旧记忆做语义层面的 merge/update/delete
 
 ### 5.2 Prompt Pipeline（分层 Prompt 组装）
 
@@ -204,7 +229,7 @@ System Message 由 `RuntimePromptCompiler` 编译：
 
 ### 5.3 Context Budget（Token 预算控制）
 
-默认总预算 `64000` tokens，各层预算在 `generate-processor.ts` 中配置：
+默认总预算 `64000` tokens，各层预算通过 `packages/shared/src/index.ts` 中的 `DEFAULT_PIPELINE_BUDGET` 常量配置：
 
 | 层 | 预算 |
 |--|--|
@@ -220,16 +245,37 @@ System Message 由 `RuntimePromptCompiler` 编译：
 
 `PromptAssembler` 负责动态裁剪：超出预算时按字符数截断，并标记 `truncated`。
 
-### 5.4 记忆系统（四层）
+### 5.4 记忆系统（四层 + Checkpoint）
 
 ```
-Global Memory    → 世界观、角色关系、长期目标
-Chapter Memory   → 本章事件、情绪变化、伏笔
-Scene Memory     → 当前地点、角色、情绪
+Global Memory    → 世界观、角色关系、长期目标（跨章节，不衰减）
+Chapter Memory   → 本章事件、情绪变化、伏笔（按章节距离衰减）
+Scene Memory     → 推动剧情的关键地点/场景（archive 时从章节提取，importance 7）
 Temporary Memory → 临时上下文
 ```
 
-`MemoryManager.searchRelevant()` 使用 tiktoken token 频率向量的 **余弦相似度** 进行语义检索，综合得分 = 语义相似度×0.6 + 重要性×0.3 + 时间新鲜度×0.1。
+> **注意**：Prompt Pipeline 中也有 `Scene` 层（`Chapter.sceneLocation/sceneMood/sceneGoal`），那是**生成时的场景状态**，与 Memory 表 `layer: 'scene'` 是不同概念。后者是从已归档章节中提取的持久化场景记忆。
+
+**Checkpoint 机制**：生成第 N 章时，只读取「最后一个已归档章节」之前的记忆。修改旧章节（不重新归档）不会影响后续章节的生成上下文。
+
+**检索流程**：
+1. `searchRelevant(query)` → 语义检索（余弦相似度×0.7 + 重要性×0.3），取 Top N
+2. **近似去重**（Jaccard > 0.82）→ 相似记忆只保留一条，避免挤占名额
+3. **番外排除** → `isSideStory = true` 的章节记忆不纳入主线上下文
+4. `formatForPrompt()` → 精确去重 + 章节距离衰减（>5章-1，>10章-2，>20章-3）+ 主线优先（main-plot +2）
+
+**Scene 记忆提取**：`combined-extractor.ts` 在 archive 时提取 `scenes: [{ location, description?, event }]`，保存为 `layer: 'scene'`。规则：只提取"推动剧情发展的地点"，路人提及、无事件发生的地点不提取。
+
+**写入去重**：`saveExtractedMemory()` 写入前检查最近 50 条记忆的 Jaccard 相似度，> 0.82 则跳过，防止同一事件在不同章节被重复提取。
+
+**AI 记忆整理**：`memory-organizer.ts` 在 archive 后自动触发，调用 1 次 API 对新旧记忆做语义层面的 merge/update/delete。保守策略：merge 要求被合并记忆的平均 Jaccard > 0.5，delete 只删旧记忆。让 AI 处理硬编码规则做不到的事（如"张三去后山"和"张三在后山修炼"的语义合并）。
+
+注入 Prompt 的格式示例：
+```
+- [chapter]【主线】(第5章·0章前) 张三和李四发生冲突
+- [chapter]【主线】(第2章·3章前) 王五暗中观察
+- [global] (第5章·0章前) 【张三】状态更新：{"rank": "初级"}
+```
 
 ### 5.5 队列系统
 
@@ -250,12 +296,15 @@ interface AIProvider {
   generateWithRuntime?(compiled: CompiledPrompt, options?: any): Promise<string>
   streamGenerate(prompt: string, options?: any): AsyncIterable<string>
   embedding?(text: string): Promise<number[]>
+  readonly lastUsage?: TokenUsage | null  // API 返回的 prompt/completion/total tokens
 }
 ```
 
 已实现的 Provider：
-- `OpenAIProvider` — 占位实现（返回 mock 文本）
-- `DeepSeekProvider` — 完整实现（调用 DeepSeek API `/v1/chat/completions`，30s timeout）
+- `OpenAIProvider` — 骨架实现（调用时抛出 `not yet implemented`，待接入真实 API）
+- `DeepSeekProvider` — 完整实现（调用 DeepSeek API `/v1/chat/completions`，30s timeout，自动读取 `usage` 到 `lastUsage`）
+
+**PromptLog 自动记录**：所有 AI 调用通过 `ai-call-logger.ts` 的 `callAIWithLog()` 执行，自动写入 `PromptLog` 表（异步，不阻塞返回），记录完整的 system/user/response、token 消耗、模型、耗时、状态。
 
 新增 Provider：在 `packages/ai-provider/src/index.ts` 的 `createProvider()` 中注册。
 
@@ -272,7 +321,7 @@ interface AIProvider {
 
 当前实现：
 - `RuleBasedScorer` — 规则评分（违禁词检测 + 默认 80 分）
-- `AIScorer` — AI 评分（当前为随机数占位，TODO: 接入真实 AI）
+- `AIScorer` — AI 评分骨架（调用时抛出 `not yet implemented`，待接入真实 AI）
 
 ---
 
@@ -295,25 +344,54 @@ interface AIProvider {
 
 ---
 
+## 6.1 Prisma / 数据库设计规范
+
+### 类型映射（SQLite → PostgreSQL 兼容）
+
+| Prisma 类型 | SQLite | PostgreSQL | 注意事项 |
+|-------------|--------|------------|----------|
+| `String` | TEXT | TEXT | 无长度限制，存大文本直接用 |
+| `Int` | INTEGER | INTEGER | 自增 ID 用 `@id @default(autoincrement())` |
+| `Float` | REAL | DOUBLE PRECISION | 章节序号支持小数（番外插入） |
+| `Boolean` | INTEGER(0/1) | BOOLEAN | Prisma 自动转换 |
+| `DateTime` | DATETIME | TIMESTAMP | 带 `@default(now())` 和 `@updatedAt` |
+| `Json` | 不支持 | JSONB | SQLite 开发时用 `String` + 手动 JSON.stringify/parse 替代 |
+
+### 关系设计原则
+
+1. **级联删除**：所有 `storyId` 外键统一配置 `onDelete: Cascade`，删除小说时自动清理关联数据
+2. **联合唯一索引**：如 `@@unique([storyId, number])`（章节）、`@@unique([storyId, type, key])`（图谱节点）
+3. **软关联可选**：`chapterId String?` + `chapter Chapter? @relation(...)`，允许全局记忆不关联具体章节
+4. **JSON 字符串替代**：SQLite 不支持原生 JSON 类型，所有结构化数据（tags、stages、metadata 等）以 JSON 字符串存储，读取时 `JSON.parse()`，写入时 `JSON.stringify()`
+
+### 迁移管理
+
+- 开发环境：`pnpm db:migrate`（应用迁移）+ `npx prisma generate`（生成 Client）
+- 新增模型后必须执行 `npx prisma generate`，否则 TypeScript 编译会报 `Property 'xxx' does not exist on type 'PrismaClient'`
+- 迁移文件手动编写 SQL（SQLite 的 `prisma migrate dev` 交互式体验不佳，推荐 `migrate deploy`）
+- 迁移文件命名：`YYYYMMDDhhmmss_描述`
+
+---
+
 ## 7. 数据库模型速查
 
 | 模型 | 说明 |
 |------|------|
 | `Story` | 小说工程 |
-| `Chapter` | 章节（含状态机、场景状态） |
+| `Chapter` | 章节（含状态机、场景状态、`isSideStory` 番外标记、`number` Float 支持插入序号如 3.5） |
 | `Character` | 角色卡（JSON 存储性格/关系/状态） |
 | `LoreItem` | 世界观条目（境界/地图/功法/势力/物品/规则） |
-| `Memory` | 记忆（global/chapter/scene/temporary） |
+| `Memory` | 记忆（global/chapter/scene/temporary，通过 `chapterId` 关联来源章节） |
 | `GraphNode` / `GraphEdge` | 知识图谱节点与边 |
 | `TimelineEvent` | 时间线事件 |
 | `Draft` | 候选/废案 |
 | `PromptConfig` | Prompt 模板配置（旧版兼容） |
 | `Score` | 评分记录（7 维度） |
-| `Warning` | 预警记录 |
 | `AiProviderConfig` | AI 模型配置 |
 | `RuntimeProfile` | Shared Runtime Base（Identity + Settings + Behavior + Jailbreak） |
-| `WorkerTask` | 不同 Worker 的 Task Layer（generation / scoring / memory / graph / timeline / rewrite） |
+| `WorkerTask` | 不同 Worker 的 Task Layer（generation / scoring / memory / graph / timeline / rewrite / memory_organize） |
 | `PlotArc` | 剧情弧线 |
+| `PromptLog` | 每次 AI API 调用的完整日志（prompt/response/token/模型/耗时） |
 
 **Prisma Client 输出位置**：`../node_modules/.prisma/client`（通过 `generator client` 的 `output` 指定）。
 
@@ -392,6 +470,12 @@ pnpm --filter server start   # 执行 node dist/server.js
 在 `packages/ai-provider/src/runtime-compiler.ts` 中：
 1. 扩展 `WorkerTask.workerType` 联合类型
 2. 在 backend 的 `runtime-loader.ts` 和队列系统中注册处理逻辑
+
+### 添加新的预设写作人格
+在 `docs/profiles/` 下新建 JSON 文件：
+1. 参考现有 JSON 结构：`name`, `identity`, `settings`, `behavior`, `jailbreak`, `isDefault`
+2. 后端启动时自动扫描该目录并导入数据库（按 `name` 去重）
+3. 无需修改代码或重启服务逻辑
 
 ### 添加新的 API 路由
 在 `apps/server/src/routes/` 下新建路由文件：

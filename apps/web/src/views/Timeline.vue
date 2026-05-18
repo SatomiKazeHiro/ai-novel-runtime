@@ -5,18 +5,20 @@
       <n-button type="primary" @click="showModal = true">添加事件</n-button>
     </n-space>
 
-    <n-timeline v-if="events.length > 0">
-      <n-timeline-item v-for="evt in events" :key="evt.id" type="default" :title="`第 ${evt.day} 天`">
-        <n-ul>
-          <n-li v-for="(desc, idx) in JSON.parse(evt.events)" :key="idx">{{ desc }}</n-li>
-        </n-ul>
-        <n-space>
-          <n-button size="tiny" @click="startEdit(evt)">编辑</n-button>
-          <n-button size="tiny" type="error" @click="handleDelete(evt.id)">删除</n-button>
-        </n-space>
-      </n-timeline-item>
-    </n-timeline>
-    <n-empty v-else description="暂无时间线事件" />
+    <n-spin :show="loading">
+      <n-timeline v-if="events.length > 0">
+        <n-timeline-item v-for="evt in events" :key="evt.id" type="default" :title="`第 ${evt.day} 天`">
+          <n-ul>
+            <n-li v-for="(desc, idx) in JSON.parse(evt.events)" :key="idx">{{ desc }}</n-li>
+          </n-ul>
+          <n-space>
+            <n-button size="tiny" @click="startEdit(evt)">编辑</n-button>
+            <n-button size="tiny" type="error" @click="handleDelete(evt.id)">删除</n-button>
+          </n-space>
+        </n-timeline-item>
+      </n-timeline>
+      <n-empty v-else description="暂无时间线事件" />
+    </n-spin>
 
     <n-modal v-model:show="showModal" :title="editingId ? '编辑事件' : '添加事件'" preset="card" style="width: 500px">
       <n-form :model="form" label-placement="left" label-width="80">
@@ -42,7 +44,7 @@ import { ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NH1, NSpace, NButton, NModal, NForm, NFormItem, NInputNumber, NDynamicTags,
-  NTimeline, NTimelineItem, NUl, NLi, NEmpty
+  NTimeline, NTimelineItem, NUl, NLi, NEmpty, NSpin
 } from 'naive-ui'
 import { timelineApi } from '../api/timeline'
 

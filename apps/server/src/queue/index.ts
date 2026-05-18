@@ -108,29 +108,26 @@ export function startWorkers() {
 
   const generateWorker = new BullWorker('generate', async (job: Job) => {
     console.log('Processing generate job', job.id, job.data)
-    if (generateProcessor) {
-      return await generateProcessor(job)
+    if (!generateProcessor) {
+      throw new Error('Generate processor not registered')
     }
-    await new Promise(r => setTimeout(r, 2000))
-    return { draftId: 'placeholder' }
+    return await generateProcessor(job)
   }, { connection: redis })
 
   const scoreWorker = new BullWorker('score', async (job: Job) => {
     console.log('Processing score job', job.id)
-    if (scoreProcessor) {
-      return await scoreProcessor(job)
+    if (!scoreProcessor) {
+      throw new Error('Score processor not registered')
     }
-    await new Promise(r => setTimeout(r, 1000))
-    return { score: 85 }
+    return await scoreProcessor(job)
   }, { connection: redis })
 
   const memoryWorker = new BullWorker('memory', async (job: Job) => {
     console.log('Processing memory job', job.id)
-    if (memoryProcessor) {
-      return await memoryProcessor(job)
+    if (!memoryProcessor) {
+      throw new Error('Memory processor not registered')
     }
-    await new Promise(r => setTimeout(r, 500))
-    return { updated: true }
+    return await memoryProcessor(job)
   }, { connection: redis })
 
   return { generateWorker, scoreWorker, memoryWorker }

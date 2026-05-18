@@ -150,14 +150,3 @@ export class PromptPipeline {
   }
 }
 
-export class ModelAdapter {
-  static adapt(modelName: string, prompt: string): string {
-    if (modelName.includes('claude')) {
-      return prompt.replace(/--- /g, '<system>').replace(/ ---/g, '</system>')
-    }
-    if (modelName.includes('gemini')) {
-      return `User: ${prompt}\nAssistant:`
-    }
-    return prompt
-  }
-}

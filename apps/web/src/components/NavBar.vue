@@ -14,6 +14,7 @@
         >
           仪表盘
         </n-button>
+        <n-divider vertical />
         <n-button
           text
           :type="route.name === 'Stories' ? 'primary' : 'default'"
@@ -21,6 +22,7 @@
         >
           小说管理
         </n-button>
+        <n-divider vertical />
         <n-button
           text
           :type="route.name === 'RuntimeProfiles' ? 'primary' : 'default'"
@@ -28,12 +30,21 @@
         >
           写作人格
         </n-button>
+        <n-divider vertical />
         <n-button
           text
           :type="route.name === 'WorkerTasks' ? 'primary' : 'default'"
           @click="router.push('/worker-tasks')"
         >
           Worker Task
+        </n-button>
+        <n-divider vertical />
+        <n-button
+          text
+          :type="route.name === 'ModelManager' ? 'primary' : 'default'"
+          @click="router.push('/models')"
+        >
+          模型管理
         </n-button>
       </n-space>
     </n-space>
@@ -68,7 +79,7 @@ import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NLayoutHeader, NButton, NIcon, NSpace, NText,
-  NModal, NForm, NFormItem, NRadioGroup, NRadioButton
+  NModal, NForm, NFormItem, NRadioGroup, NRadioButton, NDivider
 } from 'naive-ui'
 import { SettingsOutline } from '@vicons/ionicons5'
 import { useThemeStore } from '../stores/theme'

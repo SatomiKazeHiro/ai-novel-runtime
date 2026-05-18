@@ -8,6 +8,7 @@ export interface MemoryEntry {
   importance: number
   tags: string[]
   createdAt?: Date
+  chapterNumber?: number // 该记忆所属章节的序号，global 层为 undefined
 }
 
 function tokenize(text: string): number[] {
@@ -49,11 +50,16 @@ export class MemoryManager {
       content: m.content,
       importance: m.importance,
       tags: JSON.parse(m.tags),
-      createdAt: m.createdAt
+      createdAt: m.createdAt,
+      chapterNumber: undefined
     }))
   }
 
   async extractChapter(storyId: string, chapterId: string, prisma: any): Promise<MemoryEntry[]> {
+    const chapter = await prisma.chapter.findUnique({
+      where: { id: chapterId },
+      select: { number: true }
+    })
     const items = await prisma.memory.findMany({
       where: { storyId, chapterId, layer: 'chapter' },
       orderBy: { importance: 'desc' }
@@ -68,7 +74,8 @@ export class MemoryManager {
         content: m.content,
         importance: m.importance,
         tags: JSON.parse(m.tags),
-        createdAt: m.createdAt
+        createdAt: m.createdAt,
+        chapterNumber: chapter?.number
       }))
   }
 
@@ -87,37 +94,46 @@ export class MemoryManager {
 
   /**
    * 语义检索：根据查询文本（如章节大纲）找到最相关的记忆
-   * 使用 tiktoken token 频率向量的余弦相似度
+   * @param beforeChapterNumber 只检索该章节号之前的记忆（checkpoint 机制）
    */
   async searchRelevant(
     storyId: string,
     query: string,
     prisma: any,
-    limit: number = 15
+    limit: number = 15,
+    beforeChapterNumber?: number
   ): Promise<MemoryEntry[]> {
     const allMemories = await prisma.memory.findMany({
       where: { storyId, layer: { in: ['global', 'chapter'] } },
+      include: { chapter: { select: { number: true, isSideStory: true } } },
       orderBy: { createdAt: 'desc' }
     })
 
-    if (allMemories.length === 0) return []
+    // checkpoint 过滤 + 番外排除
+    const memories = beforeChapterNumber !== undefined
+      ? allMemories.filter((m: any) => {
+          if (m.layer === 'global') return true
+          if (m.chapter?.isSideStory) return false // 番外记忆不纳入主线上下文
+          return !m.chapter?.number || m.chapter.number <= beforeChapterNumber
+        })
+      : allMemories.filter((m: any) => {
+          if (m.layer === 'global') return true
+          return !m.chapter?.isSideStory
+        })
+
+    if (memories.length === 0) return []
 
     const queryTokens = tokenize(query)
     const queryVec = buildFreqVector(queryTokens)
 
-    const scored = allMemories.map((m: any) => {
+    const scored = memories.map((m: any) => {
       const memTokens = tokenize(m.content)
       const memVec = buildFreqVector(memTokens)
       const sim = cosineSimilarity(queryVec, memVec)
 
-      // 综合得分 = 语义相似度 * 0.6 + 归一化 importance * 0.3 + 时间新鲜度 * 0.1
+      // 综合得分 = 语义相似度 * 0.7 + 归一化 importance * 0.3
       const importanceScore = (m.importance || 5) / 10
-      const daysOld = m.createdAt
-        ? (Date.now() - new Date(m.createdAt).getTime()) / (1000 * 60 * 60 * 24)
-        : 30
-      const freshnessScore = Math.max(0, 1 - daysOld / 30)
-
-      const score = sim * 0.6 + importanceScore * 0.3 + freshnessScore * 0.1
+      const score = sim * 0.7 + importanceScore * 0.3
 
       return {
         entry: {
@@ -125,21 +141,42 @@ export class MemoryManager {
           content: m.content,
           importance: m.importance,
           tags: JSON.parse(m.tags || '[]'),
-          createdAt: m.createdAt
+          createdAt: m.createdAt,
+          chapterNumber: m.chapter?.number
         } as MemoryEntry,
         score
       }
     })
 
     scored.sort((a: any, b: any) => b.score - a.score)
-    return scored.slice(0, limit).map((s: any) => s.entry)
+
+    // 近似去重：相似度 > 0.82 的记忆只保留得分更高的一条
+    const deduped: typeof scored = []
+    for (const item of scored) {
+      const itemTokens = new Set(tokenize(item.entry.content))
+      let isDup = false
+      for (const kept of deduped) {
+        const keptTokens = new Set(tokenize(kept.entry.content))
+        const intersection = new Set([...itemTokens].filter(x => keptTokens.has(x)))
+        const union = new Set([...itemTokens, ...keptTokens])
+        if (intersection.size / union.size >= 0.82) {
+          isDup = true
+          break
+        }
+      }
+      if (!isDup) deduped.push(item)
+      if (deduped.length >= limit) break
+    }
+
+    return deduped.map((s: any) => s.entry)
   }
 
   /**
    * 智能格式化记忆，用于注入 Prompt
    * - 按重要性降序排列
    * - 去重（相同内容只保留最新）
-   * - 时间衰减（30天前的记忆 importance -2）
+   * - 章节距离衰减（>5章 -1，>10章 -2，>20章 -3）
+   * - global 记忆不衰减
    * - 主线优先（main-plot 标签 +2 importance）
    * - 截断到预算内（优先保留主线、高重要性记忆）
    */
@@ -154,36 +191,45 @@ export class MemoryManager {
     }
     let uniqueEntries = Array.from(contentMap.values())
 
-    // 2. 时间衰减：30天前的记忆 importance -2
-    const now = new Date()
+    // 2. 推断当前章节号（取 entries 中最大的 chapterNumber）
+    const currentChapterNumber = Math.max(0, ...entries.map(e => e.chapterNumber || 0))
+
+    // 3. 章节距离衰减：global 记忆不衰减
     for (const entry of uniqueEntries) {
-      if (entry.createdAt) {
-        const daysOld = (now.getTime() - new Date(entry.createdAt).getTime()) / (1000 * 60 * 60 * 24)
-        if (daysOld > 30) {
+      if (entry.chapterNumber !== undefined && currentChapterNumber > 0) {
+        const dist = currentChapterNumber - entry.chapterNumber
+        if (dist > 20) {
+          entry.importance = Math.max(1, entry.importance - 3)
+        } else if (dist > 10) {
           entry.importance = Math.max(1, entry.importance - 2)
+        } else if (dist > 5) {
+          entry.importance = Math.max(1, entry.importance - 1)
         }
       }
     }
 
-    // 3. 主线优先：带 main-plot 标签的 +2 importance
+    // 4. 主线优先：带 main-plot 标签的 +2 importance
     for (const entry of uniqueEntries) {
       if (entry.tags.includes('main-plot')) {
         entry.importance += 2
       }
     }
 
-    // 4. 按 importance 降序排列
+    // 5. 按 importance 降序排列
     uniqueEntries.sort((a, b) => b.importance - a.importance)
 
-    // 5. 截断：只保留重要性 >= 5 的前 30 条
+    // 6. 截断：只保留重要性 >= 5 的前 30 条
     const filtered = uniqueEntries.filter(e => e.importance >= 5).slice(0, 30)
 
     if (filtered.length === 0) return '无记忆信息'
 
-    // 6. 格式化输出
+    // 7. 格式化输出：同时显示绝对章节号和相对距离
     const lines = filtered.map(e => {
       const marker = e.tags.includes('main-plot') ? '【主线】' : ''
-      return `- [${e.layer}]${marker} ${e.content}`
+      const distMarker = e.chapterNumber !== undefined && currentChapterNumber > 0
+        ? `(第${e.chapterNumber}章·${currentChapterNumber - e.chapterNumber}章前) `
+        : ''
+      return `- [${e.layer}]${marker} ${distMarker}${e.content}`
     })
 
     return lines.join('\n')
