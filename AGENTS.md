@@ -229,19 +229,23 @@ System Message 由 `RuntimePromptCompiler` 编译：
 
 ### 5.3 Context Budget（Token 预算控制）
 
-默认总预算 `64000` tokens，各层预算通过 `packages/shared/src/index.ts` 中的 `DEFAULT_PIPELINE_BUDGET` 常量配置：
+预算不再硬编码，而是从 `AiProviderConfig.contextLength` 动态派生。
 
-| 层 | 预算 |
-|--|--|
-| style | 2000 |
-| story | 12000 |
-| lore | 10000 |
-| character | 12000 |
-| scene | 12000 |
-| memory | 8000 |
-| timeline | 4000 |
-| plotArc | 3000 |
-| output | 16000 |
+**基准模板**（`DEFAULT_PIPELINE_BUDGET`，基于 64000 tokens）：
+
+| 层 | 预算 | 占比 |
+|--|--|--|
+| style | 2000 | 3.1% |
+| story | 12000 | 18.8% |
+| lore | 10000 | 15.6% |
+| character | 12000 | 18.8% |
+| scene | 12000 | 18.8% |
+| memory | 8000 | 12.5% |
+| timeline | 4000 | 6.3% |
+| plotArc | 3000 | 4.7% |
+| output | 16000 | 25.0% |
+
+**动态缩放**：`scaleBudget(contextLength)` 按实际模型的 `contextLength` 线性缩放各层预算，总预算留 5% 余量（`contextLength * 0.95`）。例如配置 128K 模型后，memory 层预算从 8000 自动变为 16000。
 
 `PromptAssembler` 负责动态裁剪：超出预算时按字符数截断，并标记 `truncated`。
 
@@ -305,6 +309,12 @@ interface AIProvider {
 - `DeepSeekProvider` — 完整实现（调用 DeepSeek API `/v1/chat/completions`，30s timeout，自动读取 `usage` 到 `lastUsage`）
 
 **PromptLog 自动记录**：所有 AI 调用通过 `ai-call-logger.ts` 的 `callAIWithLog()` 执行，自动写入 `PromptLog` 表（异步，不阻塞返回），记录完整的 system/user/response、token 消耗、模型、耗时、状态。
+
+**模型配置与预算联动**：
+- `AiProviderConfig` 表存储 `contextLength`（默认 64000）和 `maxTokens`（默认 4096）
+- `GET /api/ai-providers/default` 返回当前默认模型配置
+- 生成时（`/preview`、`/generate`、队列处理器）读取默认配置，通过 `scaleBudget(contextLength)` 动态调整 Pipeline 各层预算
+- `maxTokens` 从模型配置读取，替代硬编码 4096
 
 新增 Provider：在 `packages/ai-provider/src/index.ts` 的 `createProvider()` 中注册。
 
@@ -387,7 +397,7 @@ interface AIProvider {
 | `Draft` | 候选/废案 |
 | `PromptConfig` | Prompt 模板配置（旧版兼容） |
 | `Score` | 评分记录（7 维度） |
-| `AiProviderConfig` | AI 模型配置 |
+| `AiProviderConfig` | AI 模型配置（`contextLength` 驱动 Pipeline 预算动态缩放） |
 | `RuntimeProfile` | Shared Runtime Base（Identity + Settings + Behavior + Jailbreak） |
 | `WorkerTask` | 不同 Worker 的 Task Layer（generation / scoring / memory / graph / timeline / rewrite / memory_organize） |
 | `PlotArc` | 剧情弧线 |

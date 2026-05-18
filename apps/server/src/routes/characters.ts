@@ -22,6 +22,9 @@ export async function characterRoutes(app: FastifyInstance) {
         name: body.name,
         personality: JSON.stringify(body.personality || []),
         speechStyle: JSON.stringify(body.speechStyle || []),
+        identity: JSON.stringify(body.identity || []),
+        appearance: JSON.stringify(body.appearance || []),
+        temperament: JSON.stringify(body.temperament || []),
         relationships: JSON.stringify(body.relationships || {}),
         status: JSON.stringify(body.status || {})
       }
@@ -36,6 +39,9 @@ export async function characterRoutes(app: FastifyInstance) {
     const data: any = { name: body.name }
     if (body.personality !== undefined) data.personality = JSON.stringify(body.personality)
     if (body.speechStyle !== undefined) data.speechStyle = JSON.stringify(body.speechStyle)
+    if (body.identity !== undefined) data.identity = JSON.stringify(body.identity)
+    if (body.appearance !== undefined) data.appearance = JSON.stringify(body.appearance)
+    if (body.temperament !== undefined) data.temperament = JSON.stringify(body.temperament)
     if (body.relationships !== undefined) data.relationships = JSON.stringify(body.relationships)
     if (body.status !== undefined) data.status = JSON.stringify(body.status)
     const character = await app.prisma.character.update({

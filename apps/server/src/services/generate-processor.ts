@@ -1,7 +1,7 @@
 import { PromptPipeline } from '@novel-runtime/prompt-runtime'
 import { MemoryManager } from '@novel-runtime/memory-engine'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
-import { formatCharacterSnapshot, generateFallbackContent, DEFAULT_PIPELINE_BUDGET } from '@novel-runtime/shared'
+import { formatCharacterSnapshot, generateFallbackContent, DEFAULT_PIPELINE_BUDGET, scaleBudget } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
 import { getActivePlotArcs } from './plot-extractor.js'
@@ -47,8 +47,14 @@ export function createGenerateProcessor(app: FastifyInstance) {
     const base = await loadRuntimeBase(storyId, prisma)
     const task = await loadWorkerTask(storyId, 'generation', prisma)
 
+    // 读取默认模型配置，动态调整预算和 maxTokens
+    const aiConfig = await prisma.aiProviderConfig.findFirst({ where: { isDefault: true } })
+    const contextLength = aiConfig?.contextLength || DEFAULT_PIPELINE_BUDGET.total
+    const maxTokens = aiConfig?.maxTokens || 4096
+    const budget = scaleBudget(contextLength)
+
     // 5. 组装 User Message（Context Layers）
-    const pipeline = new PromptPipeline(DEFAULT_PIPELINE_BUDGET)
+    const pipeline = new PromptPipeline(budget)
 
     const pipelineResult = pipeline.run({
       style: '',
@@ -79,7 +85,8 @@ export function createGenerateProcessor(app: FastifyInstance) {
           chapterId,
           callType: 'generate',
           compiled,
-          temperature: 0.6 + i * 0.15
+          temperature: 0.6 + i * 0.15,
+          maxTokens
         })
         content = result ?? generateFallbackContent(chapter, i, '未配置 API Key')
       } catch (err: any) {

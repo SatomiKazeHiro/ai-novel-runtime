@@ -9,6 +9,17 @@ export async function aiProviderRoutes(app: FastifyInstance) {
     return { success: true, data: configs }
   })
 
+  // GET /api/ai-providers/default — 获取当前默认配置
+  app.get('/api/ai-providers/default', async (request, reply) => {
+    const config = await app.prisma.aiProviderConfig.findFirst({
+      where: { isDefault: true }
+    })
+    if (!config) {
+      return reply.status(404).send({ success: false, error: 'No default AI provider configured' })
+    }
+    return { success: true, data: config }
+  })
+
   // POST /api/ai-providers — 创建
   app.post('/api/ai-providers', async (request, reply) => {
     const body = request.body as any

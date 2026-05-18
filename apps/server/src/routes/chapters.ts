@@ -6,7 +6,7 @@ import { getActivePlotArcs } from '../services/plot-extractor.js'
 import { PromptPipeline } from '@novel-runtime/prompt-runtime'
 import { MemoryManager } from '@novel-runtime/memory-engine'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
-import { formatCharacterSnapshot, generateFallbackContent, DEFAULT_PIPELINE_BUDGET } from '@novel-runtime/shared'
+import { formatCharacterSnapshot, generateFallbackContent, DEFAULT_PIPELINE_BUDGET, scaleBudget } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { callAIWithLog } from '../services/ai-call-logger.js'
 
@@ -118,7 +118,12 @@ export async function chapterRoutes(app: FastifyInstance) {
     const task = await loadWorkerTask(storyId, 'generation', prisma)
     const plotArcText = await getActivePlotArcs(prisma, storyId)
 
-    const pipeline = new PromptPipeline(DEFAULT_PIPELINE_BUDGET)
+    // 读取默认模型配置，动态调整预算
+    const aiConfig = await prisma.aiProviderConfig.findFirst({ where: { isDefault: true } })
+    const contextLength = aiConfig?.contextLength || DEFAULT_PIPELINE_BUDGET.total
+    const budget = scaleBudget(contextLength)
+
+    const pipeline = new PromptPipeline(budget)
 
     const pipelineResult = pipeline.run({
       story: `作品：《${story.title}》\n简介：${story.description || '无'}`,
@@ -139,7 +144,8 @@ export async function chapterRoutes(app: FastifyInstance) {
       data: {
         tokens: compiled.meta,
         layers: pipelineResult.stats,
-        preview: pipelineResult.text // pipelineResult.text.slice(0, 2000) + (pipelineResult.text.length > 2000 ? '...' : '')
+        preview: pipelineResult.text,
+        model: aiConfig ? { name: aiConfig.name, model: aiConfig.model, contextLength, maxTokens: aiConfig.maxTokens } : null
       }
     }
   })
@@ -187,7 +193,13 @@ export async function chapterRoutes(app: FastifyInstance) {
     // 5. 组装 User Message（Context Layers）
     const plotArcText = await getActivePlotArcs(prisma, storyId)
 
-    const pipeline = new PromptPipeline(DEFAULT_PIPELINE_BUDGET)
+    // 读取默认模型配置，动态调整预算和 maxTokens
+    const aiConfig = await prisma.aiProviderConfig.findFirst({ where: { isDefault: true } })
+    const contextLength = aiConfig?.contextLength || DEFAULT_PIPELINE_BUDGET.total
+    const maxTokens = aiConfig?.maxTokens || 4096
+    const budget = scaleBudget(contextLength)
+
+    const pipeline = new PromptPipeline(budget)
 
     const pipelineResult = pipeline.run({
       story: `作品：《${story.title}》\n简介：${story.description || '无'}`,
@@ -220,7 +232,7 @@ export async function chapterRoutes(app: FastifyInstance) {
           callType: 'generate',
           compiled,
           temperature,
-          maxTokens: 4096
+          maxTokens
         })
         content = result ?? generateFallbackContent(chapter, i, '未配置 API Key')
         app.log.info(`[Generate] AI returned ${content.length} chars`)

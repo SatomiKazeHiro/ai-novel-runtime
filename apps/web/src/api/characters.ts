@@ -5,6 +5,9 @@ export interface CharacterCreate {
   name: string
   personality?: string[]
   speechStyle?: string[]
+  identity?: string[]
+  appearance?: string[]
+  temperament?: string[]
   relationships?: Record<string, any>
   status?: Record<string, any>
 }
@@ -13,6 +16,9 @@ export interface CharacterUpdate {
   name?: string
   personality?: string[]
   speechStyle?: string[]
+  identity?: string[]
+  appearance?: string[]
+  temperament?: string[]
   relationships?: Record<string, any>
   status?: Record<string, any>
 }

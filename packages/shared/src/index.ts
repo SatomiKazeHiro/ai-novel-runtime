@@ -70,9 +70,21 @@ export function formatCharacterSnapshot(characters: any[]): string {
   return characters.map(c => {
     const status = JSON.parse(c.status || '{}')
     const rels = JSON.parse(c.relationships || '{}')
+    const personality = JSON.parse(c.personality || '[]') as string[]
+    const speechStyle = JSON.parse(c.speechStyle || '[]') as string[]
+    const identity = JSON.parse(c.identity || '[]') as string[]
+    const appearance = JSON.parse(c.appearance || '[]') as string[]
+    const temperament = JSON.parse(c.temperament || '[]') as string[]
+
     const statusStr = Object.entries(status).map(([k, v]) => `${k}:${v}`).join(', ')
     const relStr = Object.entries(rels).slice(0, 2).map(([k, v]) => `${k}-${v}`).join(', ')
+
     const parts = [`【${c.name}】`]
+    if (identity.length) parts.push(`身份[${identity.join(', ')}]`)
+    if (appearance.length) parts.push(`外貌[${appearance.join(', ')}]`)
+    if (temperament.length) parts.push(`气质[${temperament.join(', ')}]`)
+    if (personality.length) parts.push(`性格[${personality.join(', ')}]`)
+    if (speechStyle.length) parts.push(`说话风格[${speechStyle.join(', ')}]`)
     if (statusStr) parts.push(`状态[${statusStr}]`)
     if (relStr) parts.push(`关系[${relStr}]`)
     return parts.join(' ')
@@ -121,3 +133,43 @@ export const DEFAULT_PIPELINE_BUDGET = {
   plotArc: 3000,
   output: 16000
 } as const
+
+export type BudgetConfig = {
+  total: number
+  identity: number
+  behavior: number
+  jailbreak: number
+  style: number
+  story: number
+  lore: number
+  character: number
+  scene: number
+  memory: number
+  timeline: number
+  plotArc: number
+  output: number
+}
+
+/**
+ * 根据模型的 contextLength 动态缩放 Pipeline 预算。
+ * 保留 DEFAULT_PIPELINE_BUDGET 各层的比率，按实际 contextLength 线性缩放。
+ * 总预算留 5% 余量给系统开销（system message 等）。
+ */
+export function scaleBudget(contextLength: number): BudgetConfig {
+  const ratio = contextLength / DEFAULT_PIPELINE_BUDGET.total
+  return {
+    total: Math.floor(contextLength * 0.95),
+    identity: 0,
+    behavior: 0,
+    jailbreak: 0,
+    style: Math.floor(DEFAULT_PIPELINE_BUDGET.style * ratio),
+    story: Math.floor(DEFAULT_PIPELINE_BUDGET.story * ratio),
+    lore: Math.floor(DEFAULT_PIPELINE_BUDGET.lore * ratio),
+    character: Math.floor(DEFAULT_PIPELINE_BUDGET.character * ratio),
+    scene: Math.floor(DEFAULT_PIPELINE_BUDGET.scene * ratio),
+    memory: Math.floor(DEFAULT_PIPELINE_BUDGET.memory * ratio),
+    timeline: Math.floor(DEFAULT_PIPELINE_BUDGET.timeline * ratio),
+    plotArc: Math.floor(DEFAULT_PIPELINE_BUDGET.plotArc * ratio),
+    output: Math.floor(DEFAULT_PIPELINE_BUDGET.output * ratio)
+  }
+}

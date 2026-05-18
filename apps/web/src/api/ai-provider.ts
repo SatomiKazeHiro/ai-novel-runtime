@@ -24,6 +24,7 @@ export interface AiProviderUpdate {
 
 export const aiProviderApi = {
   list: () => api.get('/api/ai-providers'),
+  getDefault: () => api.get('/api/ai-providers/default'),
   create: (data: AiProviderCreate) => api.post('/api/ai-providers', data),
   update: (id: string, data: AiProviderUpdate) => api.put(`/api/ai-providers/${id}`, data),
   remove: (id: string) => api.delete(`/api/ai-providers/${id}`),

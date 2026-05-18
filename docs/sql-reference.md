@@ -142,10 +142,17 @@
 | `apiKey` | String? | 加密存储（生产环境建议加密） |
 | `baseUrl` | String? | 如 `https://api.deepseek.com` |
 | `model` | String | 如 `deepseek-chat` |
-| `contextLength` | Int | 默认 64000 |
-| `maxTokens` | Int | 默认 4096 |
+| `contextLength` | Int | 默认 64000，驱动 PromptPipeline 预算动态缩放 |
+| `maxTokens` | Int | 默认 4096，生成时从配置读取替代硬编码 |
 | `temperature` | Float | 默认 0.7 |
 | `isDefault` | Boolean | 只有一个 `true` |
+
+**API 接口**：
+- `GET /api/ai-providers` — 列表
+- `GET /api/ai-providers/default` — 获取当前默认配置（生成流程使用）
+- `POST /api/ai-providers/:id/default` — 设为默认
+
+**预算联动**：`contextLength` 通过 `scaleBudget(contextLength)` 函数（`packages/shared`）线性缩放 `DEFAULT_PIPELINE_BUDGET` 各层预算。总预算留 5% 余量给 System Message 等开销。
 
 ---
 

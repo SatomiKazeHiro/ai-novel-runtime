@@ -111,7 +111,7 @@
             <n-space justify="space-between" align="center">
               <n-text strong>Prompt 预算</n-text>
               <n-space>
-                <n-tag size="small" :type="tokenStats.totalTokens > 50000 ? 'error' : tokenStats.totalTokens > 40000 ? 'warning' : 'success'">
+                <n-tag size="small" :type="tokenStats.totalTokens > DANGER_THRESHOLD ? 'error' : tokenStats.totalTokens > WARN_THRESHOLD ? 'warning' : 'success'">
                   {{ tokenStats.totalTokens.toLocaleString() }} / {{ MODEL_MAX_TOKENS.toLocaleString() }} tokens
                 </n-tag>
                 <n-tag v-if="layerStats.some(l => l.truncated)" size="small" type="error">⚠️ 有层被截断</n-tag>
@@ -119,7 +119,7 @@
             </n-space>
             <n-progress
               :percentage="Math.min(100, Math.round((tokenStats.totalTokens / MODEL_MAX_TOKENS) * 100))"
-              :status="tokenStats.totalTokens > 55000 ? 'error' : tokenStats.totalTokens > 40000 ? 'warning' : 'success'"
+              :status="tokenStats.totalTokens > CRITICAL_THRESHOLD ? 'error' : tokenStats.totalTokens > WARN_THRESHOLD ? 'warning' : 'success'"
               :show-indicator="false"
               :height="12"
             />
@@ -149,6 +149,7 @@
                 <n-p style="white-space: pre-wrap; line-height: 1.8; font-size: 13px">{{ draft.content }}</n-p>
               </n-scrollbar>
               <template #footer>
+                <!-- TODO: 增加模型 -->
                 <n-button size="small" type="primary" block @click="selectDraft(draft.id)">采用此候选</n-button>
               </template>
             </n-card>
@@ -170,6 +171,7 @@
           <n-button @click="archiveChapter" :disabled="!editForm.content?.trim()">
             归档{{ !editForm.content?.trim() ? '（需先填写正文）' : '' }}
           </n-button>
+          <!-- TODO: 增加模型 -->
         </n-space>
       </n-card>
     </div>
@@ -206,7 +208,7 @@
             <n-space justify="space-between" align="center">
               <n-text strong>预算概览</n-text>
               <n-space>
-                <n-tag size="small" :type="previewData?.tokens?.totalTokens > 50000 ? 'error' : previewData?.tokens?.totalTokens > 40000 ? 'warning' : 'success'">
+                <n-tag size="small" :type="(previewData?.tokens?.totalTokens || 0) > DANGER_THRESHOLD ? 'error' : (previewData?.tokens?.totalTokens || 0) > WARN_THRESHOLD ? 'warning' : 'success'">
                   {{ previewData?.tokens?.totalTokens?.toLocaleString() || 0 }} / {{ MODEL_MAX_TOKENS.toLocaleString() }} tokens
                 </n-tag>
                 <n-tag v-if="previewData?.layers?.some((l: any) => l.truncated)" size="small" type="error">⚠️ 有层被截断</n-tag>
@@ -214,7 +216,7 @@
             </n-space>
             <n-progress
               :percentage="Math.min(100, Math.round(((previewData?.tokens?.totalTokens || 0) / MODEL_MAX_TOKENS) * 100))"
-              :status="(previewData?.tokens?.totalTokens || 0) > 55000 ? 'error' : (previewData?.tokens?.totalTokens || 0) > 40000 ? 'warning' : 'success'"
+              :status="(previewData?.tokens?.totalTokens || 0) > CRITICAL_THRESHOLD ? 'error' : (previewData?.tokens?.totalTokens || 0) > WARN_THRESHOLD ? 'warning' : 'success'"
               :show-indicator="false"
               :height="12"
             />
@@ -245,7 +247,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, h, watch } from 'vue'
+import { ref, onMounted, h, watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NH1, NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput,
@@ -257,6 +259,7 @@ import {
 import { ArrowBackOutline } from '@vicons/ionicons5'
 import { chaptersApi, draftsApi } from '../api/chapters'
 import { plotArcApi } from '../api/plot-arc'
+import { aiProviderApi } from '../api/ai-provider'
 
 const route = useRoute()
 const chapters = ref<any[]>([])
@@ -273,7 +276,11 @@ const layerStats = ref<{ name: string; tokens: number; budget: number; truncated
 const plotArcs = ref<any[]>([])
 const showPreviewModal = ref(false)
 const previewData = ref<any>(null)
-const MODEL_MAX_TOKENS = 64000
+const defaultModel = ref<any>(null)
+const MODEL_MAX_TOKENS = computed(() => defaultModel.value?.contextLength || 64000)
+const WARN_THRESHOLD = computed(() => Math.floor(MODEL_MAX_TOKENS.value * 0.625))
+const DANGER_THRESHOLD = computed(() => Math.floor(MODEL_MAX_TOKENS.value * 0.78))
+const CRITICAL_THRESHOLD = computed(() => Math.floor(MODEL_MAX_TOKENS.value * 0.86))
 
 const form = ref({ title: '', outline: '', isSideStory: false, number: '' })
 const editForm = ref({ outline: '', content: '', sceneLocation: '', sceneMood: '', sceneGoal: '' })
@@ -327,6 +334,15 @@ function arcStatusType(status?: string) {
     case 'resolving': return 'warning'
     case 'pending': return 'default'
     default: return 'default'
+  }
+}
+
+async function loadDefaultModel() {
+  try {
+    const res = await aiProviderApi.getDefault()
+    defaultModel.value = res.data.data
+  } catch {
+    defaultModel.value = null
   }
 }
 
@@ -530,6 +546,7 @@ watch(() => route.params.storyId, () => {
 })
 
 onMounted(() => {
+  loadDefaultModel()
   if (route.params.storyId) loadChapters()
 })
 </script>
