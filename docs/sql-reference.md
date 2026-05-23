@@ -44,7 +44,7 @@
 | `sceneMood` | String? | 场景氛围 |
 | `sceneGoal` | String? | 场景目标 |
 | `runtimeProfileId` | String? FK → RuntimeProfile | 章节级写作人格覆盖 |
-| `compiledPrompt` | String? | 生成时使用的完整 Prompt（JSON：{ systemMessage, userMessage, meta }） |
+| `compiledPrompt` | String? | 生成时使用的完整 Prompt（JSON：{ systemMessage, userMessage, meta }）。**注意**：生成候选时 backend 会同步写入此字段，确保前端编辑页面始终能展示当前 Prompt |
 | `graphDelta` | String? | 相对于上一章的图谱变化（JSON：{ addedNodes, updatedNodes, addedEdges, summary }） |
 | `graphSnapshot` | String? | 到当前章节的完整图谱快照（JSON：{ nodes, edges, timestamp }） |
 | `createdAt` | DateTime | |

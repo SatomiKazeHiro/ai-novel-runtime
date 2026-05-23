@@ -527,7 +527,51 @@ pnpm --filter server start   # 执行 node dist/server.js
 2. 在 `app.ts` 中 `await app.register(xxxRoutes)`
 3. 如需 Prisma，通过 `app.prisma` 访问（已装饰）
 
-### 调整图谱快照逻辑
+---
+
+## 11. API 路由速查
+
+### 核心创作流程
+
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| `POST` | `/api/stories/:storyId/chapters` | 新建根章节 |
+| `POST` | `/api/chapters/:chapterId/develop` | 在章节上发展下一章/番外 |
+| `GET` | `/api/stories/:storyId/chapter-tree` | 获取章节分支树（嵌套结构） |
+| `PUT` | `/api/chapters/:chapterId` | 更新章节（标题/大纲/正文/场景） |
+| `DELETE` | `/api/chapters/:chapterId` | 删除章节 |
+| `POST` | `/api/chapters/:chapterId/preview` | 预览 Prompt（组装 + 预算，不调用 AI） |
+| `POST` | `/api/chapters/:chapterId/generate` | 异步生成候选（创建 generating Draft → 入队 → 立即返回） |
+| `POST` | `/api/chapters/:chapterId/select` | 采用 Draft（选中 Draft → selected，其余 → rejected） |
+| `POST` | `/api/chapters/:chapterId/archive` | 归档（状态更新 + combined_extract + memory_organize + graph_snapshot） |
+
+### Draft
+
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| `GET` | `/api/chapters/:chapterId/drafts` | 列表（按 createdAt 倒序） |
+| `GET` | `/api/drafts/:draftId` | 详情 |
+| `DELETE` | `/api/drafts/:draftId` | 删除 |
+| `POST` | `/api/drafts/:draftId/score` | AI 评分（7 维度） |
+
+### 图谱
+
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| `GET` | `/api/stories/:storyId/graph` | 当前实时图谱 |
+| `POST` | `/api/stories/:storyId/graph/nodes` | 新增节点 |
+| `POST` | `/api/stories/:storyId/graph/edges` | 新增边 |
+| `GET` | `/api/chapters/:chapterId/graph-snapshot` | 获取章节的 graphSnapshot + graphDelta |
+
+### 配置
+
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| `GET` | `/api/ai-providers/default` | 默认模型配置（含 contextLength / maxTokens） |
+
+---
+
+## 12. 扩展开发指南
 在 `apps/server/src/services/graph-snapshot.ts` 中：
 1. `buildGraphSnapshot()` — 修改节点/边查询条件或快照结构
 2. `computeGraphDelta()` — 修改对比算法（目前对比 type:key 唯一标识 + data 属性）
@@ -535,7 +579,7 @@ pnpm --filter server start   # 执行 node dist/server.js
 
 ---
 
-## 12. 设计哲学（必读）
+## 13. 设计哲学（必读）
 
 > 真正重要的是：状态管理、记忆管理、世界观一致性、长篇稳定性、章节工业化。
 >
