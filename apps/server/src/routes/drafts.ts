@@ -19,5 +19,10 @@ export async function draftRoutes(app: FastifyInstance) {
     return { success: true, data: draft }
   })
 
-
+  // DELETE /api/drafts/:draftId
+  app.delete('/api/drafts/:draftId', async (request, reply) => {
+    const { draftId } = request.params as any
+    await app.prisma.draft.delete({ where: { id: draftId } })
+    return { success: true }
+  })
 }

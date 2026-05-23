@@ -38,27 +38,48 @@ model Story {
 
 // 章节
 model Chapter {
-  id          String   @id @default(uuid())
-  storyId     String
-  number      Float
-  isSideStory Boolean  @default(false)
-  title       String
-  outline     String?
-  content     String?
-  summary     String?
-  status      String   @default("draft") // draft, generated, scored, selected, archived, rejected
-  sceneLocation String?
-  sceneMood   String?
-  sceneGoal   String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                String   @id @default(uuid())
+  storyId           String
 
-  story       Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-  drafts      Draft[]
-  memories    Memory[]
-  scores      Score[]
+  // 分支关系
+  parentChapterId   String?  // 指向父章节（上一章），null 表示根章节
+  branchName        String?  // 分支名称，如 "主线"、"if:黑化路线"
+
+  number            Float
+  isSideStory       Boolean  @default(false)
+  title             String
+  outline           String?
+  content           String?
+  summary           String?
+  status            String   @default("draft") // draft, generating, generated, scored, selected, archived, rejected
+  sceneLocation     String?
+  sceneMood         String?
+  sceneGoal         String?
+
+  // 写作人格绑定（可覆盖小说默认人格）
+  runtimeProfileId  String?
+
+  // 生成时记录的完整 Prompt（用于回溯）
+  compiledPrompt    String?  // JSON: { systemMessage, userMessage, meta }
+
+  // 图谱相关
+  graphDelta        String?  // JSON: 相对于上一章的图谱变化
+  graphSnapshot     String?  // JSON: 到当前章节的完整图谱快照
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  story             Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  parentChapter     Chapter? @relation("ChapterBranches", fields: [parentChapterId], references: [id], onDelete: SetNull)
+  childChapters     Chapter[] @relation("ChapterBranches")
+  runtimeProfile    RuntimeProfile? @relation(fields: [runtimeProfileId], references: [id])
+  drafts            Draft[]
+  memories          Memory[]
+  scores            Score[]
 
   @@unique([storyId, number])
+  @@index([storyId, parentChapterId])
+  @@index([storyId, status])
 }
 
 // 角色卡
@@ -163,17 +184,23 @@ model TimelineEvent {
 
 // 候选/废案
 model Draft {
-  id          String   @id @default(uuid())
-  storyId     String
-  chapterId   String
-  version     String   @default("v1")
-  content     String
-  params      String   @default("{}") // generation params: temperature, model, etc.
-  status      String   @default("candidate") // candidate, selected, archived, rejected
-  createdAt   DateTime @default(now())
+  id              String   @id @default(uuid())
+  storyId         String
+  chapterId       String
+  version         String   @default("v1") // 候选_1、候选_2、候选_3
+  temperature     Float    @default(0.7) // 实际使用的 temperature
+  maxTokens       Int      @default(4096) // 实际使用的 maxTokens
+  content         String
+  compiledPrompt  String?  // JSON: { systemMessage, userMessage }
+  params          String   @default("{}") // JSON: { temperature, maxTokens, model, runtimeProfileId, callType, durationMs }
+  score           String?  // JSON: 评分结果
+  status          String   @default("generating") // generating, completed, failed, selected, rejected
+  errorMessage    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now()) @updatedAt
 
-  story       Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-  chapter     Chapter  @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  story           Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  chapter         Chapter  @relation(fields: [chapterId], references: [id], onDelete: Cascade)
 }
 
 // Prompt 配置（旧版，保留兼容）
@@ -207,6 +234,7 @@ model RuntimeProfile {
   updatedAt   DateTime @updatedAt
 
   stories     Story[]
+  chapters    Chapter[]
 }
 
 // Worker Task（不同 Worker 的 Task Layer）
@@ -251,13 +279,14 @@ model Score {
   chapterId             String
   draftId               String?
   styleSimilarity       Float?
-  loreConsistency       Float?
-  characterConsistency  Float?
+  outlineAdherence      Float?
+  sceneMatch            Float?
+  profileConsistency    Float?
+  proseQuality          Float?
   emotionalTension      Float?
   pacing                Float?
-  proseQuality          Float?
-  forbiddenContentRisk  Float?
   totalScore            Float?
+  comment               String?
   details               String   @default("{}") // JSON
   createdAt             DateTime @default(now())
 

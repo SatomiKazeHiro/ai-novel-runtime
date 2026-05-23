@@ -1,12 +1,13 @@
 export interface ScoreResult {
   styleSimilarity: number
-  loreConsistency: number
-  characterConsistency: number
+  outlineAdherence: number
+  sceneMatch: number
+  profileConsistency: number
+  proseQuality: number
   emotionalTension: number
   pacing: number
-  proseQuality: number
-  forbiddenContentRisk: number
   totalScore: number
+  comment?: string
   details: Record<string, any>
 }
 
@@ -14,47 +15,57 @@ export class RuleBasedScorer {
   score(text: string, rules: any): Partial<ScoreResult> {
     const forbiddenWords = rules.forbiddenWords || []
     const hasForbidden = forbiddenWords.some((w: string) => text.includes(w))
+    // 简单的规则评分：基于文本长度和基本质量指标
+    const length = text.length
+    const wordCount = text.split(/\s+/).length
+    const avgSentenceLength = length / (text.split(/[。！？.!?]/).length || 1)
+
     return {
-      forbiddenContentRisk: hasForbidden ? 0 : 100,
-      loreConsistency: 80,
-      characterConsistency: 80
+      styleSimilarity: hasForbidden ? 60 : 80,
+      outlineAdherence: length > 500 ? 80 : 50,
+      sceneMatch: length > 200 ? 78 : 55,
+      profileConsistency: avgSentenceLength > 10 ? 75 : 70,
+      proseQuality: length > 1000 ? 82 : 65,
+      emotionalTension: text.includes('？') || text.includes('！') ? 80 : 70,
+      pacing: wordCount > 100 ? 78 : 60,
+      totalScore: 75
     }
   }
 }
 
 export class AIScorer {
   async score(text: string, context: any): Promise<Partial<ScoreResult>> {
-    // TODO: integrate AI provider for real scoring
-    throw new Error('AIScorer not yet implemented')
+    // AI 评分逻辑已移至后端路由（scores.ts），通过调用 AI Provider 实现
+    // 此处保留接口以便未来需要独立使用时调用
+    throw new Error('AIScorer should be called via the score route with full context')
   }
 }
 
 export class ScoringEngine {
   private ruleScorer = new RuleBasedScorer()
-  private aiScorer = new AIScorer()
 
-  async run(text: string, rules: any, context: any): Promise<ScoreResult> {
+  run(text: string, rules: any, _context?: any): ScoreResult {
     const ruleScores = this.ruleScorer.score(text, rules)
-    const aiScores = await this.aiScorer.score(text, context)
     const result: ScoreResult = {
-      styleSimilarity: Math.round((ruleScores.styleSimilarity ?? 80) * 10) / 10,
-      loreConsistency: Math.round((ruleScores.loreConsistency ?? 80) * 10) / 10,
-      characterConsistency: Math.round((ruleScores.characterConsistency ?? 80) * 10) / 10,
-      emotionalTension: Math.round((aiScores.emotionalTension ?? 80) * 10) / 10,
-      pacing: Math.round((aiScores.pacing ?? 80) * 10) / 10,
-      proseQuality: Math.round((aiScores.proseQuality ?? 80) * 10) / 10,
-      forbiddenContentRisk: Math.round((ruleScores.forbiddenContentRisk ?? 100) * 10) / 10,
+      styleSimilarity: Math.round((ruleScores.styleSimilarity ?? 75) * 10) / 10,
+      outlineAdherence: Math.round((ruleScores.outlineAdherence ?? 75) * 10) / 10,
+      sceneMatch: Math.round((ruleScores.sceneMatch ?? 75) * 10) / 10,
+      profileConsistency: Math.round((ruleScores.profileConsistency ?? 75) * 10) / 10,
+      proseQuality: Math.round((ruleScores.proseQuality ?? 75) * 10) / 10,
+      emotionalTension: Math.round((ruleScores.emotionalTension ?? 75) * 10) / 10,
+      pacing: Math.round((ruleScores.pacing ?? 75) * 10) / 10,
       totalScore: 0,
-      details: {}
+      comment: '规则评分（AI 评分未启用）',
+      details: { source: 'rule-based' }
     }
     result.totalScore = Math.round((
       result.styleSimilarity +
-      result.loreConsistency +
-      result.characterConsistency +
-      result.emotionalTension +
-      result.pacing +
+      result.outlineAdherence +
+      result.sceneMatch +
+      result.profileConsistency +
       result.proseQuality +
-      result.forbiddenContentRisk
+      result.emotionalTension +
+      result.pacing
     ) / 7 * 10) / 10
     return result
   }

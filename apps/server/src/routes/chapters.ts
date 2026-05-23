@@ -3,6 +3,7 @@ import { generateQueue } from '../queue/index.js'
 import { extractAndSaveAll } from '../services/combined-extractor.js'
 import { organizeMemoriesAfterArchive } from '../services/memory-organizer.js'
 import { getActivePlotArcs } from '../services/plot-extractor.js'
+import { saveGraphSnapshotAndDelta } from '../services/graph-snapshot.js'
 import { PromptPipeline } from '@novel-runtime/prompt-runtime'
 import { MemoryManager } from '@novel-runtime/memory-engine'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
@@ -150,14 +151,16 @@ export async function chapterRoutes(app: FastifyInstance) {
     }
   })
 
-  // POST /api/chapters/:chapterId/generate — 同步阻塞生成
+  // POST /api/chapters/:chapterId/generate — 异步生成（创建 Draft 后入队，立即返回）
   app.post('/api/chapters/:chapterId/generate', async (request, reply) => {
     const { chapterId } = request.params as any
     const body = request.body as any
     const storyId = body.storyId
     const candidateCount = body.candidateCount || 3
+    const temperatures = body.temperatures || [0.6, 0.75, 0.9]
+    const customMaxTokens = body.maxTokens
 
-    app.log.info(`[Generate] Sync generation started for chapter ${chapterId}`)
+    app.log.info(`[Generate] Async generation started for chapter ${chapterId}, candidates: ${candidateCount}`)
 
     const prisma = app.prisma
 
@@ -181,7 +184,7 @@ export async function chapterRoutes(app: FastifyInstance) {
     })
     const checkpointNumber = checkpointChapter?.number || 0
 
-    // 2b. 语义检索相关记忆（只读 checkpoint 之前）
+    // 2b. 语义检索相关记忆
     const memoryManager = new MemoryManager()
     const queryText = `${chapter.outline || ''} ${chapter.sceneLocation || ''} ${chapter.sceneMood || ''} ${chapter.sceneGoal || ''}`
     const relevantMemories = await memoryManager.searchRelevant(storyId, queryText, prisma, 20, checkpointNumber)
@@ -189,18 +192,16 @@ export async function chapterRoutes(app: FastifyInstance) {
     // 3. 加载 Runtime Base + Generation Worker Task
     const base = await loadRuntimeBase(storyId, prisma)
     const task = await loadWorkerTask(storyId, 'generation', prisma)
-
-    // 5. 组装 User Message（Context Layers）
     const plotArcText = await getActivePlotArcs(prisma, storyId)
 
-    // 读取默认模型配置，动态调整预算和 maxTokens
+    // 读取默认模型配置，动态调整预算
     const aiConfig = await prisma.aiProviderConfig.findFirst({ where: { isDefault: true } })
     const contextLength = aiConfig?.contextLength || DEFAULT_PIPELINE_BUDGET.total
-    const maxTokens = aiConfig?.maxTokens || 4096
+    const maxTokens = customMaxTokens || aiConfig?.maxTokens || 4096
     const budget = scaleBudget(contextLength)
 
+    // 5. 组装 User Message
     const pipeline = new PromptPipeline(budget)
-
     const pipelineResult = pipeline.run({
       story: `作品：《${story.title}》\n简介：${story.description || '无'}`,
       character: formatCharacterSnapshot(characters),
@@ -217,58 +218,46 @@ export async function chapterRoutes(app: FastifyInstance) {
     const compiler = new RuntimePromptCompiler()
     const compiled = compiler.compile(base, task, userMessage)
 
-    // 6. 调用 AI Provider 生成候选
-    const drafts: string[] = []
-
+    // 7. 创建 generating 状态的 Draft
+    const generatingDrafts = []
     for (let i = 0; i < candidateCount; i++) {
-      const temperature = 0.6 + i * 0.15
-      let content: string
-
-      try {
-        app.log.info(`[Generate] Calling AI API (candidate ${String.fromCharCode(97 + i)}, temp=${temperature.toFixed(2)})`)
-        const result = await callAIWithLog(app, {
-          storyId,
-          chapterId,
-          callType: 'generate',
-          compiled,
-          temperature,
-          maxTokens
-        })
-        content = result ?? generateFallbackContent(chapter, i, '未配置 API Key')
-        app.log.info(`[Generate] AI returned ${content.length} chars`)
-      } catch (err: any) {
-        app.log.error(`[Generate] AI API failed: ${err.message}`)
-        content = generateFallbackContent(chapter, i, err.message)
-      }
-
-      drafts.push(content)
-    }
-
-    // 8. 保存 Draft
-    const createdDrafts = []
-    for (let i = 0; i < drafts.length; i++) {
       const draft = await prisma.draft.create({
         data: {
           storyId,
           chapterId,
           version: `candidate_${String.fromCharCode(97 + i)}`,
-          content: drafts[i],
-          params: JSON.stringify({ temperature: 0.6 + i * 0.15, model: 'fallback', source: 'fallback' }),
-          status: 'candidate'
+          content: '',
+          temperature: temperatures[i] ?? (0.6 + i * 0.15),
+          maxTokens,
+          params: JSON.stringify({ temperature: temperatures[i] ?? (0.6 + i * 0.15), model: aiConfig?.model || 'fallback', source: 'generate' }),
+          status: 'generating',
+          compiledPrompt: JSON.stringify(compiled)
         }
       })
-      createdDrafts.push(draft)
+      generatingDrafts.push(draft)
     }
 
-    // 9. 更新章节状态
+    // 同时更新章节的 compiledPrompt，方便前端直接展示
     await prisma.chapter.update({
       where: { id: chapterId },
-      data: { status: 'generated' }
+      data: { compiledPrompt: JSON.stringify(compiled) }
     })
 
-    app.log.info(`[Generate] Completed. Created ${createdDrafts.length} drafts.`)
+    // 8. 加入队列（后台执行 AI 调用）
+    await generateQueue.add('generate-chapter', {
+      draftIds: generatingDrafts.map(d => d.id),
+      chapterId,
+      storyId,
+      compiled,
+      temperatures: generatingDrafts.map((_, i) => temperatures[i] ?? (0.6 + i * 0.15)),
+      maxTokens,
+      chapterTitle: chapter.title,
+      chapterOutline: chapter.outline
+    })
 
-    return { success: true, data: { drafts: createdDrafts, count: createdDrafts.length, tokens: compiled.meta, layers: pipelineResult.stats } }
+    app.log.info(`[Generate] Queued ${generatingDrafts.length} drafts for chapter ${chapterId}`)
+
+    return { success: true, data: { drafts: generatingDrafts, count: generatingDrafts.length, tokens: compiled.meta, layers: pipelineResult.stats } }
   })
 
   // POST /api/chapters/:chapterId/select — 选择最终采用的 draft
@@ -328,7 +317,88 @@ export async function chapterRoutes(app: FastifyInstance) {
       app.log.error(`[Archive] Memory organization failed: ${err.message}`)
     }
 
-    return { success: true, data: { extraction } }
+    // 计算并保存图谱快照与变化
+    let graphResult = null
+    try {
+      graphResult = await saveGraphSnapshotAndDelta(app, chapterId, chapter.storyId)
+    } catch (err: any) {
+      app.log.error(`[Archive] Graph snapshot failed: ${err.message}`)
+    }
+
+    return { success: true, data: { extraction, graph: graphResult } }
+  })
+
+  // POST /api/chapters/:chapterId/develop — 在指定章节上"发展"出下一章/番外
+  app.post('/api/chapters/:chapterId/develop', async (request, reply) => {
+    const { chapterId } = request.params as any
+    const body = request.body as any
+    const prisma = app.prisma
+
+    const parentChapter = await prisma.chapter.findUnique({
+      where: { id: chapterId },
+      include: { story: true }
+    })
+    if (!parentChapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
+
+    // 计算新章节的序号
+    const isSideStory = body.isSideStory === true
+    let number: number
+    if (isSideStory && body.number !== undefined) {
+      number = parseFloat(body.number)
+    } else {
+      // 取同一父章节下最大序号 + 1
+      const lastSibling = await prisma.chapter.findFirst({
+        where: { storyId: parentChapter.storyId, parentChapterId: chapterId },
+        orderBy: { number: 'desc' }
+      })
+      number = lastSibling ? lastSibling.number + 1 : (parentChapter.number + 1)
+    }
+
+    // 创建新章节
+    const newChapter = await prisma.chapter.create({
+      data: {
+        storyId: parentChapter.storyId,
+        parentChapterId: chapterId,
+        branchName: body.branchName || (isSideStory ? '番外' : '主线'),
+        number,
+        isSideStory,
+        title: body.title || (isSideStory ? `番外·${number}` : `第${Math.floor(number)}章`),
+        outline: body.outline || '',
+        status: 'draft',
+        runtimeProfileId: body.runtimeProfileId || parentChapter.runtimeProfileId || parentChapter.story?.runtimeProfileId || null
+      }
+    })
+
+    app.log.info(`[Develop] Chapter ${chapterId} → new chapter ${newChapter.id} (number=${number})`)
+    return { success: true, data: newChapter }
+  })
+
+  // GET /api/stories/:storyId/chapter-tree — 获取章节分支树
+  app.get('/api/stories/:storyId/chapter-tree', async (request, reply) => {
+    const { storyId } = request.params as any
+    const prisma = app.prisma
+
+    // 获取所有章节
+    const allChapters = await prisma.chapter.findMany({
+      where: { storyId },
+      orderBy: [{ parentChapterId: 'asc' }, { number: 'asc' }],
+      include: { runtimeProfile: { select: { name: true } } }
+    })
+
+    // 构建树结构
+    const chapterMap = new Map(allChapters.map(c => [c.id, { ...c, children: [] as any[] }]))
+    const roots: any[] = []
+
+    for (const ch of allChapters) {
+      const node = chapterMap.get(ch.id)!
+      if (ch.parentChapterId && chapterMap.has(ch.parentChapterId)) {
+        chapterMap.get(ch.parentChapterId)!.children.push(node)
+      } else {
+        roots.push(node)
+      }
+    }
+
+    return { success: true, data: roots }
   })
 }
 

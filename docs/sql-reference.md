@@ -15,12 +15,13 @@
 | `title` | String | 作品标题 |
 | `description` | String? | 简介 |
 | `status` | String | `active` / `completed` / `archived` |
+| `runtimeProfileId` | String? FK → RuntimeProfile | 小说默认绑定的写作人格 |
 | `createdAt` | DateTime | |
 | `updatedAt` | DateTime | 自动更新 |
 
 **关系**：
 - 1:N `Chapter`、`Character`、`LoreItem`、`Memory`、`GraphNode`、`GraphEdge`、`TimelineEvent`、`Draft`、`PromptConfig`、`Score`、`PlotArc`、`AiProviderConfig`、`WorkerTask`
-- 1:1? `RuntimeProfile`（可选绑定）
+- N:1 `RuntimeProfile`（通过 `runtimeProfileId` 绑定，可选）
 
 ---
 
@@ -30,27 +31,36 @@
 |------|------|------|
 | `id` | String PK | UUID |
 | `storyId` | String FK → Story | |
+| `parentChapterId` | String? FK → Chapter | 父章节（分支树结构，null 表示根章节） |
+| `branchName` | String? | 分支名称，如"主线"、"黑化IF线" |
 | `number` | Float | 章节序号，正篇为整数，番外可为小数（如 3.5） |
 | `isSideStory` | Boolean | 番外标记，默认 `false` |
 | `title` | String | |
 | `outline` | String? | 大纲 |
 | `content` | String? | 正文 |
 | `summary` | String? | 摘要（AI 提取生成） |
-| `status` | String | `draft` → `generated` → `selected` → `archived` |
+| `status` | String | `draft` / `generated` / `selected` / `archived` |
 | `sceneLocation` | String? | 场景地点 |
 | `sceneMood` | String? | 场景氛围 |
 | `sceneGoal` | String? | 场景目标 |
+| `runtimeProfileId` | String? FK → RuntimeProfile | 章节级写作人格覆盖 |
+| `compiledPrompt` | String? | 生成时使用的完整 Prompt（JSON：{ systemMessage, userMessage, meta }） |
+| `graphDelta` | String? | 相对于上一章的图谱变化（JSON：{ addedNodes, updatedNodes, addedEdges, summary }） |
+| `graphSnapshot` | String? | 到当前章节的完整图谱快照（JSON：{ nodes, edges, timestamp }） |
 | `createdAt` | DateTime | |
 | `updatedAt` | DateTime | |
 
-**索引**：`@@unique([storyId, number])`
+**索引**：`@@unique([storyId, number])`、`@@index([storyId, parentChapterId])`、`@@index([storyId, status])`
 
 **关系**：
 - N:1 `Story`
+- N:1 `Chapter`（`parentChapter`，自关联）
+- 1:N `Chapter`（`childChapters`，自关联）
+- N:1 `RuntimeProfile`
 - 1:N `Draft`、`Memory`、`Score`
 
 **归档行为**：
-- `archive` 路由一次性执行：状态更新 → `combined-extractor.ts` 提取 → `memory-organizer.ts` 整理
+- `archive` 路由一次性执行：状态更新 → `combined-extractor.ts` 提取 → `memory-organizer.ts` 整理 → `graph-snapshot.ts` 计算快照与变化
 - 已 `archived` 再次调用会跳过（防重复污染）
 
 ---
@@ -63,6 +73,9 @@
 | `storyId` | String FK → Story | |
 | `slug` | String | URL 标识（英文） |
 | `name` | String | 显示名称 |
+| `identity` | String | 角色身份背景 |
+| `appearance` | String | 外貌描述 |
+| `temperament` | String | 性格气质 |
 | `personality` | String | JSON 字符串数组 |
 | `speechStyle` | String | JSON 字符串数组 |
 | `relationships` | String | JSON 对象 |
@@ -82,7 +95,7 @@
 | `layer` | String | `global` / `chapter` / `scene` / `temporary` |
 | | | - `global`：跨章节的世界观、角色状态（不衰减） |
 | | | - `chapter`：章节级事件、情绪、伏笔（按章节距离衰减） |
-| | | - `scene`：**关键地点记忆**，archive 时从章节提取的推动剧情的地点/场景（importance 7） |
+| | | - `scene`：**关键地点记忆**，archive 时从章节提取的推动剧情的地点/场景（importance 7-10） |
 | | | - `temporary`：临时上下文 |
 | `content` | String | 记忆文本内容 |
 | `tags` | String | JSON 字符串数组，如 `["auto-extracted", "main-plot"]` |
@@ -92,7 +105,7 @@
 
 **设计要点**：
 - `content` 中可嵌入章节来源信息（如 `[第5章] 主线：张三突破`），由 `formatForPrompt` 统一格式化
-- **Scene 记忆**：`layer='scene'` 保存格式为 `【地点】描写 | 事件：事件概括`，由 `combined-extractor.ts` 在 archive 时提取
+- **Scene 记忆**：`layer='scene'` 保存格式为 `【地点】描写 | 事件：事件概括`，由 `combined-extractor.ts` 在 archive 时提取，AI 自评 importance
 - 写入时通过 Jaccard 去重（`memory-extractor.ts`）
 - 检索时通过语义相似度 + 章节距离衰减 + 主线优先排序
 - `memory-organizer.ts` 在 archive 后对增量记忆做 AI 语义整理（merge/update/delete）
@@ -106,7 +119,7 @@
 | `id` | String PK | |
 | `storyId` | String FK → Story | |
 | `chapterId` | String? FK → Chapter | 可选 |
-| `callType` | String | `generate` / `memory_extract` / `graph_extract` / `plot_extract` / `combined_extract` / `compress` / `memory_organize` |
+| `callType` | String | `generate` / `score` / `memory_extract` / `graph_extract` / `plot_extract` / `combined_extract` / `compress` / `memory_organize` |
 | `aiProviderConfigId` | String FK → AiProviderConfig | 当时使用的模型配置 |
 | `providerName` | String | `deepseek` / `openai` |
 | `model` | String | 如 `deepseek-chat` |
@@ -170,6 +183,8 @@
 | `isDefault` | Boolean | |
 
 **初始化**：后端启动时扫描 `docs/profiles/*.json` 自动导入（按 `name` 去重）
+
+**加载优先级**：`Chapter.runtimeProfileId` → `Story.runtimeProfileId` → `isDefault=true` 全局默认 → 硬编码兜底
 
 ---
 
@@ -235,8 +250,21 @@
 | `chapterId` | String FK → Chapter | |
 | `version` | String | 如 `candidate_a` / `candidate_b` / `candidate_c` |
 | `content` | String | 正文 |
-| `params` | String | JSON：temperature、model 等生成参数 |
-| `status` | String | `candidate` / `selected` / `archived` / `rejected` |
+| `temperature` | Float | 实际使用的 temperature，默认 0.7 |
+| `maxTokens` | Int | 实际使用的 maxTokens，默认 4096 |
+| `compiledPrompt` | String? | 生成时使用的完整 Prompt（JSON） |
+| `score` | String? | 评分结果（JSON） |
+| `params` | String | JSON：temperature、model、耗时等生成参数 |
+| `errorMessage` | String? | 生成失败时的错误信息 |
+| `status` | String | `generating` / `candidate` / `completed` / `selected` / `rejected` / `failed` |
+| `createdAt` | DateTime | |
+| `updatedAt` | DateTime | 自动更新 |
+
+**状态流转**：
+- `generating` → `completed`（AI 生成成功）
+- `generating` → `failed`（AI 生成失败）
+- `candidate` / `completed` → `selected`（用户采用）
+- `candidate` / `completed` → `rejected`（其他候选被采用时自动标记）
 
 ---
 
@@ -289,15 +317,16 @@
 | `storyId` | String FK → Story | |
 | `chapterId` | String FK → Chapter | |
 | `draftId` | String? | 可选 |
-| `styleSimilarity` | Float? | 文风一致性 |
-| `loreConsistency` | Float? | 世界观一致性 |
-| `characterConsistency` | Float? | 人设稳定性 |
-| `emotionalTension` | Float? | 情绪张力 |
-| `pacing` | Float? | 节奏 |
-| `proseQuality` | Float? | 文笔 |
-| `forbiddenContentRisk` | Float? | 违禁风险 |
-| `totalScore` | Float? | 总分 |
-| `details` | String | JSON | 
+| `styleSimilarity` | Float? | 文风接近度（对比近 2-3 章 archived 内容） |
+| `outlineAdherence` | Float? | 大纲符合度 |
+| `sceneMatch` | Float? | 场景符合度（地点/氛围/目标匹配） |
+| `profileConsistency` | Float? | 写作人格一致性 |
+| `proseQuality` | Float? | 文笔质量 |
+| `emotionalTension` | Float? | 情感张力 |
+| `pacing` | Float? | 节奏把控 |
+| `totalScore` | Float? | 总分（7 维度均值） |
+| `comment` | String? | AI 评语（50字以内） |
+| `details` | String | JSON：原始 AI 结果 + 规则评分兜底 |
 
 ---
 
@@ -330,7 +359,7 @@ Story
 ├── PlotArc (1:N)
 ├── AiProviderConfig (1:N, storyId 可选)
 ├── WorkerTask (1:N, storyId 可选)
-├── RuntimeProfile (1:1?, storyId 可选)
+├── RuntimeProfile (N:1, storyId 可选)
 ├── PromptConfig (1:N)
 ├── Score (1:N)
 └── PromptLog (1:N)
@@ -347,3 +376,6 @@ Story
 | `20260518000001_add_ai_provider_context_length` | AiProviderConfig 增加 contextLength 字段 |
 | `20260518022500_add_prompt_log` | 新增 PromptLog 表 |
 | `20260518023000_add_chapter_side_story` | Chapter 增加 isSideStory，number 从 Int 改为 Float |
+| `20260518104226_add_character_identity_appearance_temperament` | Character 增加 identity、appearance、temperament 字段 |
+| `20260522211910_add_chapter_branch_and_draft_enhance` | Chapter 新增 parentChapterId/branchName/runtimeProfileId/compiledPrompt/graphDelta/graphSnapshot；Draft 新增 temperature/maxTokens/compiledPrompt/score/errorMessage/updatedAt，status 扩展；Score 移除 loreConsistency/characterConsistency/forbiddenContentRisk，新增 outlineAdherence/sceneMatch/profileConsistency/comment |
+| `20260522214741_add_score_dimensions` | Score 表最终确认 7 维度字段结构 |

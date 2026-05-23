@@ -12,6 +12,21 @@ export async function graphRoutes(app: FastifyInstance) {
     return { success: true, data: gs.export() }
   })
 
+  // GET /api/chapters/:chapterId/graph-snapshot
+  app.get('/api/chapters/:chapterId/graph-snapshot', async (request, reply) => {
+    const { chapterId } = request.params as any
+    const chapter = await app.prisma.chapter.findUnique({
+      where: { id: chapterId },
+      select: { graphSnapshot: true, graphDelta: true, title: true, number: true, status: true }
+    })
+    if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
+    let snapshot = null
+    let delta = null
+    try { if (chapter.graphSnapshot) snapshot = JSON.parse(chapter.graphSnapshot) } catch {}
+    try { if (chapter.graphDelta) delta = JSON.parse(chapter.graphDelta) } catch {}
+    return { success: true, data: { chapter: { title: chapter.title, number: chapter.number, status: chapter.status }, snapshot, delta } }
+  })
+
   // POST /api/stories/:storyId/graph/nodes
   app.post('/api/stories/:storyId/graph/nodes', async (request, reply) => {
     const { storyId } = request.params as any

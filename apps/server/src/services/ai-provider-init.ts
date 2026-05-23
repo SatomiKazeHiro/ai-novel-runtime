@@ -17,15 +17,6 @@ export async function getDefaultProvider(prisma: any) {
 }
 
 export async function initAiProviderConfig(app: FastifyInstance) {
-  const existing = await app.prisma.aiProviderConfig.findFirst({
-    where: { name: 'deepseek', isDefault: true }
-  })
-
-  if (existing) {
-    app.log.info('DeepSeek AI Provider config already exists')
-    return
-  }
-
   const apiKey = process.env.DEEPSEEK_API_KEY
   const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
   const model = process.env.DEEPSEEK_MODEL || 'deepseek-chat'
@@ -33,6 +24,24 @@ export async function initAiProviderConfig(app: FastifyInstance) {
 
   if (!apiKey) {
     app.log.warn('DEEPSEEK_API_KEY not found in env, skipping AI provider init')
+    return
+  }
+
+  const existing = await app.prisma.aiProviderConfig.findFirst({
+    where: { name: 'deepseek', isDefault: true }
+  })
+
+  if (existing) {
+    // 始终从 .env 同步 apiKey，方便修改 Key 后重启生效
+    if (existing.apiKey !== apiKey) {
+      await app.prisma.aiProviderConfig.update({
+        where: { id: existing.id },
+        data: { apiKey, baseUrl, model, contextLength }
+      })
+      app.log.info('DeepSeek AI Provider config updated from env')
+    } else {
+      app.log.info('DeepSeek AI Provider config already exists')
+    }
     return
   }
 

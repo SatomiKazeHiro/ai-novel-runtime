@@ -93,6 +93,7 @@ novel-runtime/
 │   │       │   ├── graph-extractor.ts       # 图谱提取（单一职责，archive 时由 combined 调用）
 │   │       │   ├── plot-extractor.ts        # 剧情弧线提取（单一职责，archive 时由 combined 调用）
 │   │       │   ├── combined-extractor.ts    # 合并提取：记忆+图谱+弧线，一次 API 调用
+│   │       │   ├── graph-snapshot.ts        # 归档时构建图谱快照 + 计算图谱变化（graphSnapshot/graphDelta）
 │   │       │   ├── ai-call-logger.ts        # AI 调用统一 wrapper + PromptLog 自动记录
 │   │       │   ├── memory-compressor.ts     # 记忆压缩（每5章触发，规则式摘要）
 │   │       │   ├── memory-organizer.ts      # AI 记忆整理器（archive 后触发，语义 merge/update/delete）
@@ -132,7 +133,6 @@ novel-runtime/
 │   └── warning-engine/        # 预警检测引擎（当前为空）
 ├── docs/
 │   ├── sql-reference.md            # 完整 Schema 字段说明、关系图、迁移历史
-│   ├── frenesis-v2-profile.json    # 原始默认写作人格（保留兼容）
 │   └── profiles/                   # 预设写作人格目录
 │       ├── default.json            # 基础写作助手（默认）
 │       ├── xianxia.json            # 修仙长生
@@ -200,14 +200,24 @@ pnpm db:seed          # 运行种子脚本
 ### 5.1 章节状态机
 
 ```
-Draft → Generated → Scored → Selected → Archived
-  ↓         ↓          ↓                        ↑
-Rejected  Rejected   Rejected         合并提取（记忆+图谱+弧线）+ AI记忆整理
+Draft → Generated → Selected → Archived
+  ↓         ↓          ↓              ↑
+Rejected  (无)      (无)      合并提取（记忆+图谱+弧线）+ AI记忆整理 + graphSnapshot
 ```
 
-- **提取时机**：仅在 `archive` 时执行，不再在 `generate`/`select` 阶段对 candidate draft 提取
-- **提取方式**：`combined-extractor.ts` 一次 API 调用同时完成记忆提取、图谱提取、剧情弧线分析，成本约为之前的 1/4
+**分支树模型**：章节不再是线性列表，而是树形结构。每个章节通过 `parentChapterId` 指向父章节，`childChapters` 为子章节列表。`branchName` 标识分支名称（如"主线"、"黑化IF线"）。
+
+- **发展（Develop）**：只有 `archived` 状态的章节可以"发展"出下一章或番外，自动继承父章节的 `runtimeProfileId`
+- **删除规则**：`archived` 且有 `archived` 子章节的不可删除；draft/generated 等随意删除
+- **序号策略**：根章节按传统递增（1, 2, 3...）；子章节取同父最大序号 + 1；番外支持小数序号
+- **分支树查询**：`GET /api/stories/:storyId/chapter-tree` 返回嵌套树结构（手动建树，Prisma 不支持递归 CTE）
+
+- **提取时机**：仅在 `archive` 时执行
+- **提取方式**：`combined-extractor.ts` 一次 API 调用同时完成记忆提取、图谱提取、剧情弧线分析
 - **AI 记忆整理**：`memory-organizer.ts` 在 archive 后自动触发，对新旧记忆做语义层面的 merge/update/delete
+- **图谱快照（graphSnapshot）**：归档后自动保存当前 story 的完整图谱状态（所有节点+边）到 `Chapter.graphSnapshot`
+- **图谱变化（graphDelta）**：对比上一章（父章节优先）的 `graphSnapshot`，计算新增节点、更新节点、新增边，保存到 `Chapter.graphDelta`
+- **场景记忆（Scene Memory）**：`combined-extractor.ts` 提取 `scenes: [{ location, description?, event, importance }]`，AI 自评 importance 1-10，仅提取 importance >= 7 的推动剧情的关键地点
 
 ### 5.2 Prompt Pipeline（分层 Prompt 组装）
 
@@ -281,14 +291,22 @@ Temporary Memory → 临时上下文
 - [global] (第5章·0章前) 【张三】状态更新：{"rank": "初级"}
 ```
 
-### 5.5 队列系统
+### 5.5 队列系统与异步生成
 
 使用 **BullMQ** + **IORedis**。如果 Redis 不可用（如开发环境），自动降级为 **内存队列（MemoryQueue）**。
 
 队列类型：
-- `generate` — 章节生成
+- `generate` — 章节生成（异步）
 - `score` — 评分任务
 - `memory` — 记忆更新
+
+**异步生成流程**：
+1. 前端调用 `POST /generate` → 后端创建 N 个 `status='generating'` 的 Draft → 立即返回
+2. `generateQueue.add('generate-chapter', ...)` 将任务入队
+3. `generate-processor` 后台逐个调用 AI，完成后更新 Draft `status='completed'` + `content` + `compiledPrompt`
+4. 同时更新 `Chapter.compiledPrompt`，确保前端编辑页面始终能展示当前 Prompt
+5. 失败时更新 `status='failed'` + `errorMessage`
+5. 前端轮询 `GET /api/chapters/:id/drafts`（每 2 秒），自动刷新候选列表
 
 处理器在 `app.ts` 中注册，Worker 在 `server.ts` 启动时拉起。
 
@@ -315,23 +333,29 @@ interface AIProvider {
 - `GET /api/ai-providers/default` 返回当前默认模型配置
 - 生成时（`/preview`、`/generate`、队列处理器）读取默认配置，通过 `scaleBudget(contextLength)` 动态调整 Pipeline 各层预算
 - `maxTokens` 从模型配置读取，替代硬编码 4096
+- **`.env` 优先同步**：`initAiProviderConfig` 每次启动都会从 `.env` 的 `DEEPSEEK_API_KEY` 同步到数据库，修改 Key 后重启即可生效
 
 新增 Provider：在 `packages/ai-provider/src/index.ts` 的 `createProvider()` 中注册。
 
 ### 5.7 评分引擎
 
-7 维度评分：
-1. `styleSimilarity` — 文风一致性
-2. `loreConsistency` — 世界观一致性
-3. `characterConsistency` — 人设稳定性
-4. `emotionalTension` — 情绪张力
-5. `pacing` — 节奏
-6. `proseQuality` — 文笔
-7. `forbiddenContentRisk` — 违禁风险
+7 维度评分（AI 评分 + 规则兜底）：
+1. `styleSimilarity` — 文风接近度（对比近 2-3 章 archived 内容）
+2. `outlineAdherence` — 大纲符合度
+3. `sceneMatch` — 场景符合度（地点/氛围/目标匹配）
+4. `profileConsistency` — 写作人格一致性
+5. `proseQuality` — 文笔质量
+6. `emotionalTension` — 情感张力
+7. `pacing` — 节奏把控
 
-当前实现：
-- `RuleBasedScorer` — 规则评分（违禁词检测 + 默认 80 分）
-- `AIScorer` — AI 评分骨架（调用时抛出 `not yet implemented`，待接入真实 AI）
+**实现**：`POST /api/drafts/:draftId/score` 路由中：
+- 组装专业评分 Prompt（System Message 定义 7 维度和 JSON 输出格式）
+- 传入前文参考（最近 2-3 章 archived 内容）、写作人格、大纲、场景设定
+- 调用 AI（temperature=0.2）返回 JSON 评分结果
+- 解析后保存到 `Score` 表，同时更新 `Draft.score`
+- AI 失败时回退到 `RuleBasedScorer`（基于文本长度、句式、标点等简单规则）
+
+前端展示：弹窗展示综合评分（大数字）+ 7 维度进度条 + AI 评语
 
 ---
 
@@ -389,19 +413,27 @@ interface AIProvider {
 |------|------|
 | `Story` | 小说工程 |
 | `Chapter` | 章节（含状态机、场景状态、`isSideStory` 番外标记、`number` Float 支持插入序号如 3.5） |
-| `Character` | 角色卡（JSON 存储性格/关系/状态） |
+| `Character` | 角色卡（含 `identity`/`appearance`/`temperament` 静态属性 + JSON `personality`/`relationships`/`status`） |
 | `LoreItem` | 世界观条目（境界/地图/功法/势力/物品/规则） |
 | `Memory` | 记忆（global/chapter/scene/temporary，通过 `chapterId` 关联来源章节） |
 | `GraphNode` / `GraphEdge` | 知识图谱节点与边 |
 | `TimelineEvent` | 时间线事件 |
-| `Draft` | 候选/废案 |
+| `Draft` | 候选（含 `temperature`/`maxTokens`/`compiledPrompt`/`score`/`errorMessage`/`status`） |
 | `PromptConfig` | Prompt 模板配置（旧版兼容） |
-| `Score` | 评分记录（7 维度） |
+| `Score` | 评分记录（7 维度：styleSimilarity/outlineAdherence/sceneMatch/profileConsistency/proseQuality/emotionalTension/pacing + comment） |
 | `AiProviderConfig` | AI 模型配置（`contextLength` 驱动 Pipeline 预算动态缩放） |
 | `RuntimeProfile` | Shared Runtime Base（Identity + Settings + Behavior + Jailbreak） |
 | `WorkerTask` | 不同 Worker 的 Task Layer（generation / scoring / memory / graph / timeline / rewrite / memory_organize） |
 | `PlotArc` | 剧情弧线 |
 | `PromptLog` | 每次 AI API 调用的完整日志（prompt/response/token/模型/耗时） |
+
+**Chapter 新增字段**：
+- `parentChapterId` — 父章节（分支树）
+- `branchName` — 分支名称（如"主线"、"黑化IF线"）
+- `runtimeProfileId` — 章节级写作人格覆盖
+- `compiledPrompt` — 生成时的完整 Prompt（JSON）
+- `graphDelta` — 相对于上一章的图谱变化（JSON：addedNodes/updatedNodes/addedEdges/summary）
+- `graphSnapshot` — 到当前章节的完整图谱快照（JSON：nodes/edges/timestamp）
 
 **Prisma Client 输出位置**：`../node_modules/.prisma/client`（通过 `generator client` 的 `output` 指定）。
 
@@ -476,6 +508,8 @@ pnpm --filter server start   # 执行 node dist/server.js
 1. 扩展 `ScoreResult` 接口
 2. 在 `ScoringEngine.run()` 中添加新维度计算
 
+**注意**：AI 评分的核心逻辑在 `apps/server/src/routes/scores.ts` 中。如需调整评分 Prompt（维度定义、权重、输出格式），直接修改该文件的 `scoringSystemMessage` 和 `scoringUserMessage`。
+
 ### 添加新的 Worker Task 类型
 在 `packages/ai-provider/src/runtime-compiler.ts` 中：
 1. 扩展 `WorkerTask.workerType` 联合类型
@@ -492,6 +526,12 @@ pnpm --filter server start   # 执行 node dist/server.js
 1. 导出 `async function xxxRoutes(app: FastifyInstance)`
 2. 在 `app.ts` 中 `await app.register(xxxRoutes)`
 3. 如需 Prisma，通过 `app.prisma` 访问（已装饰）
+
+### 调整图谱快照逻辑
+在 `apps/server/src/services/graph-snapshot.ts` 中：
+1. `buildGraphSnapshot()` — 修改节点/边查询条件或快照结构
+2. `computeGraphDelta()` — 修改对比算法（目前对比 type:key 唯一标识 + data 属性）
+3. `saveGraphSnapshotAndDelta()` — 修改上一章查找策略（目前优先父章节，否则最近归档）
 
 ---
 
