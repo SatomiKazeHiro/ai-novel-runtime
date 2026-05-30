@@ -77,7 +77,6 @@ model Chapter {
   memories          Memory[]
   scores            Score[]
 
-  @@unique([storyId, number])
   @@index([storyId, parentChapterId])
   @@index([storyId, status])
 }

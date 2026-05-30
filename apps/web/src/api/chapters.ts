@@ -26,7 +26,7 @@ export const chaptersApi = {
   preview: (chapterId: string, data: any) => api.post(`/api/chapters/${chapterId}/preview`, data),
   generate: (chapterId: string, data: any) => api.post(`/api/chapters/${chapterId}/generate`, data, { timeout: 0 }),
   selectDraft: (chapterId: string, draftId: string) => api.post(`/api/chapters/${chapterId}/select`, { draftId }),
-  archive: (chapterId: string) => api.post(`/api/chapters/${chapterId}/archive`),
+  archive: (chapterId: string) => api.post(`/api/chapters/${chapterId}/archive`, {}, { timeout: 0 }),
   develop: (chapterId: string, data: any) => api.post(`/api/chapters/${chapterId}/develop`, data),
   getTree: (storyId: string) => api.get(`/api/stories/${storyId}/chapter-tree`)
 }

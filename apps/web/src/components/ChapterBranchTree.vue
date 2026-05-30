@@ -1,25 +1,43 @@
 <template>
-  <div class="branch-tree">
-    <div
-      v-for="node in treeData"
-      :key="node.id"
-      class="branch-node-wrapper"
+  <div class="branch-list">
+    <!-- 左侧 SVG 分叉树 -->
+    <svg
+      class="tree-svg"
+      :width="svgWidth"
+      :height="flatList.length * ITEM_HEIGHT + Math.max(0, flatList.length - 1) * GAP"
     >
-      <div class="branch-node-row" :style="{ paddingLeft: `${currentDepth * 28}px` }">
-        <!-- 连接线 -->
-        <div class="connector" v-if="currentDepth > 0">
-          <div class="connector-line-vertical"></div>
-          <div class="connector-line-horizontal"></div>
-        </div>
+      <!-- 连接线 -->
+      <g v-for="line in svgLines" :key="line.key">
+        <path :d="line.d" :stroke="line.color" class="link-line" fill="none" />
+      </g>
+      <!-- 节点圆点 -->
+      <g v-for="node in flatList" :key="node.id">
+        <circle
+          :cx="getNodeX(node)"
+          :cy="getNodeY(node)"
+          r="4"
+          :fill="getNodeColor(node)"
+          stroke="#fff"
+          stroke-width="2"
+        />
+      </g>
+    </svg>
 
-        <!-- 节点内容 -->
+    <!-- 右侧章节列表 -->
+    <div class="list-rows">
+      <div
+        v-for="(node, index) in flatList"
+        :key="node.id"
+        class="list-row"
+        :class="{ active: selectedId === node.id }"
+        :style="{ height: ITEM_HEIGHT + 'px', marginBottom: (index < flatList.length - 1 ? GAP : 0) + 'px' }"
+        @click="$emit('select', node)"
+      >
         <div
-          class="branch-node"
-          :class="{ active: selectedId === node.id, archived: node.status === 'archived', selected: node.status === 'selected' }"
-          @click="$emit('select', node)"
+          class="node-card"
+          :class="{ archived: node.status === 'archived', selected: node.status === 'selected' }"
         >
-          <div class="node-dot" :class="node.status"></div>
-          <div class="node-content">
+          <div class="node-main">
             <div class="node-header">
               <n-text strong class="node-title">{{ node.title }}</n-text>
               <n-tag v-if="node.isSideStory" size="tiny" type="warning">番外</n-tag>
@@ -54,18 +72,6 @@
           </div>
         </div>
       </div>
-
-      <!-- 递归子节点 -->
-      <ChapterBranchTree
-        v-if="node.children && node.children.length > 0"
-        :tree-data="node.children"
-        :depth="currentDepth + 1"
-        :selected-id="selectedId"
-        @select="$emit('select', $event)"
-        @develop="$emit('develop', $event)"
-        @edit="$emit('edit', $event)"
-        @delete="$emit('delete', $event)"
-      />
     </div>
   </div>
 </template>
@@ -73,6 +79,22 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NText, NTag, NButton } from 'naive-ui'
+
+const ITEM_HEIGHT = 56
+const GAP = 8
+const COL_WIDTH = 20
+
+// 分支颜色（主分支 + 7 个分支色）
+const BRANCH_COLORS = [
+  '#52c41a', // 0: 主线 - 绿
+  '#1890ff', // 1: 分支1 - 蓝
+  '#fa8c16', // 2: 分支2 - 橙
+  '#eb2f96', // 3: 分支3 - 粉
+  '#722ed1', // 4: 分支4 - 紫
+  '#13c2c2', // 5: 分支5 - 青
+  '#f5222d', // 6: 分支6 - 红
+  '#2f54eb', // 7: 分支7 - 深蓝
+]
 
 interface TreeNode {
   id: string
@@ -82,16 +104,23 @@ interface TreeNode {
   isSideStory?: boolean
   branchName?: string | null
   runtimeProfile?: { name: string } | null
+  createdAt: string
+  parentChapterId?: string | null
   children?: TreeNode[]
+}
+
+interface FlatNode extends TreeNode {
+  parentId: string | null
+  rowIndex: number
+  col: number
+  hasChildren: boolean
+  branchRootId: string | null // 所属分支的根节点（主分支为 null）
 }
 
 const props = defineProps<{
   treeData: TreeNode[]
-  depth?: number
   selectedId?: string
 }>()
-
-const currentDepth = computed(() => props.depth || 0)
 
 defineEmits<{
   (e: 'select', node: TreeNode): void
@@ -99,6 +128,217 @@ defineEmits<{
   (e: 'edit', node: TreeNode): void
   (e: 'delete', node: TreeNode): void
 }>()
+
+// 1. 扁平化树，收集 parentId 和 hasChildren
+const flatList = computed(() => {
+  const allNodes: Omit<FlatNode, 'rowIndex' | 'col' | 'hasChildren' | 'branchRootId'>[] = []
+  const childrenSet = new Set<string>()
+
+  function walk(nodes: TreeNode[], parentId: string | null = null) {
+    for (const node of nodes) {
+      allNodes.push({
+        ...node,
+        parentId: node.parentChapterId ?? parentId,
+        children: undefined
+      })
+      if (node.children && node.children.length > 0) {
+        childrenSet.add(node.id)
+        walk(node.children, node.id)
+      }
+    }
+  }
+
+  walk(props.treeData)
+
+  // 2. 按创建时间全局排序（时间线视图）
+  allNodes.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+
+  // 3. 计算主分支（从根出发，每次选 createdAt 最早的子节点）
+  const mainBranch = findMainBranch(allNodes)
+
+  // 4. 计算每个节点的分支根
+  const nodeMap = new Map(allNodes.map(n => [n.id, n]))
+  const branchRootMap = new Map<string, string | null>()
+  for (const node of allNodes) {
+    branchRootMap.set(node.id, getBranchRoot(node, mainBranch, nodeMap))
+  }
+
+  // 5. 分配列：主分支 col=0，每个独立分支根依次分配 col=1,2,3...
+  const colMap = assignColumns(allNodes, mainBranch, branchRootMap)
+
+  // 6. 组装结果
+  const result: FlatNode[] = allNodes.map((node, index) => ({
+    ...node,
+    rowIndex: index,
+    col: colMap.get(node.id) ?? 0,
+    hasChildren: childrenSet.has(node.id),
+    branchRootId: branchRootMap.get(node.id) ?? null
+  }))
+
+  return result
+})
+
+// 找主分支（createdAt 最早的链）
+function findMainBranch(
+  nodes: Array<{ id: string; parentId: string | null; createdAt: string }>
+): Set<string> {
+  const mainBranch = new Set<string>()
+
+  const roots = nodes
+    .filter(n => !n.parentId)
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+  if (roots.length === 0) return mainBranch
+
+  let current = roots[0]
+  while (current) {
+    mainBranch.add(current.id)
+    const children = nodes
+      .filter(n => n.parentId === current.id)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    current = children[0]
+  }
+
+  return mainBranch
+}
+
+// 找节点的分支根（从主分支分叉出来的第一个节点）
+function getBranchRoot(
+  node: { id: string; parentId: string | null },
+  mainBranch: Set<string>,
+  nodeMap: Map<string, { id: string; parentId: string | null }>
+): string | null {
+  if (mainBranch.has(node.id)) return null
+  if (!node.parentId) return node.id
+
+  const parent = nodeMap.get(node.parentId)
+  if (!parent) return node.id
+
+  if (mainBranch.has(parent.id)) {
+    return node.id // 父节点在主分支上，当前节点是分叉起点
+  }
+
+  return getBranchRoot(parent, mainBranch, nodeMap)
+}
+
+// 列分配
+function assignColumns(
+  nodes: Array<{ id: string; parentId: string | null }>,
+  mainBranch: Set<string>,
+  branchRootMap: Map<string, string | null>
+): Map<string, number> {
+  const colMap = new Map<string, number>()
+  const branchColMap = new Map<string, number>() // branchRootId -> col
+
+  for (const node of nodes) {
+    if (mainBranch.has(node.id)) {
+      colMap.set(node.id, 0)
+      continue
+    }
+
+    if (!node.parentId) {
+      colMap.set(node.id, 1)
+      continue
+    }
+
+    const parentCol = colMap.get(node.parentId) ?? 0
+    if (parentCol === 0) {
+      // 从主分支分叉：每个分支根分配独立列
+      const rootId = branchRootMap.get(node.id)
+      if (rootId && !branchColMap.has(rootId)) {
+        branchColMap.set(rootId, branchColMap.size + 1)
+      }
+      colMap.set(node.id, rootId ? (branchColMap.get(rootId) ?? 1) : 1)
+    } else {
+      // 从分支继续：保持同列
+      colMap.set(node.id, parentCol)
+    }
+  }
+
+  return colMap
+}
+
+// SVG 宽度动态计算
+const svgWidth = computed(() => {
+  const maxCol = flatList.value.reduce((max, n) => Math.max(max, n.col), 0)
+  return 12 + maxCol * COL_WIDTH + 12
+})
+
+function getNodeX(node: FlatNode) {
+  return 12 + node.col * COL_WIDTH
+}
+
+function getNodeY(node: FlatNode) {
+  return node.rowIndex * (ITEM_HEIGHT + GAP) + ITEM_HEIGHT / 2
+}
+
+// 获取节点颜色（基于分支）
+function getNodeColor(node: FlatNode) {
+  if (node.branchRootId) {
+    // 找到该分支根在分支列表中的索引
+    const branchRoots = [...new Set(flatList.value.map(n => n.branchRootId).filter(Boolean))]
+    const idx = branchRoots.indexOf(node.branchRootId)
+    return BRANCH_COLORS[(idx + 1) % BRANCH_COLORS.length]
+  }
+  return BRANCH_COLORS[0] // 主分支
+}
+
+// 计算 SVG 连接线（Git graph 风格：先向下再拐弯，圆角曲线）
+const svgLines = computed(() => {
+  const lines: { key: string; d: string; color: string }[] = []
+  const R = 5 // 圆角半径
+  const DOWN = 10 // 从圆点向下延伸的距离
+
+  for (const node of flatList.value) {
+    if (!node.parentId) continue
+    const parent = flatList.value.find(n => n.id === node.parentId)
+    if (!parent) continue
+
+    const px = getNodeX(parent)
+    const py = getNodeY(parent)
+    const cx = getNodeX(node)
+    const cy = getNodeY(node)
+    const color = getNodeColor(node)
+
+    if (parent.col === node.col) {
+      // 同列：直线
+      lines.push({
+        key: `link-${parent.id}-${node.id}`,
+        d: `M ${px},${py + 4} L ${cx},${cy - 4}`,
+        color
+      })
+    } else {
+      // 分叉：先从圆点向下走一段，再横向直达子节点列，然后向下到子节点
+      const goingRight = cx > px
+      const bendY = py + DOWN
+
+      if (goingRight) {
+        lines.push({
+          key: `link-${parent.id}-${node.id}`,
+          d: `M ${px},${py + 4}`
+            + ` L ${px},${bendY - R}`
+            + ` Q ${px},${bendY} ${px + R},${bendY}`
+            + ` L ${cx - R},${bendY}`
+            + ` Q ${cx},${bendY} ${cx},${bendY + R}`
+            + ` L ${cx},${cy - 4}`,
+          color
+        })
+      } else {
+        lines.push({
+          key: `link-${parent.id}-${node.id}`,
+          d: `M ${px},${py + 4}`
+            + ` L ${px},${bendY - R}`
+            + ` Q ${px},${bendY} ${px - R},${bendY}`
+            + ` L ${cx + R},${bendY}`
+            + ` Q ${cx},${bendY} ${cx},${bendY + R}`
+            + ` L ${cx},${cy - 4}`,
+          color
+        })
+      }
+    }
+  }
+
+  return lines
+})
 
 function statusTagType(status?: string) {
   switch (status) {
@@ -115,78 +355,54 @@ function formatNumber(n: number) {
   return Number.isInteger(n) ? `第${n}章` : `第${n}章`
 }
 
-function canDevelop(node: TreeNode) {
+function canDevelop(node: FlatNode) {
   return node.status === 'archived'
 }
 
-function canEdit(node: TreeNode) {
+function canEdit(node: FlatNode) {
   return ['draft', 'generated', 'selected'].includes(node.status)
 }
 
-function canDelete(node: TreeNode) {
-  // archived 且有后续 archived 子节点的不能删除
+function canDelete(node: FlatNode) {
   if (node.status === 'archived') {
-    const hasArchivedChild = node.children?.some(c => c.status === 'archived')
-    return !hasArchivedChild
+    return !node.hasChildren
   }
   return true
 }
 </script>
 
 <style scoped>
-.branch-tree {
+.branch-list {
+  display: flex;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
-.branch-node-wrapper {
-  position: relative;
+/* SVG 层 */
+.tree-svg {
+  flex-shrink: 0;
+  overflow: visible;
 }
 
-.branch-node-row {
+.link-line {
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 右侧内容 */
+.list-rows {
+  flex: 1;
+  min-width: 0;
+}
+
+.list-row {
   display: flex;
   align-items: center;
-  position: relative;
-  padding: 4px 0;
+  cursor: pointer;
+  overflow: hidden;
 }
 
-.connector {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.connector-line-vertical {
-  position: absolute;
-  left: 14px;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: #e0e0e0;
-}
-
-.connector-line-horizontal {
-  position: absolute;
-  left: 14px;
-  top: 50%;
-  width: 14px;
-  height: 2px;
-  background: #e0e0e0;
-}
-
-.branch-node-wrapper:first-child .connector-line-vertical {
-  top: 50%;
-}
-
-.branch-node-wrapper:last-child .connector-line-vertical {
-  bottom: 50%;
-}
-
-.branch-node {
+.node-card {
   flex: 1;
   display: flex;
   align-items: center;
@@ -195,52 +411,34 @@ function canDelete(node: TreeNode) {
   border: 1px solid #f0f0f0;
   border-radius: 8px;
   background: #fafafa;
-  cursor: pointer;
   transition: all 0.2s;
-  min-height: 48px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.branch-node:hover {
+.node-card:hover {
   background: #f0f7ff;
   border-color: #1890ff;
 }
 
-.branch-node.active {
+.list-row.active .node-card {
   background: #e6f7ff;
   border-color: #1890ff;
   box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
 }
 
-.branch-node.archived {
+.node-card.archived {
   background: #f6ffed;
   border-color: #b7eb8f;
 }
 
-.branch-node.selected {
+.node-card.selected {
   background: #e6f7ff;
   border-color: #91d5ff;
 }
 
-.node-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: #d9d9d9;
-}
-
-.node-dot.archived { background: #52c41a; }
-.node-dot.selected { background: #1890ff; }
-.node-dot.generated { background: #faad14; }
-.node-dot.generating { background: #faad14; animation: pulse 1.5s infinite; }
-.node-dot.draft { background: #d9d9d9; }
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
-.node-content {
+.node-main {
   flex: 1;
   min-width: 0;
 }
@@ -249,11 +447,15 @@ function canDelete(node: TreeNode) {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .node-title {
   font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .node-meta {

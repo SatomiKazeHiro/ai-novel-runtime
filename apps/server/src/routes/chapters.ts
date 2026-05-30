@@ -6,7 +6,7 @@ import { getActivePlotArcs } from '../services/plot-extractor.js'
 import { saveGraphSnapshotAndDelta } from '../services/graph-snapshot.js'
 import { PromptPipeline } from '@novel-runtime/prompt-runtime'
 import { MemoryManager } from '@novel-runtime/memory-engine'
-import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
+import { RuntimePromptCompiler, estimateTokens } from '@novel-runtime/ai-provider'
 import { formatCharacterSnapshot, generateFallbackContent, DEFAULT_PIPELINE_BUDGET, scaleBudget } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { callAIWithLog } from '../services/ai-call-logger.js'
@@ -22,6 +22,25 @@ export async function chapterRoutes(app: FastifyInstance) {
     return { success: true, data: chapters }
   })
 
+  // 辅助函数：为番外分配小数序号（以 base 为基准，找第一个不冲突的 base + 0.01, base + 0.02...）
+  // 返回负数表示溢出（超过 99 个番外）
+  async function allocateSideStoryNumber(prisma: any, storyId: string, baseNumber: number): Promise<number> {
+    const existing = await prisma.chapter.findMany({
+      where: { storyId },
+      select: { number: true }
+    })
+    const existingNumbers = existing.map((c: any) => c.number)
+    let seq = 1
+    while (true) {
+      const candidate = Math.round((baseNumber + seq * 0.01) * 100) / 100
+      if (!existingNumbers.some((n: number) => Math.abs(n - candidate) < 0.0001)) {
+        return candidate
+      }
+      seq++
+      if (seq > 99) return -1 // 溢出标记
+    }
+  }
+
   // POST /api/stories/:storyId/chapters
   app.post('/api/stories/:storyId/chapters', async (request, reply) => {
     const { storyId } = request.params as any
@@ -31,6 +50,13 @@ export async function chapterRoutes(app: FastifyInstance) {
     if (isSideStory && body.number !== undefined) {
       // 番外：使用指定序号（如 3.5）
       number = parseFloat(body.number)
+    } else if (isSideStory) {
+      // 番外：自动分配小数序号（全局最大 + 0.5，避免和主线冲突）
+      const lastChapter = await app.prisma.chapter.findFirst({
+        where: { storyId },
+        orderBy: { number: 'desc' }
+      })
+      number = (lastChapter?.number || 0) + 0.5
     } else {
       // 正篇：取当前最大序号 + 1
       const lastChapter = await app.prisma.chapter.findFirst({
@@ -130,7 +156,7 @@ export async function chapterRoutes(app: FastifyInstance) {
       story: `作品：《${story.title}》\n简介：${story.description || '无'}`,
       character: formatCharacterSnapshot(characters),
       lore: loreItems.map(l => `【${l.name}】${l.content}`).join('\n') || '无世界观设定信息',
-      scene: `地点：${chapter.sceneLocation || '未设定'}\n氛围：${chapter.sceneMood || '未设定'}\n目标：${chapter.sceneGoal || '未设定'}`,
+      scene: `标题：${chapter.title || '未设定'}\n地点：${chapter.sceneLocation || '未设定'}\n氛围：${chapter.sceneMood || '未设定'}\n目标：${chapter.sceneGoal || '未设定'}`,
       memory: memoryManager.formatForPrompt(relevantMemories),
       timeline: timelineEvents.map(t => `第${t.day}天：${JSON.parse(t.events).join('；')}`).join('\n'),
       plotArc: plotArcText || undefined,
@@ -146,6 +172,7 @@ export async function chapterRoutes(app: FastifyInstance) {
         tokens: compiled.meta,
         layers: pipelineResult.stats,
         preview: pipelineResult.text,
+        compiled,
         model: aiConfig ? { name: aiConfig.name, model: aiConfig.model, contextLength, maxTokens: aiConfig.maxTokens } : null
       }
     }
@@ -200,36 +227,64 @@ export async function chapterRoutes(app: FastifyInstance) {
     const maxTokens = customMaxTokens || aiConfig?.maxTokens || 4096
     const budget = scaleBudget(contextLength)
 
-    // 5. 组装 User Message
-    const pipeline = new PromptPipeline(budget)
-    const pipelineResult = pipeline.run({
-      story: `作品：《${story.title}》\n简介：${story.description || '无'}`,
-      character: formatCharacterSnapshot(characters),
-      lore: loreItems.map(l => `【${l.name}】${l.content}`).join('\n') || '无世界观设定信息',
-      scene: `地点：${chapter.sceneLocation || '未设定'}\n氛围：${chapter.sceneMood || '未设定'}\n目标：${chapter.sceneGoal || '未设定'}`,
-      memory: memoryManager.formatForPrompt(relevantMemories),
-      timeline: timelineEvents.map(t => `第${t.day}天：${JSON.parse(t.events).join('；')}`).join('\n'),
-      plotArc: plotArcText || undefined,
-      output: `请根据以下大纲生成本章正文（约2000-4000字）：\n\n${chapter.outline || '无大纲'}`
-    })
-    const userMessage = pipelineResult.text
+    // 5. 组装 Prompt
+    let compiled: any
+    let layers: any[] = []
+    const customCompiled = body.compiledPrompt
 
-    // 6. 编译最终 Prompt
-    const compiler = new RuntimePromptCompiler()
-    const compiled = compiler.compile(base, task, userMessage)
+    if (customCompiled && customCompiled.systemMessage && customCompiled.userMessage) {
+      // 使用前端传入的自定义 prompt
+      const systemTokens = estimateTokens(customCompiled.systemMessage)
+      const userTokens = estimateTokens(customCompiled.userMessage)
+      compiled = {
+        systemMessage: customCompiled.systemMessage,
+        userMessage: customCompiled.userMessage,
+        meta: { systemTokens, userTokens, totalTokens: systemTokens + userTokens }
+      }
+    } else {
+      // 自动组装 pipeline
+      const pipeline = new PromptPipeline(budget)
+      const pipelineResult = pipeline.run({
+        story: `作品：《${story.title}》\n简介：${story.description || '无'}`,
+        character: formatCharacterSnapshot(characters),
+        lore: loreItems.map(l => `【${l.name}】${l.content}`).join('\n') || '无世界观设定信息',
+        scene: `标题：${chapter.title || '未设定'}\n地点：${chapter.sceneLocation || '未设定'}\n氛围：${chapter.sceneMood || '未设定'}\n目标：${chapter.sceneGoal || '未设定'}`,
+        memory: memoryManager.formatForPrompt(relevantMemories),
+        timeline: timelineEvents.map(t => `第${t.day}天：${JSON.parse(t.events).join('；')}`).join('\n'),
+        plotArc: plotArcText || undefined,
+        output: `请根据以下大纲生成本章正文（约2000-4000字）：\n\n${chapter.outline || '无大纲'}`
+      })
+      const userMessage = pipelineResult.text
+      layers = pipelineResult.stats
 
-    // 7. 创建 generating 状态的 Draft
+      // 编译最终 Prompt
+      const compiler = new RuntimePromptCompiler()
+      compiled = compiler.compile(base, task, userMessage)
+    }
+
+    // 根据 temperature 映射风格名称
+    function tempToStyle(temp: number): string {
+      if (temp <= 0.55) return '保守'
+      if (temp <= 0.72) return '标准'
+      if (temp <= 0.85) return '活跃'
+      return '奔放'
+    }
+
+    // 6. 创建 generating 状态的 Draft（版本号基于已有 draft 数量递增）
+    const existingDraftCount = await prisma.draft.count({ where: { chapterId } })
     const generatingDrafts = []
     for (let i = 0; i < candidateCount; i++) {
+      const temperature = temperatures[i] ?? (0.6 + i * 0.15)
+      const style = tempToStyle(temperature)
       const draft = await prisma.draft.create({
         data: {
           storyId,
           chapterId,
-          version: `candidate_${String.fromCharCode(97 + i)}`,
+          version: `版本${existingDraftCount + i + 1}(偏${style}版)`,
           content: '',
-          temperature: temperatures[i] ?? (0.6 + i * 0.15),
+          temperature,
           maxTokens,
-          params: JSON.stringify({ temperature: temperatures[i] ?? (0.6 + i * 0.15), model: aiConfig?.model || 'fallback', source: 'generate' }),
+          params: JSON.stringify({ temperature, model: aiConfig?.model || 'fallback', source: 'generate' }),
           status: 'generating',
           compiledPrompt: JSON.stringify(compiled)
         }
@@ -257,7 +312,7 @@ export async function chapterRoutes(app: FastifyInstance) {
 
     app.log.info(`[Generate] Queued ${generatingDrafts.length} drafts for chapter ${chapterId}`)
 
-    return { success: true, data: { drafts: generatingDrafts, count: generatingDrafts.length, tokens: compiled.meta, layers: pipelineResult.stats } }
+    return { success: true, data: { drafts: generatingDrafts, count: generatingDrafts.length, tokens: compiled.meta, layers } }
   })
 
   // POST /api/chapters/:chapterId/select — 选择最终采用的 draft
@@ -345,8 +400,18 @@ export async function chapterRoutes(app: FastifyInstance) {
     let number: number
     if (isSideStory && body.number !== undefined) {
       number = parseFloat(body.number)
+    } else if (isSideStory) {
+      // 番外：以父章节为基准，自动分配 N.01, N.02...（查询全局避免冲突）
+      const allocated = await allocateSideStoryNumber(prisma, parentChapter.storyId, parentChapter.number)
+      if (allocated < 0) {
+        return reply.status(400).send({
+          success: false,
+          error: `该章节的番外数量已达上限（99个），建议归档整理或合并分支后再试`
+        })
+      }
+      number = allocated
     } else {
-      // 取同一父章节下最大序号 + 1
+      // 主线：取同一父章节下最大序号 + 1
       const lastSibling = await prisma.chapter.findFirst({
         where: { storyId: parentChapter.storyId, parentChapterId: chapterId },
         orderBy: { number: 'desc' }
@@ -378,10 +443,10 @@ export async function chapterRoutes(app: FastifyInstance) {
     const { storyId } = request.params as any
     const prisma = app.prisma
 
-    // 获取所有章节
+    // 获取所有章节（按创建时间排序，让前端按时间线渲染）
     const allChapters = await prisma.chapter.findMany({
       where: { storyId },
-      orderBy: [{ parentChapterId: 'asc' }, { number: 'asc' }],
+      orderBy: { createdAt: 'asc' },
       include: { runtimeProfile: { select: { name: true } } }
     })
 

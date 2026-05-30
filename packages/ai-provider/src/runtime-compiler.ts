@@ -29,7 +29,7 @@ import { getEncoding } from 'js-tiktoken'
 
 const enc = getEncoding('cl100k_base')
 
-function estimateTokens(text: string): number {
+export function estimateTokens(text: string): number {
   return enc.encode(text).length
 }
 

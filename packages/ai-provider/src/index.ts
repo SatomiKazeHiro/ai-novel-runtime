@@ -1,6 +1,6 @@
 import { CompiledPrompt } from './runtime-compiler.js'
 
-export { CompiledPrompt, RuntimePromptCompiler, SharedRuntimeBase, WorkerTask } from './runtime-compiler.js'
+export { CompiledPrompt, RuntimePromptCompiler, SharedRuntimeBase, WorkerTask, estimateTokens } from './runtime-compiler.js'
 
 export interface TokenUsage {
   promptTokens: number
