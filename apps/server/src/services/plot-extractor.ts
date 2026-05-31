@@ -106,14 +106,12 @@ ${content.slice(0, 5000)}
 export async function savePlotArcs(
   app: FastifyInstance,
   storyId: string,
-  arcs: PlotArcAnalysis['arcs'],
-  versionBranchId?: string
+  arcs: PlotArcAnalysis['arcs']
 ) {
   const prisma = app.prisma
-  const vbId = versionBranchId ?? ''
   for (const arc of arcs || []) {
     const existing = await prisma.plotArc.findFirst({
-      where: { storyId, versionBranchId: vbId, name: arc.name }
+      where: { storyId, name: arc.name }
     })
 
     const stages = existing
@@ -138,17 +136,12 @@ export async function savePlotArcs(
 
     if (existing) {
       await prisma.plotArc.update({ where: { id: existing.id }, data })
-      app.log.info(`[PlotExtractor] Updated arc: ${arc.name} [${vbId}] -> ${arc.status} ${arc.progress}%`)
+      app.log.info(`[PlotExtractor] Updated arc: ${arc.name} -> ${arc.status} ${arc.progress}%`)
     } else {
       await prisma.plotArc.create({
-        data: {
-          storyId,
-          versionBranchId: vbId,
-          name: arc.name,
-          ...data
-        }
+        data: { storyId, name: arc.name, ...data }
       })
-      app.log.info(`[PlotExtractor] Created new arc: ${arc.name} [${vbId}]`)
+      app.log.info(`[PlotExtractor] Created new arc: ${arc.name}`)
     }
   }
 }
@@ -158,14 +151,11 @@ export async function savePlotArcs(
  */
 export async function getActivePlotArcs(
   prisma: any,
-  storyId: string,
-  versionBranchId?: string
+  storyId: string
 ): Promise<string> {
-  const vbId = versionBranchId ?? ''
   const arcs = await prisma.plotArc.findMany({
     where: {
       storyId,
-      versionBranchId: vbId,
       status: { in: ['active', 'resolving', 'pending'] }
     },
     orderBy: [

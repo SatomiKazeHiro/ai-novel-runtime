@@ -78,10 +78,31 @@
 | `temperament` | String | 性格气质 |
 | `personality` | String | JSON 字符串数组 |
 | `speechStyle` | String | JSON 字符串数组 |
-| `relationships` | String | JSON 对象 |
-| `status` | String | JSON 对象：`{ rank, location, ... }` |
 
 **索引**：`@@unique([storyId, slug])`
+
+**关系**：1:N `CharacterBranchState`（角色的历史状态快照）
+
+---
+
+### `CharacterBranchState` — 角色历史快照
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | String PK | |
+| `characterId` | String FK → Character | |
+| `fromChapterNumber` | Float? | 来源章节序号，`null` 表示初始状态 |
+| `status` | String | JSON 对象：`{ rank, location, ... }` |
+| `relationships` | String | JSON 对象 |
+| `createdAt` | DateTime | |
+| `updatedAt` | DateTime | 自动更新 |
+
+**索引**：`@@index([characterId, fromChapterNumber])`
+
+**设计要点**：
+- 每次 archive 时为每个角色插入一条新记录，形成历史链
+- 查询最新状态取 `fromChapterNumber` 最大的记录
+- 删除章节时级联删除同 `fromChapterNumber` 的记录，实现状态自动回退
 
 ---
 
@@ -92,6 +113,7 @@
 | `id` | String PK | |
 | `storyId` | String FK → Story | |
 | `chapterId` | String? FK → Chapter | 来源章节（global 层可为 null） |
+| `fromChapterNumber` | Float? | 来源章节序号（archive 时标记，用于删除章节时级联清理） |
 | `layer` | String | `global` / `chapter` / `scene` / `temporary` |
 | | | - `global`：跨章节的世界观、角色状态（不衰减） |
 | | | - `chapter`：章节级事件、情绪、伏笔（按章节距离衰减） |
@@ -300,6 +322,7 @@
 |------|------|------|
 | `id` | String PK | |
 | `storyId` | String FK → Story | |
+| `fromChapterNumber` | Float? | 来源章节序号（archive 时标记，用于删除章节时级联清理） |
 | `day` | Int | 第几天 |
 | `events` | String | JSON 字符串数组 |
 
@@ -351,7 +374,7 @@ Story
 ├── Chapter (1:N) ──→ Draft (1:N)
 │                     Memory (1:N, chapterId 可选)
 │                     Score (1:N)
-├── Character (1:N)
+├── Character (1:N) ──→ CharacterBranchState (1:N)
 ├── LoreItem (1:N)
 ├── Memory (1:N, global 层 chapterId 为 null)
 ├── GraphNode (1:N) ──→ GraphEdge (from/to)

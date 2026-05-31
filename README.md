@@ -11,15 +11,15 @@
 ## 核心特性
 
 - **长篇小说工程化开发** — 多小说工程管理，工业化章节流水线
-- **版本分支系统** — 同一部小说支持多条平行剧情线，每条线拥有独立的时间线、角色状态、记忆和知识图谱
+- **线性章节设计** — 一本小说一条时间线，章节顺序排列，分叉则开新小说
 - **结构化世界观管理** — LoreBook 系统化维护境界、地图、功法、势力、物品、规则
-- **角色卡系统** — 静态属性（性格、外貌、说话风格）+ 按版本分支隔离的动态状态（境界、位置、人际关系）
+- **角色卡系统** — 静态属性（性格、外貌、说话风格）+ 历史快照动态状态（按 `fromChapterNumber` 记录，删除章节自动回退）
 - **章节状态机** — Draft → Generated → Selected → Archived，废案自动归档为创意资产
 - **多候选生成** — 一次生成多个候选版本，支持不同 temperature 采样策略
 - **AI 评分** — 7 维度评分（文风接近度、大纲符合度、场景符合度、写作人格一致性、文笔质量、情感张力、节奏把控）
 - **Prompt Pipeline** — Pipeline 式 Prompt 组装，Token 预算控制，动态裁剪，Stateless Generation
 - **多模型兼容** — OpenAI / DeepSeek / Claude / Gemini 等统一接口
-- **知识图谱** — 人物关系图、势力图、事件图、物品图的可视化与管理（按版本分支隔离）
+- **知识图谱** — 人物关系图、势力图、事件图、物品图的可视化与管理（全局工作表）
 - **分层记忆** — Global / Chapter / Scene / Temporary 四层记忆系统，语义检索 + 近似去重 + AI 记忆整理
 - **剧情弧线追踪** — 追踪主线/支线剧情进展，标注未解悬念
 - **任务队列** — 生成/评分异步化（BullMQ + Redis，开发环境自动回退内存队列）
@@ -82,7 +82,7 @@ novel-runtime/
 │   │       │   ├── characters.ts
 │   │       │   ├── lore.ts
 │   │       │   ├── timeline.ts
-│   │       │   ├── chapters.ts        # 含版本分支相关 API
+│   │       │   ├── chapters.ts        # 章节核心路由
 │   │       │   ├── drafts.ts
 │   │       │   ├── graph.ts
 │   │       │   ├── memories.ts
@@ -163,15 +163,14 @@ novel-runtime/
 | 模型 | 说明 |
 |------|------|
 | `Story` | 小说工程 |
-| `VersionBranch` | 版本分支（剧情分叉隔离） |
 | `Chapter` | 章节（含状态机、场景状态、`isSideStory` 番外标记） |
 | `Character` | 角色卡（静态属性：性格、外貌、说话风格） |
-| `CharacterBranchState` | 角色按版本分支隔离的动态状态（境界、位置、人际关系） |
+| `CharacterBranchState` | 角色历史快照（按 `fromChapterNumber` 记录动态状态变化） |
 | `LoreItem` | 世界观条目（境界/地图/功法/势力/物品/规则） |
-| `Memory` | 记忆（global/chapter/scene/temporary，按版本分支隔离） |
-| `GraphNode` / `GraphEdge` | 知识图谱节点与边（按版本分支隔离） |
-| `TimelineEvent` | 时间线事件（按版本分支隔离） |
-| `PlotArc` | 剧情弧线（按版本分支隔离） |
+| `Memory` | 记忆（global/chapter/scene/temporary，按 `fromChapterNumber` 标记生命周期） |
+| `GraphNode` / `GraphEdge` | 知识图谱节点与边（全局工作表） |
+| `TimelineEvent` | 时间线事件（按 `fromChapterNumber` 标记生命周期） |
+| `PlotArc` | 剧情弧线（全局） |
 | `Draft` | 候选（含 temperature/maxTokens/compiledPrompt/score） |
 | `Score` | 评分记录（7 维度） |
 | `AiProviderConfig` | AI 模型配置（contextLength / maxTokens） |
@@ -248,19 +247,11 @@ http://localhost:3000/documentation
 | `/api/stories/:id` | GET/PUT/DELETE | 小说详情/更新/删除 |
 | `/api/stories/:id/chapters` | GET/POST | 章节列表/创建 |
 | `/api/chapters/:id` | GET/PUT/DELETE | 章节详情/更新/删除 |
-| `/api/chapters/:id/develop` | POST | 发展下一章/番外（支持创建新版本分支） |
+| `/api/chapters/:id/develop` | POST | 发展下一章/番外（主线仅限最新章节） |
 | `/api/chapters/:id/preview` | POST | 预览 Prompt |
 | `/api/chapters/:id/generate` | POST | 提交生成任务 |
 | `/api/chapters/:id/select` | POST | 采用候选 |
 | `/api/chapters/:id/archive` | POST | 归档章节（触发记忆/图谱/弧线提取） |
-
-### 版本分支 API
-
-| 接口 | 方法 | 说明 |
-|------|------|------|
-| `/api/stories/:id/version-branches` | GET | 版本分支列表 |
-| `/api/stories/:id/version-branches/:branchId/chain` | GET | 版本链（含祖先分支章节） |
-| `/api/version-branches/:branchId` | PUT | 修改版本分支名称 |
 
 ### 其他领域 API
 
@@ -268,9 +259,9 @@ http://localhost:3000/documentation
 |------|------|------|
 | `/api/stories/:id/characters` | GET/POST | 角色管理 |
 | `/api/stories/:id/lore` | GET/POST | 世界观条目 |
-| `/api/stories/:id/timeline` | GET/POST | 时间线事件（按版本分支隔离） |
-| `/api/stories/:id/graph` | GET | 知识图谱（按版本分支隔离） |
-| `/api/stories/:id/memory` | GET/POST | 记忆管理（按版本分支隔离） |
+| `/api/stories/:id/timeline` | GET/POST | 时间线事件 |
+| `/api/stories/:id/graph` | GET | 知识图谱 |
+| `/api/stories/:id/memory` | GET/POST | 记忆管理 |
 | `/api/drafts/:id/score` | POST | AI 评分（7 维度） |
 | `/api/ai-providers/default` | GET | 默认模型配置 |
 
@@ -278,21 +269,20 @@ http://localhost:3000/documentation
 
 ## 核心系统设计
 
-### 版本分支系统
+### 线性章节设计
 
-同一部小说可以有多个平行剧情线，每个版本分支拥有独立的时间线、角色状态、记忆和图谱。
+一本小说只有一条明确的时间线，所有章节顺序排列。如需剧情分叉，应创建新小说。
 
 ```
-主线·第1章
-  ├── 第2章
-  └── [分叉] 黑化IF线
-        ├── 第3章（黑化）
-        └── 第4章（黑化）
+第1章 → 第2章 → 第3章 → 第4章
+            ↓
+         番外·2.01
 ```
 
-- 新建根章节时自动创建根版本分支
-- `develop` 章节默认沿用父章节的版本分支
-- 用户可在 develop 时指定新版本名称，实现剧情分叉
+- 无版本分支概念 — 所有数据全局共享
+- 主线只能从最新章节继续发展
+- 番外可挂在任意已归档章节，番外归档不触发提取
+- 删除末尾章节时自动回退派生数据（记忆、时间线、角色状态）
 
 ### Prompt Pipeline
 

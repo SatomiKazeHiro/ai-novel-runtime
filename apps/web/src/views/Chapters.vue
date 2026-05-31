@@ -215,40 +215,28 @@
         </n-text>
       </n-card>
 
-      <!-- Step 4: 本章图谱变化 -->
-      <n-card v-if="editor.currentChapter?.status === 'archived' && editor.graphDelta" title="Step 4：本章图谱变化" style="margin-top: 24px">
+      <!-- Step 4: 本章范围图谱 -->
+      <n-card v-if="editor.currentChapter?.status === 'archived' && editor.graphDelta" title="Step 4：本章范围图谱" style="margin-top: 24px">
         <n-space vertical>
-          <n-alert :type="editor.graphDelta.addedNodes.length || editor.graphDelta.addedEdges.length ? 'info' : 'default'" :title="editor.graphDelta.summary" />
-          <n-collapse v-if="editor.graphDelta.addedNodes.length > 0">
-            <n-collapse-item title="新增节点">
+          <n-collapse v-if="editor.graphDelta.nodes?.length > 0">
+            <n-collapse-item title="涉及节点">
               <n-space>
-                <n-tag v-for="node in editor.graphDelta.addedNodes" :key="node.key" :type="node.type === 'character' ? 'error' : node.type === 'faction' ? 'warning' : 'default'">
+                <n-tag v-for="node in editor.graphDelta.nodes" :key="node.key" :type="node.type === 'character' ? 'error' : node.type === 'faction' ? 'warning' : 'default'">
                   {{ node.label }} ({{ node.type }})
                 </n-tag>
               </n-space>
             </n-collapse-item>
           </n-collapse>
-          <n-collapse v-if="editor.graphDelta.updatedNodes.length > 0">
-            <n-collapse-item title="更新节点">
+          <n-collapse v-if="editor.graphDelta.edges?.length > 0">
+            <n-collapse-item title="关系">
               <n-space vertical size="small">
-                <n-card v-for="item in editor.graphDelta.updatedNodes" :key="item.node.key" size="small" :bordered="false" embedded>
-                  <n-text strong>{{ item.node.label }} ({{ item.node.type }})</n-text>
-                  <n-ul style="margin: 4px 0; padding-left: 16px; font-size: 12px">
-                    <n-li v-for="change in item.changes" :key="change">{{ change }}</n-li>
-                  </n-ul>
-                </n-card>
-              </n-space>
-            </n-collapse-item>
-          </n-collapse>
-          <n-collapse v-if="editor.graphDelta.addedEdges.length > 0">
-            <n-collapse-item title="新增关系">
-              <n-space vertical size="small">
-                <n-text v-for="edge in editor.graphDelta.addedEdges" :key="`${edge.fromKey}-${edge.relation}-${edge.toKey}`" style="font-size: 12px">
+                <n-text v-for="edge in editor.graphDelta.edges" :key="`${edge.fromKey}-${edge.relation}-${edge.toKey}`" style="font-size: 12px">
                   {{ edge.fromLabel || edge.fromKey }} → [{{ edge.relation }}] → {{ edge.toLabel || edge.toKey }}
                 </n-text>
               </n-space>
             </n-collapse-item>
           </n-collapse>
+          <n-empty v-if="!editor.graphDelta.nodes?.length && !editor.graphDelta.edges?.length" description="本章未提取到图谱关系" />
         </n-space>
       </n-card>
     </div>
@@ -280,9 +268,6 @@
       <n-form :model="tree.developForm" label-placement="left" label-width="80">
         <n-form-item label="标题" required>
           <n-input v-model:value="tree.developForm.title" placeholder="章节标题" />
-        </n-form-item>
-        <n-form-item label="版本名称">
-          <n-input v-model:value="tree.developForm.versionBranchName" placeholder="留空则继承父章节版本" />
         </n-form-item>
         <n-form-item>
           <n-checkbox v-model:checked="tree.developForm.isSideStory">番外 / IF 线</n-checkbox>
@@ -354,8 +339,8 @@ import { useDebounceFn } from '@vueuse/core'
 import {
   NH1, NSpace, NButton, NModal, NForm, NFormItem, NInput, NCard, NP, NTag, NEmpty,
   NGrid, NGridItem, NProgress, NText, NDivider, NIcon, NSelect, NSlider, NInputNumber,
-  NSkeleton, NTabs, NTabPane, NScrollbar, NSpin, NAlert, NCollapse, NCollapseItem,
-  NUl, NLi, NCheckbox
+  NSkeleton, NTabs, NTabPane, NScrollbar, NSpin, NCollapse, NCollapseItem,
+  NCheckbox
 } from 'naive-ui'
 import { ArrowBackOutline } from '@vicons/ionicons5'
 import ChapterBranchTree from '../components/ChapterBranchTree.vue'

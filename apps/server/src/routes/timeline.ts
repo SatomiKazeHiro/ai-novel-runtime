@@ -4,11 +4,8 @@ export async function timelineRoutes(app: FastifyInstance) {
   // GET /api/stories/:id/timeline
   app.get('/api/stories/:storyId/timeline', async (request, reply) => {
     const { storyId } = request.params as any
-    const { versionBranchId } = request.query as any
-    const where: any = { storyId }
-    if (versionBranchId) where.versionBranchId = versionBranchId
     const events = await app.prisma.timelineEvent.findMany({
-      where,
+      where: { storyId },
       orderBy: { day: 'asc' }
     })
     return { success: true, data: events }
@@ -21,7 +18,7 @@ export async function timelineRoutes(app: FastifyInstance) {
     const event = await app.prisma.timelineEvent.create({
       data: {
         storyId,
-        versionBranchId: body.versionBranchId ?? '',
+        fromChapterNumber: body.fromChapterNumber,
         day: body.day,
         events: JSON.stringify(body.events || [])
       }

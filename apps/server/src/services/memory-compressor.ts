@@ -12,15 +12,13 @@ const COMPRESS_INTERVAL = 5 // 每 5 章压缩一次
  */
 export async function maybeCompressMemories(
   app: FastifyInstance,
-  storyId: string,
-  versionBranchId?: string
+  storyId: string
 ): Promise<void> {
   const prisma = app.prisma
-  const vbId = versionBranchId ?? ''
 
-  // 1. 统计已完成（selected 或 archived）的章节数（同版本）
+  // 1. 统计已完成（selected 或 archived）的章节数
   const completedCount = await prisma.chapter.count({
-    where: { storyId, versionBranchId: vbId, status: { in: ['selected', 'archived'] } }
+    where: { storyId, status: { in: ['selected', 'archived'] } }
   })
 
   // 2. 只有达到 5 的倍数时才触发（5, 10, 15...）
@@ -50,11 +48,10 @@ export async function maybeCompressMemories(
   const batchNumber = Math.floor(completedCount / COMPRESS_INTERVAL)
   app.log.info(`[MemoryCompressor] Triggering compression batch ${batchNumber} for story ${storyId}`)
 
-  // 4. 获取本轮待压缩的 chapter 记忆（同版本）
+  // 4. 获取本轮待压缩的 chapter 记忆
   const memoriesToCompress = await prisma.memory.findMany({
     where: {
       storyId,
-      versionBranchId: vbId,
       layer: 'chapter',
       tags: { not: { contains: 'compressed' } }
     },
@@ -74,12 +71,11 @@ export async function maybeCompressMemories(
     return
   }
 
-  // 6. 保存压缩后的 global 记忆（关联到版本）
+  // 6. 保存压缩后的 global 记忆（不关联具体章节）
   for (const summary of compressed) {
     await prisma.memory.create({
       data: {
         storyId,
-        versionBranchId: vbId,
         layer: 'global',
         content: summary,
         tags: JSON.stringify(['compressed', 'compressed-batch', `batch-${batchNumber}`]),

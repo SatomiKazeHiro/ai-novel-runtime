@@ -6,7 +6,7 @@ export async function characterRoutes(app: FastifyInstance) {
     const { storyId } = request.params as any
     const characters = await app.prisma.character.findMany({
       where: { storyId },
-      include: { branchStates: true },
+      include: { branchStates: { orderBy: { fromChapterNumber: 'desc' } } },
       orderBy: { createdAt: 'asc' }
     })
     return { success: true, data: characters }
@@ -29,13 +29,12 @@ export async function characterRoutes(app: FastifyInstance) {
       }
     })
 
-    // 如果提供了版本分支状态，同时创建 CharacterBranchState
-    const vbId = body.versionBranchId ?? ''
+    // 如果提供了初始状态，创建 CharacterBranchState（fromChapterNumber 为 null 表示初始状态）
     if (body.status !== undefined || body.relationships !== undefined) {
       await app.prisma.characterBranchState.create({
         data: {
           characterId: character.id,
-          versionBranchId: vbId,
+          fromChapterNumber: null,
           status: JSON.stringify(body.status || {}),
           relationships: JSON.stringify(body.relationships || {})
         }
@@ -61,32 +60,16 @@ export async function characterRoutes(app: FastifyInstance) {
       data
     })
 
-    // 如果提供了版本分支状态，更新或创建 CharacterBranchState
-    const vbId = body.versionBranchId ?? ''
+    // 如果提供了状态/关系，插入新的历史记录（而不是更新旧记录）
     if (body.status !== undefined || body.relationships !== undefined) {
-      const existing = await app.prisma.characterBranchState.findUnique({
-        where: { characterId_versionBranchId: { characterId: charId, versionBranchId: vbId } }
+      await app.prisma.characterBranchState.create({
+        data: {
+          characterId: charId,
+          fromChapterNumber: body.fromChapterNumber ?? null,
+          status: JSON.stringify(body.status || {}),
+          relationships: JSON.stringify(body.relationships || {})
+        }
       })
-      const bsData: any = {}
-      if (body.status !== undefined) bsData.status = JSON.stringify(body.status)
-      if (body.relationships !== undefined) bsData.relationships = JSON.stringify(body.relationships)
-
-      if (existing) {
-        await app.prisma.characterBranchState.update({
-          where: { id: existing.id },
-          data: bsData
-        })
-      } else {
-        await app.prisma.characterBranchState.create({
-          data: {
-            characterId: charId,
-            versionBranchId: vbId,
-            status: JSON.stringify(body.status || {}),
-            relationships: JSON.stringify(body.relationships || {}),
-            ...bsData
-          }
-        })
-      }
     }
 
     return { success: true, data: character }

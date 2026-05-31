@@ -77,7 +77,7 @@ export async function extractMemoryFromChapter(
 - emotions: 主要角色的情绪变化（字符串数组）
 - foreshadowing: 新埋下的伏笔（字符串数组）
 - relationshipChanges: 角色关系变化（字符串数组）
-- characterStatusChanges: 角色状态变化（对象，如 {"张三": {"rank": "初级", "location": "北京"}}）
+- characterStatusChanges: 角色状态变化（对象，如 {"张三": {"rank": "初级", "location": "北京"}}}）
 - timelineDay: 本章发生在第几天（数字，不确定则返回 null）
 - summary: 本章一句话摘要（50字以内）
 - scenes: 场景记忆数组（见下方说明）
@@ -127,14 +127,14 @@ export async function saveExtractedMemory(
   chapterId: string,
   storyId: string,
   result: MemoryExtractionResult,
-  versionBranchId?: string
+  fromChapterNumber?: number
 ) {
   const prisma = app.prisma
-  const vbId = versionBranchId ?? ''
+  const chNum = fromChapterNumber ?? 0
 
-  // 预加载最近 50 条记忆用于去重（同分支）
+  // 预加载最近 50 条记忆用于去重
   const recentMemories = await prisma.memory.findMany({
-    where: { storyId, versionBranchId: vbId },
+    where: { storyId },
     orderBy: { createdAt: 'desc' },
     take: 50,
     select: { content: true }
@@ -148,7 +148,7 @@ export async function saveExtractedMemory(
       return
     }
     await prisma.memory.create({
-      data: { storyId, chapterId, versionBranchId: vbId, layer, content, tags: JSON.stringify(tags), importance }
+      data: { storyId, chapterId, fromChapterNumber: chNum, layer, content, tags: JSON.stringify(tags), importance }
     })
     recentSets.unshift(tokenSet(content))
     if (recentSets.length > 50) recentSets.pop()
@@ -182,9 +182,9 @@ export async function saveExtractedMemory(
     await saveIfUnique(sceneContent, 'scene', ['auto-extracted', 'scene-memory'], scene.importance ?? 7)
   }
 
-  // 5. 保存全局记忆（角色状态变化）+ 同步更新 Character 表
+  // 5. 保存全局记忆（角色状态变化）+ 同步更新 CharacterBranchState（历史快照模式）
   for (const [charName, changes] of Object.entries(result.characterStatusChanges || {})) {
-    // 4a. 保存到记忆表
+    // 5a. 保存到记忆表
     await saveIfUnique(
       `【${charName}】状态更新：${JSON.stringify(changes)}`,
       'global',
@@ -192,43 +192,38 @@ export async function saveExtractedMemory(
       8
     )
 
-    // 4b. 同步更新 CharacterBranchState 的 status 字段（按分支隔离）
+    // 5b. 插入新的 CharacterBranchState 历史记录
     try {
       const character = await prisma.character.findFirst({
         where: { storyId, name: charName }
       })
       if (character) {
-        const branchState = await prisma.characterBranchState.findUnique({
-          where: { characterId_versionBranchId: { characterId: character.id, versionBranchId: vbId } }
+        const latestState = await prisma.characterBranchState.findFirst({
+          where: { characterId: character.id },
+          orderBy: { fromChapterNumber: 'desc' }
         })
-        if (branchState) {
-          const currentStatus = JSON.parse(branchState.status || '{}')
-          const mergedStatus = { ...currentStatus, ...changes }
-          await prisma.characterBranchState.update({
-            where: { id: branchState.id },
-            data: { status: JSON.stringify(mergedStatus) }
-          })
-        } else {
-          await prisma.characterBranchState.create({
-            data: {
-              characterId: character.id,
-              versionBranchId: vbId,
-              status: JSON.stringify(changes),
-              relationships: '{}'
-            }
-          })
-        }
-        app.log.info(`[MemoryExtractor] Updated character status: ${charName} [${vbId}] -> ${JSON.stringify(changes)}`)
+        const currentStatus = latestState ? JSON.parse(latestState.status || '{}') : {}
+        const mergedStatus = { ...currentStatus, ...changes }
+        const currentRelationships = latestState ? JSON.parse(latestState.relationships || '{}') : {}
+        await prisma.characterBranchState.create({
+          data: {
+            characterId: character.id,
+            fromChapterNumber: chNum,
+            status: JSON.stringify(mergedStatus),
+            relationships: JSON.stringify(currentRelationships)
+          }
+        })
+        app.log.info(`[MemoryExtractor] Updated character status: ${charName} [第${chNum}章] -> ${JSON.stringify(changes)}`)
       }
     } catch (err: any) {
       app.log.warn(`[MemoryExtractor] Failed to update character status for ${charName}: ${err.message}`)
     }
   }
 
-  // 6. 更新时间线（按分支隔离）
+  // 6. 更新时间线
   if (result.timelineDay && typeof result.timelineDay === 'number') {
     const existing = await prisma.timelineEvent.findUnique({
-      where: { storyId_versionBranchId_day: { storyId, versionBranchId: vbId, day: result.timelineDay } }
+      where: { storyId_day: { storyId, day: result.timelineDay } }
     })
 
     const dayEvents = [...(result.mainEvents || [])]
@@ -242,13 +237,13 @@ export async function saveExtractedMemory(
       await prisma.timelineEvent.create({
         data: {
           storyId,
-          versionBranchId: vbId,
+          fromChapterNumber: chNum,
           day: result.timelineDay,
           events: JSON.stringify(dayEvents)
         }
       })
     }
-    app.log.info(`[MemoryExtractor] Timeline updated: Day ${result.timelineDay} [${vbId}]`)
+    app.log.info(`[MemoryExtractor] Timeline updated: Day ${result.timelineDay}`)
   }
 
   // 7. 更新章节摘要

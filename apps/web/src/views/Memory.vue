@@ -3,7 +3,6 @@
     <n-space justify="space-between" align="center" style="margin-bottom: 16px">
       <n-h1>记忆管理</n-h1>
       <n-space>
-        <n-select v-model:value="versions.selectedVersionBranchId" :options="versions.versionBranchOptions" style="width: 180px" size="small" placeholder="版本" @update:value="loadMemory" />
         <n-button type="primary" @click="showModal = true">添加记忆</n-button>
       </n-space>
     </n-space>
@@ -41,7 +40,6 @@ import { ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { NH1, NSpace, NButton, NSelect, NTabs, NTabPane, NDataTable, NModal, NForm, NFormItem, NInput, NSlider } from 'naive-ui'
 import { memoryApi } from '../api/memory'
-import { useVersionBranches } from '../composables/useVersionBranches'
 
 const layerOptions = [
   { value: 'global', label: '全局记忆' },
@@ -51,12 +49,11 @@ const layerOptions = [
 ]
 
 const route = useRoute()
-const versions = useVersionBranches(() => route.params.storyId as string | undefined)
 const activeLayer = ref('global')
 const memories = ref<any[]>([])
 const loading = ref(false)
 const showModal = ref(false)
-const form = ref({ layer: 'global', content: '', importance: 5, versionBranchId: '' })
+const form = ref({ layer: 'global', content: '', importance: 5 })
 
 const columns = [
   { title: '层级', key: 'layer', width: 90 },
@@ -83,7 +80,7 @@ async function loadMemory() {
   }
   loading.value = true
   try {
-    const res = await memoryApi.list(route.params.storyId as string, activeLayer.value, versions.selectedVersionBranchId)
+    const res = await memoryApi.list(route.params.storyId as string, activeLayer.value)
     memories.value = res.data.data
   } finally {
     loading.value = false
@@ -92,19 +89,19 @@ async function loadMemory() {
 
 async function handleCreate() {
   if (!route.params.storyId || !form.value.content) return
-  await memoryApi.create(route.params.storyId as string, { ...form.value, versionBranchId: versions.selectedVersionBranchId })
+  await memoryApi.create(route.params.storyId as string, { ...form.value })
   showModal.value = false
-  form.value = { layer: activeLayer.value, content: '', importance: 5, versionBranchId: versions.selectedVersionBranchId }
+  form.value = { layer: activeLayer.value, content: '', importance: 5 }
   await loadMemory()
 }
 
 watch(() => route.params.storyId, () => {
-  versions.loadVersionBranches().then(loadMemory)
+  loadMemory()
 })
 
 onMounted(() => {
   if (route.params.storyId) {
-    versions.loadVersionBranches().then(loadMemory)
+    loadMemory()
   }
 })
 </script>

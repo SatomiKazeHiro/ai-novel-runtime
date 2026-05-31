@@ -10,7 +10,6 @@ export interface CharacterCreate {
   temperament?: string[]
   relationships?: Record<string, any>
   status?: Record<string, any>
-  versionBranchId?: string
 }
 
 export interface CharacterUpdate {
@@ -22,7 +21,6 @@ export interface CharacterUpdate {
   temperament?: string[]
   relationships?: Record<string, any>
   status?: Record<string, any>
-  versionBranchId?: string
 }
 
 export const charactersApi = {

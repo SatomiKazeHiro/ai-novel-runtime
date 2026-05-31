@@ -3,7 +3,8 @@ import { generateQueue } from '../queue/index.js'
 import { extractAndSaveAll } from '../services/combined-extractor.js'
 import { organizeMemoriesAfterArchive } from '../services/memory-organizer.js'
 import { getActivePlotArcs } from '../services/plot-extractor.js'
-import { saveGraphSnapshotAndDelta } from '../services/graph-snapshot.js'
+import { saveGraphSnapshotAndDelta, type GraphSnapshot } from '../services/graph-snapshot.js'
+import { organizeGraph } from '../services/graph-organizer.js'
 import { PromptPipeline } from '@novel-runtime/prompt-runtime'
 import { MemoryManager } from '@novel-runtime/memory-engine'
 import { RuntimePromptCompiler, estimateTokens } from '@novel-runtime/ai-provider'
@@ -15,18 +16,14 @@ export async function chapterRoutes(app: FastifyInstance) {
   // GET /api/stories/:storyId/chapters
   app.get('/api/stories/:storyId/chapters', async (request, reply) => {
     const { storyId } = request.params as any
-    const { versionBranchId } = request.query as any
-    const where: any = { storyId }
-    if (versionBranchId) where.versionBranchId = versionBranchId
     const chapters = await app.prisma.chapter.findMany({
-      where,
+      where: { storyId },
       orderBy: { number: 'asc' }
     })
     return { success: true, data: chapters }
   })
 
-  // 辅助函数：为番外分配小数序号（以 base 为基准，找第一个不冲突的 base + 0.01, base + 0.02...）
-  // 返回负数表示溢出（超过 99 个番外）
+  // 辅助函数：为番外分配小数序号
   async function allocateSideStoryNumber(prisma: any, storyId: string, baseNumber: number): Promise<number> {
     const existing = await prisma.chapter.findMany({
       where: { storyId },
@@ -40,8 +37,28 @@ export async function chapterRoutes(app: FastifyInstance) {
         return candidate
       }
       seq++
-      if (seq > 99) return -1 // 溢出标记
+      if (seq > 99) return -1
     }
+  }
+
+  // 辅助函数：获取故事下最新章节（number 最大的）
+  async function getLastChapter(prisma: any, storyId: string) {
+    return prisma.chapter.findFirst({
+      where: { storyId },
+      orderBy: { number: 'desc' }
+    })
+  }
+
+  // 辅助函数：获取角色的最新状态（历史表模式）
+  async function getCharactersWithLatestState(prisma: any, storyId: string) {
+    const characters = await prisma.character.findMany({ where: { storyId } })
+    return Promise.all(characters.map(async (c: any) => {
+      const latestState = await prisma.characterBranchState.findFirst({
+        where: { characterId: c.id },
+        orderBy: { fromChapterNumber: 'desc' }
+      })
+      return { ...c, status: latestState?.status || '{}', relationships: latestState?.relationships || '{}' }
+    }))
   }
 
   // POST /api/stories/:storyId/chapters
@@ -53,10 +70,7 @@ export async function chapterRoutes(app: FastifyInstance) {
     if (isSideStory && body.number !== undefined) {
       number = parseFloat(body.number)
     } else if (isSideStory) {
-      const lastChapter = await app.prisma.chapter.findFirst({
-        where: { storyId },
-        orderBy: { number: 'desc' }
-      })
+      const lastChapter = await getLastChapter(app.prisma, storyId)
       number = (lastChapter?.number || 0) + 0.5
     } else {
       const lastChapter = await app.prisma.chapter.findFirst({
@@ -66,14 +80,6 @@ export async function chapterRoutes(app: FastifyInstance) {
       number = (lastChapter?.number || 0) + 1
     }
 
-    // 新建根章节自动创建版本分支
-    const versionBranch = await app.prisma.versionBranch.create({
-      data: {
-        storyId,
-        name: body.versionBranchName || `主线·第${Math.floor(number)}章`
-      }
-    })
-
     const chapter = await app.prisma.chapter.create({
       data: {
         storyId,
@@ -81,8 +87,7 @@ export async function chapterRoutes(app: FastifyInstance) {
         isSideStory,
         title: body.title,
         outline: body.outline || '',
-        status: 'draft',
-        versionBranchId: versionBranch.id
+        status: 'draft'
       }
     })
     return { success: true, data: chapter }
@@ -93,7 +98,7 @@ export async function chapterRoutes(app: FastifyInstance) {
     const { chapterId } = request.params as any
     const chapter = await app.prisma.chapter.findUnique({
       where: { id: chapterId },
-      include: { drafts: true, versionBranch: { select: { id: true, name: true } } }
+      include: { drafts: true }
     })
     if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
     return { success: true, data: chapter }
@@ -118,11 +123,83 @@ export async function chapterRoutes(app: FastifyInstance) {
   // DELETE /api/chapters/:chapterId
   app.delete('/api/chapters/:chapterId', async (request, reply) => {
     const { chapterId } = request.params as any
-    await app.prisma.chapter.delete({ where: { id: chapterId } })
+    const prisma = app.prisma
+
+    const chapter = await prisma.chapter.findUnique({
+      where: { id: chapterId },
+      include: { childChapters: true }
+    })
+    if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
+
+    // 已归档且有子章节的不可删除
+    if (chapter.status === 'archived' && chapter.childChapters.length > 0) {
+      return reply.status(400).send({ success: false, error: '已归档且有子章节的章节不可删除' })
+    }
+
+    // 只能删除末尾章节（number 最大的），除非是非归档的草稿/生成中/已选中章节
+    if (chapter.status === 'archived') {
+      const lastChapter = await getLastChapter(prisma, chapter.storyId)
+      if (lastChapter && lastChapter.id !== chapterId) {
+        return reply.status(400).send({ success: false, error: '只能按顺序从末尾删除已归档章节' })
+      }
+      // 如果是末尾章节，检查是否有番外需要先删除
+      const sideStories = await prisma.chapter.findMany({
+        where: { storyId: chapter.storyId, isSideStory: true },
+        orderBy: { number: 'desc' }
+      })
+      // 如果存在 number > chapter.number 的番外？不，番外是挂在父章节下的
+      // 实际上番外的 parentChapterId 指向任意章节，番外的 number 可能是小数
+      // 删除末尾章节时，番外可能 number 比它大也可能比它小
+      // 这里简化：如果该章节有 childChapters（已在上面拦截），或者存在 number 更大的番外
+      const maxSideStory = sideStories[0]
+      if (maxSideStory && maxSideStory.number > chapter.number) {
+        return reply.status(400).send({ success: false, error: '存在尚未删除的番外，请先删除番外' })
+      }
+    }
+
+    // 级联清理：删除同 fromChapterNumber 的派生数据
+    if (chapter.status === 'archived' && chapter.number > 0) {
+      try {
+        const { count: memCount } = await prisma.memory.deleteMany({
+          where: { storyId: chapter.storyId, fromChapterNumber: chapter.number }
+        })
+        const { count: teCount } = await prisma.timelineEvent.deleteMany({
+          where: { storyId: chapter.storyId, fromChapterNumber: chapter.number }
+        })
+        const { count: bsCount } = await prisma.characterBranchState.deleteMany({
+          where: { fromChapterNumber: chapter.number }
+        })
+        app.log.info(`[Delete] Cascade cleanup for chapter ${chapter.number}: memory=${memCount}, timeline=${teCount}, branchState=${bsCount}`)
+      } catch (err: any) {
+        app.log.error(`[Delete] Cascade cleanup failed: ${err.message}`)
+      }
+    }
+
+    // 删除后重建图谱：用剩余最新章节的 snapshot 回退
+    const { rebuildGraphFromSnapshot } = await import('../services/graph-snapshot.js')
+    const prevChapter = await prisma.chapter.findFirst({
+      where: { storyId: chapter.storyId, status: 'archived' },
+      orderBy: { number: 'desc' }
+    })
+    if (prevChapter?.graphSnapshot) {
+      try {
+        const snapshot = JSON.parse(prevChapter.graphSnapshot)
+        await rebuildGraphFromSnapshot(prisma, chapter.storyId, snapshot)
+        app.log.info(`[Delete] Rebuilt graph from chapter ${prevChapter.number} snapshot`)
+      } catch (err: any) {
+        app.log.error(`[Delete] Graph rebuild failed: ${err.message}`)
+      }
+    } else {
+      await prisma.graphEdge.deleteMany({ where: { storyId: chapter.storyId } })
+      await prisma.graphNode.deleteMany({ where: { storyId: chapter.storyId } })
+      app.log.info(`[Delete] Cleared all graph data for story ${chapter.storyId}`)
+    }
+
+    await prisma.chapter.delete({ where: { id: chapterId } })
     return { success: true }
   })
 
-  // POST /api/chapters/:chapterId/preview — 只组装 Prompt，不调用 AI
+  // POST /api/chapters/:chapterId/preview
   app.post('/api/chapters/:chapterId/preview', async (request, reply) => {
     const { chapterId } = request.params as any
     const body = request.body as any
@@ -131,39 +208,39 @@ export async function chapterRoutes(app: FastifyInstance) {
     const prisma = app.prisma
     const chapter = await prisma.chapter.findUnique({
       where: { id: chapterId },
-      include: { story: true, versionBranch: true }
+      include: { story: true }
     })
     if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
 
-    const vbId = chapter.versionBranchId
+    // 生成限制：只能在最新章节上生成
+    const lastChapter = await getLastChapter(prisma, chapter.storyId)
+    if (lastChapter && lastChapter.id !== chapterId) {
+      return reply.status(400).send({ success: false, error: '只能在最新章节上生成内容' })
+    }
+
     const story = chapter.story
 
-    // 查询角色并合并当前版本分支状态
-    const characters = await prisma.character.findMany({ where: { storyId }, include: { branchStates: true } })
-    const charactersWithBranchState = characters.map(c => {
-      const bs = c.branchStates?.find((s: any) => s.versionBranchId === vbId)
-      return { ...c, status: bs?.status || '{}', relationships: bs?.relationships || '{}' }
-    })
+    // 查询角色并合并最新状态
+    const charactersWithBranchState = await getCharactersWithLatestState(prisma, storyId)
 
     const loreItems = await prisma.loreItem.findMany({ where: { storyId } })
-    const timelineEvents = await prisma.timelineEvent.findMany({ where: { storyId, versionBranchId: vbId }, orderBy: { day: 'asc' } })
+    const timelineEvents = await prisma.timelineEvent.findMany({ where: { storyId }, orderBy: { day: 'asc' } })
 
-    // 获取 checkpoint（同版本最后一个归档章节号）
+    // 获取 checkpoint（最后一个归档章节号）
     const checkpointChapter = await prisma.chapter.findFirst({
-      where: { storyId, versionBranchId: vbId, status: 'archived' },
+      where: { storyId, status: 'archived' },
       orderBy: { number: 'desc' }
     })
     const checkpointNumber = checkpointChapter?.number || 0
 
     const memoryManager = new MemoryManager()
     const queryText = `${chapter.outline || ''} ${chapter.sceneLocation || ''} ${chapter.sceneMood || ''} ${chapter.sceneGoal || ''}`
-    const relevantMemories = await memoryManager.searchRelevant(storyId, queryText, prisma, 20, checkpointNumber, vbId)
+    const relevantMemories = await memoryManager.searchRelevant(storyId, queryText, prisma, 20, checkpointNumber)
 
     const base = await loadRuntimeBase(storyId, prisma)
     const task = await loadWorkerTask(storyId, 'generation', prisma)
-    const plotArcText = await getActivePlotArcs(prisma, storyId, vbId)
+    const plotArcText = await getActivePlotArcs(prisma, storyId)
 
-    // 读取默认模型配置，动态调整预算
     const aiConfig = await prisma.aiProviderConfig.findFirst({ where: { isDefault: true } })
     const contextLength = aiConfig?.contextLength || DEFAULT_PIPELINE_BUDGET.total
     const budget = scaleBudget(contextLength)
@@ -196,7 +273,7 @@ export async function chapterRoutes(app: FastifyInstance) {
     }
   })
 
-  // POST /api/chapters/:chapterId/generate — 异步生成（创建 Draft 后入队，立即返回）
+  // POST /api/chapters/:chapterId/generate
   app.post('/api/chapters/:chapterId/generate', async (request, reply) => {
     const { chapterId } = request.params as any
     const body = request.body as any
@@ -209,51 +286,38 @@ export async function chapterRoutes(app: FastifyInstance) {
 
     const prisma = app.prisma
 
-    // 1. 获取章节信息
     const chapter = await prisma.chapter.findUnique({
       where: { id: chapterId },
-      include: { story: true, versionBranch: true }
+      include: { story: true }
     })
     if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
 
-    // 2. 获取上下文（按版本隔离）
-    const vbId = chapter.versionBranchId
     const story = chapter.story
 
-    // 查询角色并合并当前版本分支状态
-    const characters = await prisma.character.findMany({ where: { storyId }, include: { branchStates: true } })
-    const charactersWithBranchState = characters.map(c => {
-      const bs = c.branchStates?.find((s: any) => s.versionBranchId === vbId)
-      return { ...c, status: bs?.status || '{}', relationships: bs?.relationships || '{}' }
-    })
+    const charactersWithBranchState = await getCharactersWithLatestState(prisma, storyId)
 
     const loreItems = await prisma.loreItem.findMany({ where: { storyId } })
-    const timelineEvents = await prisma.timelineEvent.findMany({ where: { storyId, versionBranchId: vbId }, orderBy: { day: 'asc' } })
+    const timelineEvents = await prisma.timelineEvent.findMany({ where: { storyId }, orderBy: { day: 'asc' } })
 
-    // 2a. 获取 checkpoint（同版本）
     const checkpointChapter = await prisma.chapter.findFirst({
-      where: { storyId, versionBranchId: vbId, status: 'archived' },
+      where: { storyId, status: 'archived' },
       orderBy: { number: 'desc' }
     })
     const checkpointNumber = checkpointChapter?.number || 0
 
-    // 2b. 语义检索相关记忆（同版本）
     const memoryManager = new MemoryManager()
     const queryText = `${chapter.outline || ''} ${chapter.sceneLocation || ''} ${chapter.sceneMood || ''} ${chapter.sceneGoal || ''}`
-    const relevantMemories = await memoryManager.searchRelevant(storyId, queryText, prisma, 20, checkpointNumber, vbId)
+    const relevantMemories = await memoryManager.searchRelevant(storyId, queryText, prisma, 20, checkpointNumber)
 
-    // 3. 加载 Runtime Base + Generation Worker Task
     const base = await loadRuntimeBase(storyId, prisma)
     const task = await loadWorkerTask(storyId, 'generation', prisma)
-    const plotArcText = await getActivePlotArcs(prisma, storyId, vbId)
+    const plotArcText = await getActivePlotArcs(prisma, storyId)
 
-    // 读取默认模型配置，动态调整预算
     const aiConfig = await prisma.aiProviderConfig.findFirst({ where: { isDefault: true } })
     const contextLength = aiConfig?.contextLength || DEFAULT_PIPELINE_BUDGET.total
     const maxTokens = customMaxTokens || aiConfig?.maxTokens || 4096
     const budget = scaleBudget(contextLength)
 
-    // 5. 组装 Prompt
     let compiled: any
     let layers: any[] = []
     const customCompiled = body.compiledPrompt
@@ -334,7 +398,7 @@ export async function chapterRoutes(app: FastifyInstance) {
     return { success: true, data: { drafts: generatingDrafts, count: generatingDrafts.length, tokens: compiled.meta, layers } }
   })
 
-  // POST /api/chapters/:chapterId/select — 选择最终采用的 draft
+  // POST /api/chapters/:chapterId/select
   app.post('/api/chapters/:chapterId/select', async (request, reply) => {
     const { chapterId } = request.params as any
     const body = request.body as any
@@ -354,11 +418,12 @@ export async function chapterRoutes(app: FastifyInstance) {
     return { success: true }
   })
 
-  // POST /api/chapters/:chapterId/archive — 归档章节并提取记忆/图谱/弧线
+  // POST /api/chapters/:chapterId/archive
   app.post('/api/chapters/:chapterId/archive', async (request, reply) => {
     const { chapterId } = request.params as any
+    const prisma = app.prisma
 
-    const chapter = await app.prisma.chapter.findUnique({
+    const chapter = await prisma.chapter.findUnique({
       where: { id: chapterId },
       include: { story: true }
     })
@@ -369,38 +434,94 @@ export async function chapterRoutes(app: FastifyInstance) {
       return { success: true, data: { alreadyArchived: true } }
     }
 
-    await app.prisma.chapter.update({ where: { id: chapterId }, data: { status: 'archived' } })
+    // 番外不触发任何提取，直接归档
+    if (chapter.isSideStory) {
+      await prisma.chapter.update({ where: { id: chapterId }, data: { status: 'archived' } })
+      app.log.info(`[Archive] Side story ${chapterId} archived without extraction`)
+      return { success: true, data: { sideStory: true } }
+    }
 
-    const vbId = chapter.versionBranchId
+    // 主线无正文：直接归档（无内容可提取）
+    if (!chapter.content) {
+      await prisma.chapter.update({ where: { id: chapterId }, data: { status: 'archived' } })
+      return { success: true, data: { noContent: true } }
+    }
 
+    // 主线有正文：全部步骤成功后统一归档
     let extraction = null
-    if (chapter.content) {
-      try {
-        extraction = await extractAndSaveAll(app, chapterId, chapter.storyId, chapter.content, chapter.outline || undefined)
-        app.log.info(`[Archive] Combined extraction completed for chapter ${chapterId}`)
-      } catch (err: any) {
-        app.log.error(`[Archive] Combined extraction failed: ${err.message}`)
+    try {
+      extraction = await extractAndSaveAll(app, chapterId, chapter.storyId, chapter.content, chapter.outline || undefined, chapter.number)
+      app.log.info(`[Archive] Combined extraction completed for chapter ${chapterId}`)
+    } catch (err: any) {
+      app.log.error(`[Archive] Combined extraction failed: ${err.message}`)
+      return reply.status(500).send({
+        success: false,
+        error: `归档失败：内容提取出错（${err.message}）。章节状态未变更，请检查 AI 配置后重试。`
+      })
+    }
+
+    // graph organizer：合并上一章全局 + 本章提取
+    let previousSnapshot: GraphSnapshot | null = null
+    if (chapter.parentChapterId) {
+      const parent = await prisma.chapter.findUnique({
+        where: { id: chapter.parentChapterId },
+        select: { graphSnapshot: true }
+      })
+      if (parent?.graphSnapshot) {
+        previousSnapshot = JSON.parse(parent.graphSnapshot)
+      }
+    }
+    if (!previousSnapshot) {
+      const lastArchived = await prisma.chapter.findFirst({
+        where: { storyId: chapter.storyId, status: 'archived', id: { not: chapterId } },
+        orderBy: { number: 'desc' },
+        select: { graphSnapshot: true }
+      })
+      if (lastArchived?.graphSnapshot) {
+        previousSnapshot = JSON.parse(lastArchived.graphSnapshot)
       }
     }
 
+    const graphRaw = extraction?.graph || { nodes: [], edges: [] }
+    const graphOrganized = await organizeGraph(app, chapter.storyId, chapterId, previousSnapshot, graphRaw)
+    if (!graphOrganized) {
+      return reply.status(500).send({
+        success: false,
+        error: `归档失败：知识图谱整理出错。章节状态未变更，请检查 AI 配置后重试。`
+      })
+    }
+
+    const graphSaved = await saveGraphSnapshotAndDelta(app, chapterId, chapter.storyId, graphOrganized)
+    if (!graphSaved) {
+      return reply.status(500).send({
+        success: false,
+        error: `归档失败：知识图谱保存出错。章节状态未变更，请检查后重试。`
+      })
+    }
+
+    // AI 记忆整理（失败则阻止归档）
+    let organized: { merged: number; updated: number; deleted: number } | null = null
     try {
-      const organized = await organizeMemoriesAfterArchive(app, chapter.storyId, chapterId, vbId)
+      organized = await organizeMemoriesAfterArchive(app, chapter.storyId, chapterId)
       app.log.info(`[Archive] Memory organized: merged=${organized.merged}, updated=${organized.updated}, deleted=${organized.deleted}`)
     } catch (err: any) {
       app.log.error(`[Archive] Memory organization failed: ${err.message}`)
+      return reply.status(500).send({
+        success: false,
+        error: `归档失败：记忆整理出错（${err.message}）。章节状态未变更，请检查 AI 配置后重试。`
+      })
     }
 
-    let graphResult = null
-    try {
-      graphResult = await saveGraphSnapshotAndDelta(app, chapterId, chapter.storyId, vbId)
-    } catch (err: any) {
-      app.log.error(`[Archive] Graph snapshot failed: ${err.message}`)
-    }
+    // 全部成功后：正式归档
+    await prisma.chapter.update({ where: { id: chapterId }, data: { status: 'archived' } })
 
-    return { success: true, data: { extraction, graph: graphResult } }
+    return {
+      success: true,
+      data: { extraction, organized, graph: graphSaved }
+    }
   })
 
-  // POST /api/chapters/:chapterId/develop — 在指定章节上"发展"出下一章/番外
+  // POST /api/chapters/:chapterId/develop
   app.post('/api/chapters/:chapterId/develop', async (request, reply) => {
     const { chapterId } = request.params as any
     const body = request.body as any
@@ -412,7 +533,22 @@ export async function chapterRoutes(app: FastifyInstance) {
     })
     if (!parentChapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
 
+    // 校验：只能从 archived 或 selected 的章节发展
+    if (!['archived', 'selected'].includes(parentChapter.status)) {
+      return reply.status(400).send({ success: false, error: '只能从已归档或已选中的章节发展' })
+    }
+
     const isSideStory = body.isSideStory === true
+
+    // 主线只能从最新章节发展
+    if (!isSideStory) {
+      const lastChapter = await getLastChapter(prisma, parentChapter.storyId)
+      if (lastChapter && lastChapter.id !== chapterId) {
+        return reply.status(400).send({ success: false, error: '主线章节只能从最新章节继续发展' })
+      }
+    }
+
+    // 计算新章节的序号
     let number: number
     if (isSideStory && body.number !== undefined) {
       number = parseFloat(body.number)
@@ -433,32 +569,10 @@ export async function chapterRoutes(app: FastifyInstance) {
       number = lastSibling ? lastSibling.number + 1 : (parentChapter.number + 1)
     }
 
-    // 版本自动分配逻辑
-    let newVersionBranchId = parentChapter.versionBranchId
-    if (!isSideStory) {
-      // 检查父章节是否已有后续子章节（非番外）
-      const existingChildren = await prisma.chapter.count({
-        where: { parentChapterId: chapterId, isSideStory: false }
-      })
-      if (existingChildren > 0) {
-        // 有后续子章节 → 自动创建新版本分支
-        const newVersionBranch = await prisma.versionBranch.create({
-          data: {
-            storyId: parentChapter.storyId,
-            name: body.versionBranchName || `从${parentChapter.title || `第${parentChapter.number}章`}分叉`,
-            forkFromChapterId: chapterId,
-            forkFromVersionId: parentChapter.versionBranchId
-          }
-        })
-        newVersionBranchId = newVersionBranch.id
-      }
-    }
-
     const newChapter = await prisma.chapter.create({
       data: {
         storyId: parentChapter.storyId,
         parentChapterId: chapterId,
-        versionBranchId: newVersionBranchId,
         number,
         isSideStory,
         title: body.title || (isSideStory ? `番外·${number}` : `第${Math.floor(number)}章`),
@@ -468,11 +582,11 @@ export async function chapterRoutes(app: FastifyInstance) {
       }
     })
 
-    app.log.info(`[Develop] Chapter ${chapterId} → new chapter ${newChapter.id} (number=${number}, versionBranch=${newVersionBranchId})`)
+    app.log.info(`[Develop] Chapter ${chapterId} → new chapter ${newChapter.id} (number=${number})`)
     return { success: true, data: newChapter }
   })
 
-  // GET /api/stories/:storyId/chapter-tree — 获取章节分支树
+  // GET /api/stories/:storyId/chapter-tree
   app.get('/api/stories/:storyId/chapter-tree', async (request, reply) => {
     const { storyId } = request.params as any
     const prisma = app.prisma
@@ -480,7 +594,7 @@ export async function chapterRoutes(app: FastifyInstance) {
     const allChapters = await prisma.chapter.findMany({
       where: { storyId },
       orderBy: { createdAt: 'asc' },
-      include: { runtimeProfile: { select: { name: true } }, versionBranch: { select: { name: true } } }
+      include: { runtimeProfile: { select: { name: true } } }
     })
 
     const chapterMap = new Map(allChapters.map(c => [c.id, { ...c, children: [] as any[] }]))
@@ -496,62 +610,5 @@ export async function chapterRoutes(app: FastifyInstance) {
     }
 
     return { success: true, data: roots }
-  })
-
-  // GET /api/stories/:storyId/version-branches — 获取版本分支列表
-  app.get('/api/stories/:storyId/version-branches', async (request, reply) => {
-    const { storyId } = request.params as any
-    const branches = await app.prisma.versionBranch.findMany({
-      where: { storyId },
-      orderBy: { createdAt: 'asc' }
-    })
-    return { success: true, data: branches }
-  })
-
-  // GET /api/stories/:storyId/version-branches/:branchId/chain — 获取版本链（含祖先）
-  app.get('/api/stories/:storyId/version-branches/:branchId/chain', async (request, reply) => {
-    const { storyId, branchId } = request.params as any
-    const prisma = app.prisma
-
-    // 递归收集版本链
-    const chainIds: string[] = []
-    let currentId: string | null = branchId
-    const visited = new Set<string>()
-
-    while (currentId && !visited.has(currentId)) {
-      visited.add(currentId)
-      chainIds.push(currentId)
-      const branch = await prisma.versionBranch.findUnique({
-        where: { id: currentId },
-        select: { forkFromVersionId: true }
-      })
-      currentId = branch?.forkFromVersionId || null
-    }
-
-    // 查询链上所有章节（当前版本 + 祖先版本）
-    const allChapters = await prisma.chapter.findMany({
-      where: { storyId, versionBranchId: { in: chainIds } },
-      orderBy: { number: 'asc' },
-      include: { runtimeProfile: { select: { name: true } }, versionBranch: { select: { name: true } } }
-    })
-
-    // 标记每个章节所属版本关系
-    const data = allChapters.map((c: any) => ({
-      ...c,
-      isAncestorVersion: c.versionBranchId !== branchId
-    }))
-
-    return { success: true, data }
-  })
-
-  // PUT /api/version-branches/:branchId — 修改版本分支名称
-  app.put('/api/version-branches/:branchId', async (request, reply) => {
-    const { branchId } = request.params as any
-    const body = request.body as any
-    const branch = await app.prisma.versionBranch.update({
-      where: { id: branchId },
-      data: { name: body.name }
-    })
-    return { success: true, data: branch }
   })
 }

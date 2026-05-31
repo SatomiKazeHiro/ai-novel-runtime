@@ -34,23 +34,6 @@ model Story {
   runtimeProfile   RuntimeProfile? @relation(fields: [runtimeProfileId], references: [id])
   runtimeProfileId String?
   workerTasks  WorkerTask[]
-  versionBranches VersionBranch[]
-}
-
-// 版本分支（系统自动分配）
-model VersionBranch {
-  id                String   @id @default(uuid())
-  storyId           String
-  name              String   // 用户可编辑，默认 yyyyMMddHHmmss
-  forkFromChapterId String?  // 从哪个章节分叉（null=根版本）
-  forkFromVersionId String?  // 从哪个版本分叉（null=根版本）
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  story             Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-  chapters          Chapter[]
-
-  @@index([storyId])
 }
 
 // 章节
@@ -60,7 +43,6 @@ model Chapter {
 
   // 分支关系
   parentChapterId   String?  // 指向父章节（上一章），null 表示根章节
-  versionBranchId   String   // 所属版本分支
 
   number            Float
   isSideStory       Boolean  @default(false)
@@ -90,14 +72,12 @@ model Chapter {
   parentChapter     Chapter? @relation("ChapterBranches", fields: [parentChapterId], references: [id], onDelete: SetNull)
   childChapters     Chapter[] @relation("ChapterBranches")
   runtimeProfile    RuntimeProfile? @relation(fields: [runtimeProfileId], references: [id])
-  versionBranch     VersionBranch @relation(fields: [versionBranchId], references: [id], onDelete: Cascade)
   drafts            Draft[]
   memories          Memory[]
   scores            Score[]
 
   @@index([storyId, parentChapterId])
   @@index([storyId, status])
-  @@index([versionBranchId])
 }
 
 // 角色卡
@@ -120,18 +100,19 @@ model Character {
   @@unique([storyId, slug])
 }
 
-// 角色分支状态（按版本隔离状态和关系）
+// 角色分支状态（按章节归档历史保存，删除章节时可回退）
 model CharacterBranchState {
-  id              String   @id @default(uuid())
-  characterId     String
-  versionBranchId String
-  status          String   @default("{}") // JSON object: realm, location, etc.
-  relationships   String   @default("{}") // JSON object
-  updatedAt       DateTime @updatedAt
+  id                String   @id @default(uuid())
+  characterId       String
+  fromChapterNumber Float?   // 来源章节序号，null 表示初始状态
+  status            String   @default("{}") // JSON object: realm, location, etc.
+  relationships     String   @default("{}") // JSON object
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  character       Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  character         Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
 
-  @@unique([characterId, versionBranchId])
+  @@index([characterId, fromChapterNumber])
 }
 
 // 世界观条目 (LoreBook)
@@ -153,28 +134,28 @@ model LoreItem {
 
 // 记忆
 model Memory {
-  id              String   @id @default(uuid())
-  storyId         String
-  chapterId       String?
-  versionBranchId String
-  layer           String   // global, chapter, scene, temporary
-  content         String
-  tags            String   @default("[]") // JSON string array
-  importance      Int      @default(5) // 1-10
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                String   @id @default(uuid())
+  storyId           String
+  chapterId         String?
+  fromChapterNumber Float?   // 来源章节序号（archive 时标记）
+  layer             String   // global, chapter, scene, temporary
+  content           String
+  tags              String   @default("[]") // JSON string array
+  importance        Int      @default(5) // 1-10
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  story           Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-  chapter         Chapter? @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  story             Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  chapter           Chapter? @relation(fields: [chapterId], references: [id], onDelete: Cascade)
 
-  @@index([storyId, versionBranchId, layer])
+  @@index([storyId, layer])
+  @@index([storyId, fromChapterNumber])
 }
 
 // 知识图谱节点
 model GraphNode {
   id              String   @id @default(uuid())
   storyId         String
-  versionBranchId String
   type            String   // character, faction, event, realm, item
   key             String
   label           String
@@ -185,14 +166,13 @@ model GraphNode {
   edgesFrom       GraphEdge[] @relation("from")
   edgesTo         GraphEdge[] @relation("to")
 
-  @@unique([storyId, versionBranchId, type, key])
+  @@unique([storyId, type, key])
 }
 
 // 知识图谱边
 model GraphEdge {
   id              String   @id @default(uuid())
   storyId         String
-  versionBranchId String
   fromId          String
   toId            String
   relation        String
@@ -206,17 +186,17 @@ model GraphEdge {
 
 // 时间线事件
 model TimelineEvent {
-  id              String   @id @default(uuid())
-  storyId         String
-  versionBranchId String
-  day             Int
-  events          String   @default("[]") // JSON string array of event descriptions
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                String   @id @default(uuid())
+  storyId           String
+  fromChapterNumber Float?   // 来源章节序号（archive 时标记）
+  day               Int
+  events            String   @default("[]") // JSON string array of event descriptions
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  story           Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  story             Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
 
-  @@unique([storyId, versionBranchId, day])
+  @@unique([storyId, day])
 }
 
 // 候选/废案
@@ -292,7 +272,6 @@ model WorkerTask {
 model PlotArc {
   id              String   @id @default(uuid())
   storyId         String
-  versionBranchId String
   name            String   // 弧线名称，如"光明顶之战"
   type            String   @default("main") // main | side
   status          String   @default("pending") // pending | active | resolving | completed
@@ -307,7 +286,7 @@ model PlotArc {
 
   story           Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
 
-  @@index([storyId, versionBranchId, status])
+  @@index([storyId, status])
 }
 
 // 评分记录

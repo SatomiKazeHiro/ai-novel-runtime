@@ -1,13 +1,13 @@
 import type { FastifyInstance } from 'fastify'
 
-interface GraphNodeSnapshot {
+export interface GraphNodeSnapshot {
   type: string
   key: string
   label: string
   data: Record<string, any>
 }
 
-interface GraphEdgeSnapshot {
+export interface GraphEdgeSnapshot {
   fromType: string
   fromKey: string
   toType: string
@@ -16,181 +16,119 @@ interface GraphEdgeSnapshot {
   weight: number
 }
 
-interface GraphSnapshot {
+export interface GraphSnapshot {
   nodes: GraphNodeSnapshot[]
   edges: GraphEdgeSnapshot[]
   timestamp: string
 }
 
-interface GraphDelta {
-  addedNodes: GraphNodeSnapshot[]
-  updatedNodes: { node: GraphNodeSnapshot; changes: string[] }[]
-  addedEdges: GraphEdgeSnapshot[]
-  summary: string
-}
-
 /**
- * 获取当前 story 的完整图谱快照
- */
-export async function buildGraphSnapshot(
-  prisma: any,
-  storyId: string,
-  versionBranchId?: string
-): Promise<GraphSnapshot> {
-  const vbId = versionBranchId ?? ''
-  const nodes = await prisma.graphNode.findMany({
-    where: { storyId, versionBranchId: vbId }
-  })
-  const edges = await prisma.graphEdge.findMany({
-    where: { storyId, versionBranchId: vbId },
-    include: { fromNode: true, toNode: true }
-  })
-
-  return {
-    nodes: nodes.map((n: any) => ({
-      type: n.type,
-      key: n.key,
-      label: n.label,
-      data: JSON.parse(n.data || '{}')
-    })),
-    edges: edges.map((e: any) => ({
-      fromType: e.fromNode.type,
-      fromKey: e.fromNode.key,
-      toType: e.toNode.type,
-      toKey: e.toNode.key,
-      relation: e.relation,
-      weight: e.weight
-    })),
-    timestamp: new Date().toISOString()
-  }
-}
-
-/**
- * 计算当前图谱与上一快照的差异
- */
-export function computeGraphDelta(
-  current: GraphSnapshot,
-  previous: GraphSnapshot | null
-): GraphDelta {
-  if (!previous) {
-    return {
-      addedNodes: current.nodes,
-      updatedNodes: [],
-      addedEdges: current.edges,
-      summary: `初始归档：新增 ${current.nodes.length} 个节点，${current.edges.length} 条边`
-    }
-  }
-
-  // 建立索引
-  const prevNodeMap = new Map(previous.nodes.map(n => [`${n.type}:${n.key}`, n]))
-  const prevEdgeMap = new Map(previous.edges.map(e =>
-    [`${e.fromType}:${e.fromKey}-${e.relation}-${e.toType}:${e.toKey}`, e]
-  ))
-  const currNodeMap = new Map(current.nodes.map(n => [`${n.type}:${n.key}`, n]))
-  const currEdgeMap = new Map(current.edges.map(e =>
-    [`${e.fromType}:${e.fromKey}-${e.relation}-${e.toType}:${e.toKey}`, e]
-  ))
-
-  // 新增节点
-  const addedNodes = current.nodes.filter(n => !prevNodeMap.has(`${n.type}:${n.key}`))
-
-  // 更新节点（key 相同但 data 不同）
-  const updatedNodes: { node: GraphNodeSnapshot; changes: string[] }[] = []
-  for (const currNode of current.nodes) {
-    const prevNode = prevNodeMap.get(`${currNode.type}:${currNode.key}`)
-    if (prevNode) {
-      const changes: string[] = []
-      if (prevNode.label !== currNode.label) changes.push(`label: "${prevNode.label}" → "${currNode.label}"`)
-      const prevKeys = Object.keys(prevNode.data)
-      const currKeys = Object.keys(currNode.data)
-      for (const k of currKeys) {
-        if (JSON.stringify(prevNode.data[k]) !== JSON.stringify(currNode.data[k])) {
-          changes.push(`${k}: ${JSON.stringify(prevNode.data[k])} → ${JSON.stringify(currNode.data[k])}`)
-        }
-      }
-      for (const k of prevKeys) {
-        if (!currKeys.includes(k)) changes.push(`移除 ${k}`)
-      }
-      if (changes.length > 0) {
-        updatedNodes.push({ node: currNode, changes })
-      }
-    }
-  }
-
-  // 新增边
-  const addedEdges = current.edges.filter(e =>
-    !prevEdgeMap.has(`${e.fromType}:${e.fromKey}-${e.relation}-${e.toType}:${e.toKey}`)
-  )
-
-  const summaryParts: string[] = []
-  if (addedNodes.length > 0) summaryParts.push(`新增 ${addedNodes.length} 个节点`)
-  if (updatedNodes.length > 0) summaryParts.push(`更新 ${updatedNodes.length} 个节点`)
-  if (addedEdges.length > 0) summaryParts.push(`新增 ${addedEdges.length} 条边`)
-  const summary = summaryParts.length > 0 ? summaryParts.join('，') : '图谱无变化'
-
-  return { addedNodes, updatedNodes, addedEdges, summary }
-}
-
-/**
- * 归档时计算并保存 graphSnapshot 和 graphDelta
+ * 保存 graphSnapshot 和 graphDelta
+ * graphSnapshot = B+ (AI 合并后的全局大图)
+ * graphDelta = A (AI 整理后的本章范围图谱)
  */
 export async function saveGraphSnapshotAndDelta(
   app: FastifyInstance,
   chapterId: string,
   storyId: string,
-  versionBranchId?: string
-): Promise<{ snapshot: GraphSnapshot; delta: GraphDelta } | null> {
+  graphResult: { mergedGraph: GraphSnapshot; chapterGraph: GraphSnapshot }
+): Promise<{ snapshot: GraphSnapshot; delta: GraphSnapshot } | null> {
   const prisma = app.prisma
-  const vbId = versionBranchId ?? ''
 
   try {
-    // 1. 获取当前章节
-    const chapter = await prisma.chapter.findUnique({ where: { id: chapterId } })
-    if (!chapter) return null
+    // 1. 清空当前工作表
+    await prisma.graphEdge.deleteMany({ where: { storyId } })
+    await prisma.graphNode.deleteMany({ where: { storyId } })
 
-    // 2. 构建当前图谱快照（按分支隔离）
-    const currentSnapshot = await buildGraphSnapshot(prisma, storyId, vbId)
-
-    // 3. 获取上一章节的快照（同分支父章节优先，否则取同分支最近归档的）
-    let previousSnapshot: GraphSnapshot | null = null
-    if (chapter.parentChapterId) {
-      const parent = await prisma.chapter.findUnique({
-        where: { id: chapter.parentChapterId },
-        select: { graphSnapshot: true, versionBranchId: true }
+    // 2. 从 mergedGraph 重建工作表
+    const nodeIdMap = new Map<string, string>() // type:key -> id
+    for (const node of graphResult.mergedGraph.nodes) {
+      const created = await prisma.graphNode.create({
+        data: {
+          storyId,
+          type: node.type,
+          key: node.key,
+          label: node.label,
+          data: JSON.stringify(node.data || {})
+        }
       })
-      if (parent?.graphSnapshot && parent.versionBranchId === vbId) {
-        previousSnapshot = JSON.parse(parent.graphSnapshot)
-      }
-    }
-    // 如果父章节没有快照，尝试取同分支最近归档的
-    if (!previousSnapshot) {
-      const lastArchived = await prisma.chapter.findFirst({
-        where: { storyId, versionBranchId: vbId, status: 'archived', id: { not: chapterId } },
-        orderBy: { number: 'desc' },
-        select: { graphSnapshot: true }
-      })
-      if (lastArchived?.graphSnapshot) {
-        previousSnapshot = JSON.parse(lastArchived.graphSnapshot)
-      }
+      nodeIdMap.set(`${node.type}:${node.key}`, created.id)
     }
 
-    // 4. 计算 Delta
-    const delta = computeGraphDelta(currentSnapshot, previousSnapshot)
+    for (const edge of graphResult.mergedGraph.edges) {
+      const fromId = nodeIdMap.get(`${edge.fromType}:${edge.fromKey}`)
+      const toId = nodeIdMap.get(`${edge.toType}:${edge.toKey}`)
+      if (fromId && toId) {
+        await prisma.graphEdge.create({
+          data: {
+            storyId,
+            fromId,
+            toId,
+            relation: edge.relation,
+            weight: edge.weight || 1
+          }
+        })
+      }
+    }
 
-    // 5. 保存到章节
+    // 3. 保存到章节
     await prisma.chapter.update({
       where: { id: chapterId },
       data: {
-        graphSnapshot: JSON.stringify(currentSnapshot),
-        graphDelta: JSON.stringify(delta)
+        graphSnapshot: JSON.stringify(graphResult.mergedGraph),
+        graphDelta: JSON.stringify(graphResult.chapterGraph)
       }
     })
 
-    app.log.info(`[GraphSnapshot] Chapter ${chapterId}: ${delta.summary}`)
+    app.log.info(`[GraphSnapshot] Chapter ${chapterId}: ${graphResult.mergedGraph.nodes.length} nodes, ${graphResult.mergedGraph.edges.length} edges`)
 
-    return { snapshot: currentSnapshot, delta }
+    return { snapshot: graphResult.mergedGraph, delta: graphResult.chapterGraph }
   } catch (err: any) {
     app.log.error(`[GraphSnapshot] Failed: ${err.message}`)
     return null
+  }
+}
+
+/**
+ * 从 snapshot 重建 GraphNode/GraphEdge（删除章节后回退用）
+ */
+export async function rebuildGraphFromSnapshot(
+  prisma: any,
+  storyId: string,
+  snapshot: GraphSnapshot
+) {
+  // 1. 清空
+  await prisma.graphEdge.deleteMany({ where: { storyId } })
+  await prisma.graphNode.deleteMany({ where: { storyId } })
+
+  // 2. 重建
+  const nodeIdMap = new Map<string, string>()
+  for (const node of snapshot.nodes) {
+    const created = await prisma.graphNode.create({
+      data: {
+        storyId,
+        type: node.type,
+        key: node.key,
+        label: node.label,
+        data: JSON.stringify(node.data || {})
+      }
+    })
+    nodeIdMap.set(`${node.type}:${node.key}`, created.id)
+  }
+
+  for (const edge of snapshot.edges) {
+    const fromId = nodeIdMap.get(`${edge.fromType}:${edge.fromKey}`)
+    const toId = nodeIdMap.get(`${edge.toType}:${edge.toKey}`)
+    if (fromId && toId) {
+      await prisma.graphEdge.create({
+        data: {
+          storyId,
+          fromId,
+          toId,
+          relation: edge.relation,
+          weight: edge.weight || 1
+        }
+      })
+    }
   }
 }

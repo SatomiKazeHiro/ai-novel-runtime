@@ -4,7 +4,7 @@ import { cleanJsonBlock } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
 import { saveExtractedMemory, type MemoryExtractionResult } from './memory-extractor.js'
-import { saveExtractedGraph, type GraphExtractionResult } from './graph-extractor.js'
+import { type GraphExtractionResult } from './graph-extractor.js'
 import { savePlotArcs, type PlotArcAnalysis } from './plot-extractor.js'
 
 interface CombinedExtractionResult {
@@ -21,20 +21,17 @@ export async function extractAndSaveAll(
   chapterId: string,
   storyId: string,
   content: string,
-  outline?: string
-): Promise<{ memories: number; nodes: number; edges: number; arcs: number } | null> {
+  outline?: string,
+  fromChapterNumber?: number
+): Promise<{ memories: number; graph: { nodes: any[]; edges: any[] }; arcs: number } | null> {
   const prisma = app.prisma
+  const chNum = fromChapterNumber ?? 0
 
-  // 获取章节版本分支 ID
-  const chapter = await prisma.chapter.findUnique({ where: { id: chapterId }, select: { versionBranchId: true } })
-  const vbId = chapter?.versionBranchId ?? ''
-
-  // 加载已有弧线：只保留活跃/待收尾/待启动的 + 近期（30天内）更新过的（同分支）
+  // 加载已有弧线：只保留活跃/待收尾/待启动的 + 近期（30天内）更新过的
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
   const existingArcs = await prisma.plotArc.findMany({
     where: {
       storyId,
-      versionBranchId: vbId,
       OR: [
         { status: { in: ['active', 'resolving', 'pending'] } },
         { updatedAt: { gte: thirtyDaysAgo } }
@@ -47,9 +44,9 @@ export async function extractAndSaveAll(
 
   // 加载已有节点（用于去重提示）：角色节点全部保留 + 其他类型只保留最近100个
   const [characterNodes, recentOtherNodes] = await Promise.all([
-    prisma.graphNode.findMany({ where: { storyId, versionBranchId: vbId, type: 'character' } }),
+    prisma.graphNode.findMany({ where: { storyId, type: 'character' } }),
     prisma.graphNode.findMany({
-      where: { storyId, versionBranchId: vbId, type: { not: 'character' } },
+      where: { storyId, type: { not: 'character' } },
       orderBy: { createdAt: 'desc' },
       take: 100
     })
@@ -70,7 +67,7 @@ export async function extractAndSaveAll(
 - emotions: 主要角色情绪变化（字符串数组）
 - foreshadowing: 新埋下的伏笔（字符串数组）
 - relationshipChanges: 角色关系变化（字符串数组）
-- characterStatusChanges: 角色状态变化（对象，如 {"张三": {"rank": "初级", "location": "北京"}}）
+- characterStatusChanges: 角色状态变化（对象，如 {"张三": {"rank": "初级", "location": "北京"}}}）
 - timelineDay: 本章发生在第几天（数字，不确定则 null）
 - summary: 本章一句话摘要（50字以内）
 - scenes: 推动剧情的关键地点（对象数组，如 [{ "location": "名称", "description": "场景描写（可选）", "event": "在此发生的事件概括", "importance": 1-10 }]）
@@ -118,15 +115,14 @@ ${content.slice(0, 8000)}`
 
     const result: CombinedExtractionResult = JSON.parse(cleanJsonBlock(raw))
 
-    // 保存记忆（按版本隔离）
-    await saveExtractedMemory(app, chapterId, storyId, result.memories, vbId)
+    // 保存记忆（标记来源章节号）
+    await saveExtractedMemory(app, chapterId, storyId, result.memories, chNum)
 
-    // 保存图谱（过滤低重要性，按版本隔离）
+    // 图谱提取结果（过滤低重要性），由 graph-organizer 处理合并
     const filteredNodes = (result.graph?.nodes || []).filter(n => n.importance >= 6)
-    await saveExtractedGraph(app, storyId, { nodes: filteredNodes, edges: result.graph?.edges || [] }, vbId)
 
-    // 保存剧情弧线（按版本隔离）
-    await savePlotArcs(app, storyId, result.plotArcs?.arcs || [], vbId)
+    // 保存剧情弧线
+    await savePlotArcs(app, storyId, result.plotArcs?.arcs || [])
 
     const memCount = (result.memories?.mainEvents?.length || 0) +
                      (result.memories?.sideEvents?.length || 0) +
@@ -142,8 +138,7 @@ ${content.slice(0, 8000)}`
 
     return {
       memories: memCount,
-      nodes: filteredNodes.length,
-      edges: result.graph?.edges?.length || 0,
+      graph: { nodes: filteredNodes, edges: result.graph?.edges || [] },
       arcs: result.plotArcs?.arcs?.length || 0
     }
   } catch (err: any) {

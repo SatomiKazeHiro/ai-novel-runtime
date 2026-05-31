@@ -46,7 +46,6 @@
             <div class="node-meta">
               <n-text depth="3" style="font-size: 12px">
                 {{ formatNumber(node.number) }}
-                <span v-if="node.versionBranch">· {{ node.versionBranch.name }}</span>
                 <span v-if="node.runtimeProfile">· {{ node.runtimeProfile.name }}</span>
               </n-text>
             </div>
@@ -107,7 +106,6 @@ interface TreeNode {
   title: string
   status: string
   isSideStory?: boolean
-  versionBranch?: { name: string } | null
   runtimeProfile?: { name: string } | null
   createdAt: string
   parentChapterId?: string | null

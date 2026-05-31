@@ -8,20 +8,6 @@
       </n-space>
     </n-space>
 
-    <!-- 版本选择器 -->
-    <n-card size="small" style="margin-bottom: 16px" :bordered="false">
-      <n-space align="center">
-        <n-text strong>版本：</n-text>
-        <n-select
-          v-model:value="versions.selectedVersionBranchId"
-          :options="versions.versionBranchOptions"
-          style="width: 180px"
-          size="small"
-          placeholder="选择版本"
-        />
-      </n-space>
-    </n-card>
-
     <n-card size="small" style="margin-bottom: 16px">
       <n-space>
         <n-tag v-for="t in typeLegend" :key="t.type" :color="{ color: t.color, textColor: '#fff', borderColor: t.color }">
@@ -33,7 +19,7 @@
 
     <div ref="cyContainer" style="width: 100%; height: 600px; border: 1px solid var(--n-border-color); border-radius: 8px; background: var(--n-card-color);"></div>
 
-    <n-empty v-if="!displayGraphData || displayGraphData.nodes.length === 0" :description="`暂无「${versions.selectedVersionBranchId ? (versions.versionBranches.find(v => v.id === versions.selectedVersionBranchId)?.name || '选定版本') : '默认版本'}」的图谱数据`" style="margin-top: 24px" />
+    <n-empty v-if="!displayGraphData || displayGraphData.nodes.length === 0" description="暂无图谱数据" style="margin-top: 24px" />
 
     <!-- 添加节点弹窗 -->
     <n-modal v-model:show="showNodeModal" title="添加节点" preset="card" style="width: 500px">
@@ -86,7 +72,6 @@ import {
   NH1, NSpace, NButton, NSelect, NCard, NTag, NText, NModal, NForm, NFormItem, NInput, NEmpty
 } from 'naive-ui'
 import { graphApi } from '../api/graph'
-import { useVersionBranches } from '../composables/useVersionBranches'
 import cytoscape from 'cytoscape'
 
 const route = useRoute()
@@ -98,8 +83,6 @@ const selectedNode = ref<any>(null)
 
 const nodeForm = ref({ type: 'character', key: '', label: '' })
 const edgeForm = ref({ targetId: '', relation: '' })
-
-const versions = useVersionBranches(() => route.params.storyId as string | undefined)
 
 const nodeTypeOptions = [
   { label: '角色', value: 'character' },
@@ -252,7 +235,7 @@ async function loadGraph() {
     graphData.value = null
     return
   }
-  const res = await graphApi.get(route.params.storyId as string, versions.selectedVersionBranchId)
+  const res = await graphApi.get(route.params.storyId as string)
   graphData.value = res.data.data
   await nextTick()
   initCytoscape()
@@ -260,7 +243,7 @@ async function loadGraph() {
 
 async function handleCreateNode() {
   if (!route.params.storyId) return
-  await graphApi.createNode(route.params.storyId as string, { ...nodeForm.value, versionBranchId: versions.selectedVersionBranchId })
+  await graphApi.createNode(route.params.storyId as string, { ...nodeForm.value })
   showNodeModal.value = false
   nodeForm.value = { type: 'character', key: '', label: '' }
   await loadGraph()
@@ -279,24 +262,19 @@ async function handleCreateEdge() {
     fromId: selectedNode.value.id,
     toId: edgeForm.value.targetId,
     relation: edgeForm.value.relation,
-    weight: 1,
-    versionBranchId: versions.selectedVersionBranchId
+    weight: 1
   })
   cancelEdge()
   await loadGraph()
 }
 
 watch(() => route.params.storyId, () => {
-  versions.loadVersionBranches().then(loadGraph)
-})
-
-watch(() => versions.selectedVersionBranchId, async () => {
-  await loadGraph()
+  loadGraph()
 })
 
 onMounted(() => {
   if (route.params.storyId) {
-    versions.loadVersionBranches().then(loadGraph)
+    loadGraph()
   }
 })
 </script>

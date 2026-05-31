@@ -3,12 +3,11 @@
     <n-space justify="space-between" align="center" style="margin-bottom: 16px">
       <n-h1>角色管理</n-h1>
       <n-space>
-        <n-select v-model:value="versions.selectedVersionBranchId" :options="versions.versionBranchOptions" style="width: 180px" size="small" placeholder="版本" @update:value="loadCharacters" />
         <n-button type="primary" @click="openCreate">新建角色</n-button>
       </n-space>
     </n-space>
 
-    <n-data-table :columns="columns" :data="displayCharacters" :loading="loading" />
+    <n-data-table :columns="columns" :data="characters" :loading="loading" />
 
     <!-- 新建/编辑角色弹窗 -->
     <n-modal v-model:show="showModal" :title="isEdit ? '编辑角色' : '新建角色'" preset="card" style="width: 640px">
@@ -34,9 +33,6 @@
         <n-form-item label="说话风格">
           <n-dynamic-tags v-model:value="form.speechStyle" />
         </n-form-item>
-        <n-form-item v-if="isEdit" label="版本">
-          <n-select v-model:value="form.versionBranchId" :options="versions.versionBranchOptions" style="width: 180px" size="small" />
-        </n-form-item>
         <n-form-item label="关系">
           <n-input v-model:value="relationshipsJson" type="textarea" :rows="3" placeholder='{"张三": "兄弟", "李四": "敌对"}' />
         </n-form-item>
@@ -55,17 +51,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, h, computed, watch } from 'vue'
+import { ref, onMounted, h, watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NH1, NSpace, NButton, NSelect, NDataTable, NModal, NForm, NFormItem, NInput, NDynamicTags,
+  NH1, NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NDynamicTags,
   type DataTableColumns
 } from 'naive-ui'
 import { charactersApi } from '../api/characters'
-import { useVersionBranches } from '../composables/useVersionBranches'
 
 const route = useRoute()
-const versions = useVersionBranches(() => route.params.storyId as string | undefined)
 const characters = ref<any[]>([])
 const loading = ref(false)
 const showModal = ref(false)
@@ -80,7 +74,6 @@ const form = ref({
   temperament: [] as string[],
   personality: [] as string[],
   speechStyle: [] as string[],
-  versionBranchId: '',
   relationships: {} as Record<string, any>,
   status: {} as Record<string, any>
 })
@@ -112,18 +105,6 @@ function formatJson(jsonStr: string): string {
     return ''
   }
 }
-
-// 按当前选中的版本合并角色数据和分支状态
-const displayCharacters = computed(() => {
-  return characters.value.map(c => {
-    const bs = c.branchStates?.find((s: any) => s.versionBranchId === versions.selectedVersionBranchId)
-    return {
-      ...c,
-      relationships: bs?.relationships || '{}',
-      status: bs?.status || '{}'
-    }
-  })
-})
 
 const columns: DataTableColumns<any> = [
   { title: '标识', key: 'slug', width: 100 },
@@ -170,7 +151,6 @@ function resetForm() {
     slug: '', name: '',
     identity: [], appearance: [], temperament: [],
     personality: [], speechStyle: [],
-    versionBranchId: versions.selectedVersionBranchId,
     relationships: {}, status: {}
   }
 }
@@ -185,7 +165,6 @@ function openCreate() {
 function openEdit(row: any) {
   isEdit.value = true
   editId.value = row.id
-  const bs = row.branchStates?.find((s: any) => s.versionBranchId === versions.selectedVersionBranchId)
   form.value = {
     slug: row.slug,
     name: row.name,
@@ -194,9 +173,8 @@ function openEdit(row: any) {
     temperament: JSON.parse(row.temperament || '[]'),
     personality: JSON.parse(row.personality || '[]'),
     speechStyle: JSON.parse(row.speechStyle || '[]'),
-    versionBranchId: versions.selectedVersionBranchId,
-    relationships: JSON.parse(bs?.relationships || '{}'),
-    status: JSON.parse(bs?.status || '{}')
+    relationships: JSON.parse(row.relationships || '{}'),
+    status: JSON.parse(row.status || '{}')
   }
   showModal.value = true
 }
@@ -210,7 +188,6 @@ async function handleSubmit() {
     temperament: form.value.temperament,
     personality: form.value.personality,
     speechStyle: form.value.speechStyle,
-    versionBranchId: form.value.versionBranchId,
     relationships: form.value.relationships,
     status: form.value.status
   }
@@ -236,12 +213,12 @@ async function handleDelete(id: string) {
 }
 
 watch(() => route.params.storyId, () => {
-  versions.loadVersionBranches().then(loadCharacters)
+  loadCharacters()
 })
 
 onMounted(() => {
   if (route.params.storyId) {
-    versions.loadVersionBranches().then(loadCharacters)
+    loadCharacters()
   }
 })
 </script>

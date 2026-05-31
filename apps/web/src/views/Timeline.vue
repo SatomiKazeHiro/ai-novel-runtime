@@ -3,7 +3,6 @@
     <n-space justify="space-between" align="center" style="margin-bottom: 16px">
       <n-h1>时间线</n-h1>
       <n-space>
-        <n-select v-model:value="versions.selectedVersionBranchId" :options="versions.versionBranchOptions" style="width: 180px" size="small" placeholder="版本" @update:value="loadTimeline" />
         <n-button type="primary" @click="showModal = true">添加事件</n-button>
       </n-space>
     </n-space>
@@ -46,14 +45,12 @@
 import { ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NH1, NSpace, NButton, NSelect, NModal, NForm, NFormItem, NInputNumber, NDynamicTags,
+  NH1, NSpace, NButton, NModal, NForm, NFormItem, NInputNumber, NDynamicTags,
   NTimeline, NTimelineItem, NUl, NLi, NEmpty, NSpin
 } from 'naive-ui'
 import { timelineApi } from '../api/timeline'
-import { useVersionBranches } from '../composables/useVersionBranches'
 
 const route = useRoute()
-const versions = useVersionBranches(() => route.params.storyId as string | undefined)
 const events = ref<any[]>([])
 const loading = ref(false)
 const showModal = ref(false)
@@ -67,7 +64,7 @@ async function loadTimeline() {
   }
   loading.value = true
   try {
-    const res = await timelineApi.list(route.params.storyId as string, versions.selectedVersionBranchId)
+    const res = await timelineApi.list(route.params.storyId as string)
     events.value = res.data.data
   } finally {
     loading.value = false
@@ -85,7 +82,7 @@ async function handleSave() {
   if (editingId.value) {
     await timelineApi.update(editingId.value, { day: form.value.day, events: form.value.events })
   } else {
-    await timelineApi.create(route.params.storyId as string, { day: form.value.day, events: form.value.events, versionBranchId: versions.selectedVersionBranchId })
+    await timelineApi.create(route.params.storyId as string, { day: form.value.day, events: form.value.events })
   }
   showModal.value = false
   editingId.value = null
@@ -99,12 +96,12 @@ async function handleDelete(id: string) {
 }
 
 watch(() => route.params.storyId, () => {
-  versions.loadVersionBranches().then(loadTimeline)
+  loadTimeline()
 })
 
 onMounted(() => {
   if (route.params.storyId) {
-    versions.loadVersionBranches().then(loadTimeline)
+    loadTimeline()
   }
 })
 </script>

@@ -97,15 +97,13 @@ ${content.slice(0, 8000)}`
 export async function saveExtractedGraph(
   app: FastifyInstance,
   storyId: string,
-  result: GraphExtractionResult,
-  versionBranchId?: string
+  result: GraphExtractionResult
 ) {
   const prisma = app.prisma
-  const vbId = versionBranchId ?? ''
   const nodeMap = new Map<string, string>() // key -> nodeId
 
-  // 1. 加载已有节点建立 key -> id 映射（同分支）
-  const existingNodes = await prisma.graphNode.findMany({ where: { storyId, versionBranchId: vbId } })
+  // 1. 加载已有节点建立 key -> id 映射
+  const existingNodes = await prisma.graphNode.findMany({ where: { storyId } })
   for (const n of existingNodes) {
     nodeMap.set(`${n.type}:${n.key}`, n.id)
   }
@@ -129,7 +127,6 @@ export async function saveExtractedGraph(
       const created = await prisma.graphNode.create({
         data: {
           storyId,
-          versionBranchId: vbId,
           type: node.type,
           key: node.key,
           label: node.label,
@@ -152,13 +149,12 @@ export async function saveExtractedGraph(
 
     // 检查是否已存在相同关系
     const existingEdge = await prisma.graphEdge.findFirst({
-      where: { storyId, versionBranchId: vbId, fromId, toId, relation: edge.relation }
+      where: { storyId, fromId, toId, relation: edge.relation }
     })
     if (!existingEdge) {
       await prisma.graphEdge.create({
         data: {
           storyId,
-          versionBranchId: vbId,
           fromId,
           toId,
           relation: edge.relation,
