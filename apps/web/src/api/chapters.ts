@@ -5,6 +5,7 @@ export interface ChapterCreate {
   outline?: string
   isSideStory?: boolean
   number?: number
+  versionBranchName?: string
 }
 
 export interface ChapterUpdate {

@@ -31,10 +31,12 @@
 | TypeScript | Strict 模式，`noUnusedLocals` / `noUnusedParameters` 启用 |
 | Vite | 构建工具，开发端口 5173，代理 `/api` 到后端 3000 |
 | Pinia | 状态管理（`story.ts`、`theme.ts`） |
-| Vue Router | 路由，history 模式 |
+| Vue Router | 路由，history 模式，双 Layout：SimpleLayout / NovelDesignLayout |
 | Naive UI | 组件库 |
 | Axios | HTTP 请求 |
 | Cytoscape | 知识图谱可视化 |
+| @vueuse/core | 组合式工具库 |
+| es-toolkit | 现代化工具库（lodash 替代） |
 
 ### 后端
 | 技术 | 说明 |
@@ -47,6 +49,7 @@
 | IORedis | Redis 客户端 |
 | graphology | 图引擎（内存中操作，由 `GraphService` 封装） |
 | js-tiktoken | Token 计算（cl100k_base） |
+| zod | 运行时校验（部分路由使用） |
 
 ### 数据库
 | 环境 | 数据库 |
@@ -78,7 +81,7 @@ novel-runtime/
 │   │       │   ├── characters.ts
 │   │       │   ├── lore.ts
 │   │       │   ├── timeline.ts
-│   │       │   ├── chapters.ts
+│   │       │   ├── chapters.ts        # 含版本分支相关 API
 │   │       │   ├── drafts.ts
 │   │       │   ├── graph.ts
 │   │       │   ├── memories.ts
@@ -122,13 +125,15 @@ novel-runtime/
 │           │   ├── WorkerTask.vue
 │           │   ├── StoryWorkerTask.vue
 │           │   ├── ModelManager.vue
-│           │   └── PromptLogs.vue
-│           ├── components/    # 共享组件（NavBar, ChapterBranchTree）
-│           ├── composables/   # 组合式函数（useChapterEditor, useChapterTree 等）
+│           │   ├── PromptLogs.vue
+│           │   ├── SimpleLayout.vue
+│           │   └── NovelDesignLayout.vue
+│           ├── components/    # 共享组件
+│           ├── composables/   # 组合式函数（useChapterEditor, useChapterTree, useDraftManager, usePromptManager, useVersionBranches）
 │           └── utils/
 │               └── api.ts     # Axios 实例配置（baseURL 默认 localhost:3000）
 ├── packages/                  # 共享包（Monorepo，全部 `"type": "module"`）
-│   ├── shared/                # 类型、常量、工具函数（estimateTokens, scaleBudget, formatCharacterSnapshot）
+│   ├── shared/                # 类型、常量、工具函数（estimateTokens, scaleBudget, formatCharacterSnapshot, DEFAULT_PIPELINE_BUDGET）
 │   ├── ai-provider/           # AI Provider 统一封装 + RuntimePromptCompiler
 │   │   └── src/
 │   │       ├── index.ts       # OpenAIProvider（骨架）/ DeepSeekProvider（完整实现）/ createProvider
@@ -136,7 +141,7 @@ novel-runtime/
 │   ├── prompt-runtime/        # PromptPipeline / PromptAssembler + Token 预算控制
 │   │   └── src/
 │   │       ├── index.ts       # PromptPipeline, PromptAssembler
-│   │       └── budget.ts      #（如存在）预算相关逻辑
+│   │       └── budget.ts      # 预算相关逻辑
 │   ├── memory-engine/         # 分层记忆管理 + 语义检索（token 频率向量余弦相似度）
 │   ├── knowledge-graph/       # graphology 封装（GraphService）
 │   ├── scoring-engine/        # 7 维度评分接口 + RuleBasedScorer（AI 评分逻辑在后端路由）
@@ -202,7 +207,22 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 
 ## 5. 核心架构设计
 
-### 5.1 章节状态机
+### 5.1 版本分支系统（Version Branch）
+
+系统支持**版本分支隔离**：同一部小说可以有多个平行剧情线，每个版本分支拥有独立的时间线、角色状态、记忆和图谱。
+
+**核心模型**：
+- `VersionBranch` — 版本分支表，记录 `forkFromChapterId`（从哪章分叉）和 `forkFromVersionId`（从哪个版本分叉）
+- `Chapter.versionBranchId` — 每章必须属于一个版本分支
+- `CharacterBranchState` — 角色按版本分支隔离状态（`status` JSON + `relationships` JSON），通过 `versionBranchId` 关联
+- `Memory.versionBranchId` / `GraphNode.versionBranchId` / `GraphEdge.versionBranchId` / `TimelineEvent.versionBranchId` — 所有派生数据按版本隔离
+
+**默认行为**：
+- 新建小说时自动创建根版本分支（名称默认为时间戳格式）
+- `develop` 章节时默认沿用父章节的 `versionBranchId`
+- 用户可在 develop 时指定 `versionBranchName` 创建新分支，实现"剧情分叉"
+
+### 5.2 章节状态机
 
 ```
 Draft → Generated → Selected → Archived
@@ -210,7 +230,7 @@ Draft → Generated → Selected → Archived
 Rejected  (无)      (无)      合并提取（记忆+图谱+弧线）+ AI记忆整理 + graphSnapshot
 ```
 
-**分支树模型**：章节不再是线性列表，而是树形结构。每个章节通过 `parentChapterId` 指向父章节，`childChapters` 为子章节列表。`branchName` 标识分支名称（如"主线"、"黑化IF线"）。
+**分支树模型**：章节通过 `parentChapterId` 指向父章节，`childChapters` 为子章节列表。
 
 - **发展（Develop）**：`POST /api/chapters/:chapterId/develop`，只有 `archived` 或 `selected` 状态的章节可以"发展"出下一章或番外，自动继承父章节的 `runtimeProfileId`
 - **删除规则**：`archived` 且有 `archived` 子章节的不可删除；draft/generated 等随意删除
@@ -220,11 +240,11 @@ Rejected  (无)      (无)      合并提取（记忆+图谱+弧线）+ AI记忆
 - **提取时机**：仅在 `archive` 时执行
 - **提取方式**：`combined-extractor.ts` 一次 API 调用同时完成记忆提取、图谱提取、剧情弧线分析（temperature=0.3, maxTokens=4096）
 - **AI 记忆整理**：`memory-organizer.ts` 在 archive 后自动触发，对新旧记忆做语义层面的 merge/update/delete
-- **图谱快照（graphSnapshot）**：归档后自动保存当前 story 的完整图谱状态到 `Chapter.graphSnapshot`
+- **图谱快照（graphSnapshot）**：归档后自动保存当前版本分支的完整图谱状态到 `Chapter.graphSnapshot`
 - **图谱变化（graphDelta）**：对比上一章（父章节优先，否则最近归档章节）的 `graphSnapshot`，计算新增节点、更新节点、新增边
 - **场景记忆（Scene Memory）**：`combined-extractor.ts` 提取 `scenes: [{ location, description?, event, importance }]`，AI 自评 importance 1-10，仅提取 importance >= 7 的推动剧情的关键地点
 
-### 5.2 Prompt Pipeline（分层 Prompt 组装）
+### 5.3 Prompt Pipeline（分层 Prompt 组装）
 
 Runtime 采用 **Stateless Generation** 模式：每次生成都是全新上下文，不续聊天记录。
 
@@ -232,17 +252,17 @@ Prompt 分层结构（从上到下组装为 User Message）：
 1. **Style** — 文风设定
 2. **Story** — 作品基本信息
 3. **Lore** — 世界观设定
-4. **Character** — 角色快照（`formatCharacterSnapshot` 格式化）
+4. **Character** — 角色快照（`formatCharacterSnapshot` 格式化，按版本分支读取 `CharacterBranchState`）
 5. **Scene** — 场景状态（地点、氛围、目标）
 6. **Memory** — 相关记忆（语义检索 + 重要性排序）
-7. **Timeline** — 时间线事件
-8. **PlotArc** — 活跃剧情弧线
+7. **Timeline** — 时间线事件（按版本分支过滤）
+8. **PlotArc** — 活跃剧情弧线（按版本分支过滤）
 9. **Output** — 生成指令
 
 System Message 由 `RuntimePromptCompiler` 编译：
 - `[Identity]` + `[Settings]` + `[Behavior]` + `[Jailbreak]` + `[Task: generation]`
 
-### 5.3 Context Budget（Token 预算控制）
+### 5.4 Context Budget（Token 预算控制）
 
 预算从 `AiProviderConfig.contextLength` 动态派生。
 
@@ -264,7 +284,7 @@ System Message 由 `RuntimePromptCompiler` 编译：
 
 `PromptAssembler` 负责动态裁剪：超出预算时按字符数截断（假设中文 ~2 chars/token），并标记 `truncated`。
 
-### 5.4 记忆系统（四层 + Checkpoint）
+### 5.5 记忆系统（四层 + Checkpoint）
 
 ```
 Global Memory    → 世界观、角色关系、长期目标（跨章节，不衰减）
@@ -278,7 +298,7 @@ Temporary Memory → 临时上下文
 **Checkpoint 机制**：生成第 N 章时，只读取「最后一个已归档章节」之前的记忆。修改旧章节（不重新归档）不会影响后续章节的生成上下文。
 
 **检索流程**（`MemoryManager.searchRelevant`）：
-1. 查询所有 global + chapter 层记忆（按 createdAt 倒序）
+1. 查询所有 global + chapter 层记忆（按 createdAt 倒序），按 `versionBranchId` 过滤
 2. checkpoint 过滤：只取 `chapter.number <= beforeChapterNumber` 的记忆
 3. **番外排除**：`isSideStory = true` 的章节记忆不纳入主线上下文
 4. 语义检索：基于 **token 频率向量的余弦相似度**（非向量数据库），综合得分 = `sim * 0.7 + importanceScore * 0.3`
@@ -298,14 +318,14 @@ Temporary Memory → 临时上下文
 - [global] (第5章·0章前) 【张三】状态更新：{"rank": "初级"}
 ```
 
-### 5.5 队列系统与异步生成
+### 5.6 队列系统与异步生成
 
 使用 **BullMQ** + **IORedis**。如果 Redis 不可用（开发环境常见），自动降级为 **内存队列（MemoryQueue）**。
 
 队列类型：
-- `generate` — 章节生成（异步）
-- `score` — 评分任务
-- `memory` — 记忆更新
+- `generate` — 章节生成（异步，已实际使用）
+- `score` — 评分任务（基础设施已就绪，当前同步评分）
+- `memory` — 记忆更新（基础设施已就绪，当前同步处理）
 
 **异步生成流程**：
 1. 前端调用 `POST /api/chapters/:chapterId/generate` → 后端创建 N 个 `status='generating'` 的 Draft → 立即返回
@@ -317,7 +337,7 @@ Temporary Memory → 临时上下文
 
 处理器在 `app.ts` 中通过 `registerGenerateProcessor(createGenerateProcessor(app))` 注册，Worker 在 `server.ts` 启动时拉起 `startWorkers()`。
 
-### 5.6 AI Provider 统一接口
+### 5.7 AI Provider 统一接口
 
 ```ts
 interface AIProvider {
@@ -344,7 +364,7 @@ interface AIProvider {
 
 新增 Provider：在 `packages/ai-provider/src/index.ts` 的 `createProvider()` 中注册。
 
-### 5.7 评分引擎
+### 5.8 评分引擎
 
 7 维度评分（AI 评分 + 规则兜底）：
 1. `styleSimilarity` — 文风接近度（对比近 2-3 章 archived 内容）
@@ -402,7 +422,7 @@ interface AIProvider {
 ### 关系设计原则
 
 1. **级联删除**：所有 `storyId` 外键统一配置 `onDelete: Cascade`，删除小说时自动清理关联数据
-2. **联合唯一索引**：如 `@@unique([storyId, number])`（章节）、`@@unique([storyId, type, key])`（图谱节点）
+2. **联合唯一索引**：如 `@@unique([storyId, number])`（章节）、`@@unique([storyId, versionBranchId, type, key])`（图谱节点）
 3. **软关联可选**：`chapterId String?` + `chapter Chapter? @relation(...)`，允许全局记忆不关联具体章节
 4. **JSON 字符串替代**：SQLite 不支持原生 JSON 类型，所有结构化数据（tags、stages、metadata 等）以 JSON 字符串存储，读取时 `JSON.parse()`，写入时 `JSON.stringify()`
 
@@ -420,24 +440,26 @@ interface AIProvider {
 | 模型 | 说明 |
 |------|------|
 | `Story` | 小说工程 |
+| `VersionBranch` | 版本分支（剧情分叉隔离） |
 | `Chapter` | 章节（含状态机、场景状态、`isSideStory` 番外标记、`number` Float 支持插入序号如 3.5） |
-| `Character` | 角色卡（含 `identity`/`appearance`/`temperament` 静态属性 + JSON `personality`/`relationships`/`status`） |
+| `Character` | 角色卡（含 `identity`/`appearance`/`temperament` 静态属性 + JSON `personality`/`speechStyle`） |
+| `CharacterBranchState` | 角色按版本分支隔离的状态（`status` + `relationships` JSON） |
 | `LoreItem` | 世界观条目（境界/地图/功法/势力/物品/规则） |
-| `Memory` | 记忆（global/chapter/scene/temporary，通过 `chapterId` 关联来源章节） |
-| `GraphNode` / `GraphEdge` | 知识图谱节点与边 |
-| `TimelineEvent` | 时间线事件 |
+| `Memory` | 记忆（global/chapter/scene/temporary，通过 `chapterId` 关联来源章节，按 `versionBranchId` 隔离） |
+| `GraphNode` / `GraphEdge` | 知识图谱节点与边（按 `versionBranchId` 隔离） |
+| `TimelineEvent` | 时间线事件（按 `versionBranchId` 隔离） |
 | `Draft` | 候选（含 `temperature`/`maxTokens`/`compiledPrompt`/`score`/`errorMessage`/`status`） |
 | `PromptConfig` | Prompt 模板配置（旧版兼容） |
 | `Score` | 评分记录（7 维度：styleSimilarity/outlineAdherence/sceneMatch/profileConsistency/proseQuality/emotionalTension/pacing + comment） |
 | `AiProviderConfig` | AI 模型配置（`contextLength` 驱动 Pipeline 预算动态缩放） |
 | `RuntimeProfile` | Shared Runtime Base（Identity + Settings + Behavior + Jailbreak） |
 | `WorkerTask` | 不同 Worker 的 Task Layer（generation / scoring / memory / graph / timeline / rewrite / memory_organize） |
-| `PlotArc` | 剧情弧线 |
+| `PlotArc` | 剧情弧线（按 `versionBranchId` 隔离） |
 | `PromptLog` | 每次 AI API 调用的完整日志（prompt/response/token/模型/耗时） |
 
-**Chapter 新增字段**：
+**Chapter 关键字段**：
 - `parentChapterId` — 父章节（分支树）
-- `branchName` — 分支名称（如"主线"、"黑化IF线"）
+- `versionBranchId` — 所属版本分支
 - `runtimeProfileId` — 章节级写作人格覆盖
 - `compiledPrompt` — 生成时的完整 Prompt（JSON）
 - `graphDelta` — 相对于上一章的图谱变化（JSON：addedNodes/updatedNodes/addedEdges/summary）
@@ -549,7 +571,7 @@ pnpm --filter server start   # 执行 node dist/server.js
 | 方法 | 路由 | 说明 |
 |------|------|------|
 | `POST` | `/api/stories/:storyId/chapters` | 新建根章节 |
-| `POST` | `/api/chapters/:chapterId/develop` | 在章节上发展下一章/番外 |
+| `POST` | `/api/chapters/:chapterId/develop` | 在章节上发展下一章/番外（可创建新版本分支） |
 | `GET` | `/api/stories/:storyId/chapter-tree` | 获取章节分支树（嵌套结构） |
 | `PUT` | `/api/chapters/:chapterId` | 更新章节（标题/大纲/正文/场景） |
 | `DELETE` | `/api/chapters/:chapterId` | 删除章节 |
@@ -557,6 +579,14 @@ pnpm --filter server start   # 执行 node dist/server.js
 | `POST` | `/api/chapters/:chapterId/generate` | 异步生成候选（创建 generating Draft → 入队 → 立即返回） |
 | `POST` | `/api/chapters/:chapterId/select` | 采用 Draft（选中 Draft → selected，其余 → rejected） |
 | `POST` | `/api/chapters/:chapterId/archive` | 归档（状态更新 + combined_extract + memory_organize + graph_snapshot） |
+
+### 版本分支
+
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| `GET` | `/api/stories/:storyId/version-branches` | 获取版本分支列表 |
+| `GET` | `/api/stories/:storyId/version-branches/:branchId/chain` | 获取版本链（含祖先分支及章节） |
+| `PUT` | `/api/version-branches/:branchId` | 修改版本分支名称 |
 
 ### Draft
 
@@ -571,7 +601,7 @@ pnpm --filter server start   # 执行 node dist/server.js
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| `GET` | `/api/stories/:storyId/graph` | 当前实时图谱 |
+| `GET` | `/api/stories/:storyId/graph` | 当前实时图谱（按版本分支过滤） |
 | `POST` | `/api/stories/:storyId/graph/nodes` | 新增节点 |
 | `POST` | `/api/stories/:storyId/graph/edges` | 新增边 |
 | `GET` | `/api/chapters/:chapterId/graph-snapshot` | 获取章节的 graphSnapshot + graphDelta |

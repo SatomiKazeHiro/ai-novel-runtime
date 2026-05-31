@@ -46,7 +46,7 @@
             <div class="node-meta">
               <n-text depth="3" style="font-size: 12px">
                 {{ formatNumber(node.number) }}
-                <span v-if="node.branchName">· {{ node.branchName }}</span>
+                <span v-if="node.versionBranch">· {{ node.versionBranch.name }}</span>
                 <span v-if="node.runtimeProfile">· {{ node.runtimeProfile.name }}</span>
               </n-text>
             </div>
@@ -63,6 +63,11 @@
               size="tiny"
               @click.stop="$emit('edit', node)"
             >编辑</n-button>
+            <n-button
+              v-if="canView(node)"
+              size="tiny"
+              @click.stop="$emit('view', node)"
+            >查看</n-button>
             <n-button
               v-if="canDelete(node)"
               size="tiny"
@@ -102,7 +107,7 @@ interface TreeNode {
   title: string
   status: string
   isSideStory?: boolean
-  branchName?: string | null
+  versionBranch?: { name: string } | null
   runtimeProfile?: { name: string } | null
   createdAt: string
   parentChapterId?: string | null
@@ -126,6 +131,7 @@ defineEmits<{
   (e: 'select', node: TreeNode): void
   (e: 'develop', node: TreeNode): void
   (e: 'edit', node: TreeNode): void
+  (e: 'view', node: TreeNode): void
   (e: 'delete', node: TreeNode): void
 }>()
 
@@ -361,6 +367,10 @@ function canDevelop(node: FlatNode) {
 
 function canEdit(node: FlatNode) {
   return ['draft', 'generated', 'selected'].includes(node.status)
+}
+
+function canView(node: FlatNode) {
+  return node.status === 'archived'
 }
 
 function canDelete(node: FlatNode) {

@@ -20,6 +20,7 @@
         @select="tree.onNodeSelect"
         @develop="tree.onDevelop"
         @edit="handleOpenEdit"
+        @view="handleOpenView"
         @delete="tree.onDelete"
       />
     </div>
@@ -36,12 +37,13 @@
         <n-input v-model:value="editor.editTitle" style="width: 320px; font-size: 16px; font-weight: 600" placeholder="章节标题" />
         <n-tag v-if="editor.currentChapter?.isSideStory" size="small" type="warning">番外</n-tag>
         <n-tag size="small" :type="statusTagType(editor.currentChapter?.status)">{{ editor.currentChapter?.status }}</n-tag>
+        <n-tag v-if="isReadonly" size="small" type="info">只读</n-tag>
       </n-space>
 
       <!-- Step 1: 配置区 -->
       <n-card title="Step 1：配置区" style="margin-bottom: 24px">
         <n-form-item label="写作人格" label-placement="left" label-width="80">
-          <n-select v-model:value="editor.selectedProfileId" :options="editor.profileOptions" style="width: 280px" placeholder="选择写作人格" />
+          <n-select v-model:value="editor.selectedProfileId" :options="editor.profileOptions" style="width: 280px" placeholder="选择写作人格" :disabled="isReadonly" />
         </n-form-item>
 
         <n-divider />
@@ -68,7 +70,7 @@
 
         <n-form label-placement="left" label-width="60">
           <n-form-item label="大纲">
-            <n-input v-model:value="editor.editForm.outline" type="textarea" :rows="6" placeholder="输入章节大纲..." />
+            <n-input v-model:value="editor.editForm.outline" type="textarea" :rows="6" placeholder="输入章节大纲..." :readonly="isReadonly" />
           </n-form-item>
         </n-form>
 
@@ -77,24 +79,24 @@
         <n-form label-placement="left" label-width="60">
           <n-grid :cols="3" :x-gap="16">
             <n-grid-item>
-              <n-form-item label="地点"><n-input v-model:value="editor.editForm.sceneLocation" placeholder="场景地点" /></n-form-item>
+              <n-form-item label="地点"><n-input v-model:value="editor.editForm.sceneLocation" placeholder="场景地点" :readonly="isReadonly" /></n-form-item>
             </n-grid-item>
             <n-grid-item>
-              <n-form-item label="氛围"><n-input v-model:value="editor.editForm.sceneMood" placeholder="如 tension" /></n-form-item>
+              <n-form-item label="氛围"><n-input v-model:value="editor.editForm.sceneMood" placeholder="如 tension" :readonly="isReadonly" /></n-form-item>
             </n-grid-item>
             <n-grid-item>
-              <n-form-item label="目标"><n-input v-model:value="editor.editForm.sceneGoal" placeholder="如 confession" /></n-form-item>
+              <n-form-item label="目标"><n-input v-model:value="editor.editForm.sceneGoal" placeholder="如 confession" :readonly="isReadonly" /></n-form-item>
             </n-grid-item>
           </n-grid>
         </n-form>
 
         <n-divider />
 
-        <n-button type="primary" @click="debouncedSaveConfig" size="small">保存配置</n-button>
+        <n-button v-if="!isReadonly" type="primary" @click="debouncedSaveConfig" size="small">保存配置</n-button>
       </n-card>
 
       <!-- Step 2: 生成区 -->
-      <n-card title="Step 2：生成区" style="margin-bottom: 24px">
+      <n-card v-if="!isReadonly" title="Step 2：生成区" style="margin-bottom: 24px">
         <n-form-item label="Prompt 内容">
           <n-input v-model:value="prompt.editablePrompt" type="textarea" :rows="12" placeholder="点击「生成 Prompt」按钮生成 Prompt..." readonly />
         </n-form-item>
@@ -190,7 +192,7 @@
       </n-card>
 
       <!-- Step 3: 正文与归档 -->
-      <n-card title="Step 3：正文与归档" v-if="drafts.drafts.length > 0 && drafts.drafts.some((d: any) => d.status === 'completed' || d.status === 'selected')">
+      <n-card title="Step 3：正文与归档" v-if="!isReadonly && drafts.drafts.length > 0 && drafts.drafts.some((d: any) => d.status === 'completed' || d.status === 'selected')">
         <n-input v-model:value="editor.editForm.content" type="textarea" :rows="20" placeholder="章节正文..." style="margin-bottom: 12px" />
         <n-space align="center" justify="space-between">
           <n-space>
@@ -205,8 +207,16 @@
         </n-space>
       </n-card>
 
+      <!-- Step 3 只读：正文展示 -->
+      <n-card v-if="isReadonly" title="Step 3：正文" style="margin-bottom: 24px">
+        <n-input v-model:value="editor.editForm.content" type="textarea" :rows="20" readonly style="margin-bottom: 12px" />
+        <n-text depth="3" style="font-size: 13px">
+          总字数：{{ (editor.editForm.content || '').length.toLocaleString() }} 字
+        </n-text>
+      </n-card>
+
       <!-- Step 4: 本章图谱变化 -->
-      <n-card v-if="editor.currentChapter?.status === 'archived' && editor.graphDelta" title="本章图谱变化" style="margin-top: 24px">
+      <n-card v-if="editor.currentChapter?.status === 'archived' && editor.graphDelta" title="Step 4：本章图谱变化" style="margin-top: 24px">
         <n-space vertical>
           <n-alert :type="editor.graphDelta.addedNodes.length || editor.graphDelta.addedEdges.length ? 'info' : 'default'" :title="editor.graphDelta.summary" />
           <n-collapse v-if="editor.graphDelta.addedNodes.length > 0">
@@ -271,11 +281,11 @@
         <n-form-item label="标题" required>
           <n-input v-model:value="tree.developForm.title" placeholder="章节标题" />
         </n-form-item>
+        <n-form-item label="版本名称">
+          <n-input v-model:value="tree.developForm.versionBranchName" placeholder="留空则继承父章节版本" />
+        </n-form-item>
         <n-form-item>
           <n-checkbox v-model:checked="tree.developForm.isSideStory">番外 / IF 线</n-checkbox>
-        </n-form-item>
-        <n-form-item v-if="tree.developForm.isSideStory" label="分支名称">
-          <n-input v-model:value="tree.developForm.branchName" placeholder="如：黑化路线" />
         </n-form-item>
         <n-form-item label="大纲">
           <n-input v-model:value="tree.developForm.outline" type="textarea" placeholder="章节大纲" />
@@ -368,6 +378,7 @@ const debouncedSaveConfig = useDebounceFn(editor.saveConfig, 500)
 
 // 归档状态（放在页面层因为涉及跳转）
 const archiving = ref(false)
+const isReadonly = ref(false)
 
 // ========== 生命周期 ==========
 onMounted(() => {
@@ -383,6 +394,7 @@ watch(() => route.params.storyId, () => {
 
 // ========== 页面级协调函数 ==========
 async function handleOpenEdit(row: any) {
+  isReadonly.value = false
   await editor.openEdit(row)
   await drafts.loadDrafts(row.id)
   prompt.loadFromChapter(row, drafts.drafts)
@@ -392,7 +404,15 @@ async function handleOpenEdit(row: any) {
   }
 }
 
+async function handleOpenView(row: any) {
+  isReadonly.value = true
+  await editor.openEdit(row)
+  // 只读模式不加载 drafts，不生成 prompt
+  prompt.reset()
+}
+
 async function handleBackToTree() {
+  isReadonly.value = false
   drafts.stopPolling()
   prompt.reset()
   await editor.backToTree()

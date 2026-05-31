@@ -3,34 +3,22 @@
     <n-space justify="space-between" align="center" style="margin-bottom: 16px">
       <n-h1>知识图谱</n-h1>
       <n-space>
-        <n-radio-group v-model:value="viewMode" size="small">
-          <n-radio-button value="chart">图表</n-radio-button>
-          <n-radio-button value="list">列表</n-radio-button>
-        </n-radio-group>
-        <n-button v-if="viewMode === 'chart'" @click="resetLayout">重新布局</n-button>
+        <n-button @click="resetLayout">重新布局</n-button>
         <n-button type="primary" @click="showNodeModal = true">添加节点</n-button>
       </n-space>
     </n-space>
 
-    <!-- 分支视角选择器 -->
-    <n-card v-if="branches.length > 0" size="small" style="margin-bottom: 16px" :bordered="false">
+    <!-- 版本选择器 -->
+    <n-card size="small" style="margin-bottom: 16px" :bordered="false">
       <n-space align="center">
-        <n-text strong>分支视角：</n-text>
-        <n-radio-group v-model:value="branchMode" size="small">
-          <n-radio-button :value="false">实时图谱</n-radio-button>
-          <n-radio-button :value="true">分支快照</n-radio-button>
-        </n-radio-group>
+        <n-text strong>版本：</n-text>
         <n-select
-          v-if="branchMode"
-          v-model:value="selectedBranchId"
-          :options="branchOptions"
-          style="width: 300px"
+          v-model:value="versions.selectedVersionBranchId"
+          :options="versions.versionBranchOptions"
+          style="width: 180px"
           size="small"
-          placeholder="选择分支"
+          placeholder="选择版本"
         />
-        <n-tag v-if="branchMode && selectedBranchInfo" size="small" type="info">
-          {{ selectedBranchInfo.title }} (第{{ selectedBranchInfo.number }}章)
-        </n-tag>
       </n-space>
     </n-card>
 
@@ -43,20 +31,9 @@
       </n-space>
     </n-card>
 
-    <!-- 图表视图 -->
-    <div v-show="viewMode === 'chart'">
-      <div ref="cyContainer" style="width: 100%; height: 600px; border: 1px solid var(--n-border-color); border-radius: 8px; background: var(--n-card-color);"></div>
-    </div>
+    <div ref="cyContainer" style="width: 100%; height: 600px; border: 1px solid var(--n-border-color); border-radius: 8px; background: var(--n-card-color);"></div>
 
-    <!-- 列表视图 -->
-    <n-card v-if="viewMode === 'list' && displayGraphData" title="节点列表" size="small" style="margin-bottom: 16px">
-      <n-data-table :columns="nodeColumns" :data="displayGraphData.nodes" size="small" />
-    </n-card>
-    <n-card v-if="viewMode === 'list' && displayGraphData" title="关系列表" size="small">
-      <n-data-table :columns="edgeColumns" :data="displayGraphData.edges" size="small" />
-    </n-card>
-
-    <n-empty v-if="!displayGraphData || displayGraphData.nodes.length === 0" description="暂无图谱数据，生成章节或手动添加节点后可见" style="margin-top: 24px" />
+    <n-empty v-if="!displayGraphData || displayGraphData.nodes.length === 0" :description="`暂无「${versions.selectedVersionBranchId ? (versions.versionBranches.find(v => v.id === versions.selectedVersionBranchId)?.name || '选定版本') : '默认版本'}」的图谱数据`" style="margin-top: 24px" />
 
     <!-- 添加节点弹窗 -->
     <n-modal v-model:show="showNodeModal" title="添加节点" preset="card" style="width: 500px">
@@ -106,10 +83,10 @@
 import { ref, onMounted, watch, computed, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NH1, NSpace, NButton, NSelect, NCard, NTag, NText, NModal, NForm, NFormItem, NInput, NEmpty, NRadioGroup, NRadioButton, NDataTable
+  NH1, NSpace, NButton, NSelect, NCard, NTag, NText, NModal, NForm, NFormItem, NInput, NEmpty
 } from 'naive-ui'
 import { graphApi } from '../api/graph'
-import { chaptersApi } from '../api/chapters'
+import { useVersionBranches } from '../composables/useVersionBranches'
 import cytoscape from 'cytoscape'
 
 const route = useRoute()
@@ -119,30 +96,10 @@ const showNodeModal = ref(false)
 const showEdgeModal = ref(false)
 const selectedNode = ref<any>(null)
 
-const viewMode = ref<'chart' | 'list'>('chart')
 const nodeForm = ref({ type: 'character', key: '', label: '' })
 const edgeForm = ref({ targetId: '', relation: '' })
 
-// 分支视角
-const branchMode = ref(false)
-const chapterTree = ref<any[]>([])
-const branches = ref<any[]>([])
-const selectedBranchId = ref<string>('')
-const selectedBranchInfo = ref<any>(null)
-const snapshotData = ref<any>(null)
-
-const nodeColumns = [
-  { title: 'ID', key: 'id', width: 200, ellipsis: { tooltip: true } },
-  { title: '类型', key: 'type', width: 100 },
-  { title: '标识', key: 'key', width: 150 },
-  { title: '名称', key: 'label' }
-]
-
-const edgeColumns = [
-  { title: '源', key: 'source', width: 200, ellipsis: { tooltip: true } },
-  { title: '关系', key: 'relation', width: 120 },
-  { title: '目标', key: 'target', width: 200, ellipsis: { tooltip: true } }
-]
+const versions = useVersionBranches(() => route.params.storyId as string | undefined)
 
 const nodeTypeOptions = [
   { label: '角色', value: 'character' },
@@ -169,20 +126,7 @@ const targetNodeOptions = computed(() => {
     .map((n: any) => ({ label: `${n.label} (${n.type})`, value: n.id }))
 })
 
-const branchOptions = computed(() => {
-  return branches.value.map((b) => ({
-    label: `${b.pathNames.join(' → ')} (第${b.chapterNumber}章)`,
-    value: b.chapterId
-  }))
-})
-
-// 当前展示的数据（实时图谱或分支快照）
-const displayGraphData = computed(() => {
-  if (branchMode.value && snapshotData.value) {
-    return snapshotData.value
-  }
-  return graphData.value
-})
+const displayGraphData = computed(() => graphData.value)
 
 let cy: cytoscape.Core | null = null
 
@@ -191,30 +135,14 @@ function initCytoscape() {
   if (cy) { cy.destroy(); cy = null }
   if (displayGraphData.value.nodes.length === 0) return
 
-  const isSnapshot = branchMode.value && snapshotData.value
-
-  const elements = isSnapshot
-    ? [
-        ...displayGraphData.value.nodes.map((n: any) => ({
-          data: { id: `${n.type}:${n.key}`, label: n.label, type: n.type, key: n.key, ...n }
-        })),
-        ...displayGraphData.value.edges.map((e: any) => ({
-          data: {
-            id: `${e.fromType}:${e.fromKey}-${e.relation}-${e.toType}:${e.toKey}`,
-            source: `${e.fromType}:${e.fromKey}`,
-            target: `${e.toType}:${e.toKey}`,
-            label: e.relation
-          }
-        }))
-      ]
-    : [
-        ...displayGraphData.value.nodes.map((n: any) => ({
-          data: { id: n.id, label: n.label, type: n.type, key: n.key, ...n }
-        })),
-        ...displayGraphData.value.edges.map((e: any) => ({
-          data: { id: `${e.source}-${e.relation}-${e.target}`, source: e.source, target: e.target, label: e.relation }
-        }))
-      ]
+  const elements = [
+    ...displayGraphData.value.nodes.map((n: any) => ({
+      data: { id: n.id, label: n.label, type: n.type, key: n.key, ...n }
+    })),
+    ...displayGraphData.value.edges.map((e: any) => ({
+      data: { id: `${e.source}-${e.relation}-${e.target}`, source: e.source, target: e.target, label: e.relation }
+    }))
+  ]
 
   cy = cytoscape({
     container: cyContainer.value,
@@ -319,96 +247,20 @@ function resetLayout() {
   layout.run()
 }
 
-// 计算分支路径
-function computeBranches(nodes: any[]): any[] {
-  const result: any[] = []
-
-  function walk(node: any, path: any[], pathNames: string[]) {
-    const newPath = [...path, node]
-    const newPathNames = [...pathNames, node.title || `第${node.number}章`]
-    if (!node.children || node.children.length === 0) {
-      // 叶子节点，找到路径上最后一个 archived 章节
-      const lastArchived = [...newPath].reverse().find((n: any) => n.status === 'archived')
-      if (lastArchived) {
-        result.push({
-          chapterId: lastArchived.id,
-          chapterNumber: lastArchived.number,
-          path: newPath,
-          pathNames: newPathNames,
-          depth: newPath.length
-        })
-      }
-    } else {
-      for (const child of node.children) {
-        walk(child, newPath, newPathNames)
-      }
-    }
-  }
-
-  for (const root of nodes) {
-    walk(root, [], [])
-  }
-
-  // 按深度排序，最深的在前
-  return result.sort((a, b) => b.depth - a.depth)
-}
-
-async function loadChapterTree() {
-  if (!route.params.storyId) return
-  try {
-    const res = await chaptersApi.getTree(route.params.storyId as string)
-    chapterTree.value = res.data.data || []
-    branches.value = computeBranches(chapterTree.value)
-    // 默认选择最长分支
-    if (branches.value.length > 0 && !selectedBranchId.value) {
-      selectedBranchId.value = branches.value[0].chapterId
-    }
-  } catch {
-    chapterTree.value = []
-    branches.value = []
-  }
-}
-
 async function loadGraph() {
   if (!route.params.storyId) {
     graphData.value = null
     return
   }
-  const res = await graphApi.get(route.params.storyId as string)
+  const res = await graphApi.get(route.params.storyId as string, versions.selectedVersionBranchId)
   graphData.value = res.data.data
-  await nextTick()
-  initCytoscape()
-}
-
-async function loadBranchSnapshot() {
-  if (!selectedBranchId.value) {
-    snapshotData.value = null
-    selectedBranchInfo.value = null
-    return
-  }
-  try {
-    const res = await graphApi.getSnapshot(selectedBranchId.value)
-    const data = res.data.data
-    selectedBranchInfo.value = data.chapter
-    if (data.snapshot) {
-      snapshotData.value = {
-        nodes: data.snapshot.nodes || [],
-        edges: data.snapshot.edges || []
-      }
-    } else {
-      snapshotData.value = null
-    }
-  } catch {
-    snapshotData.value = null
-    selectedBranchInfo.value = null
-  }
   await nextTick()
   initCytoscape()
 }
 
 async function handleCreateNode() {
   if (!route.params.storyId) return
-  await graphApi.createNode(route.params.storyId as string, nodeForm.value)
+  await graphApi.createNode(route.params.storyId as string, { ...nodeForm.value, versionBranchId: versions.selectedVersionBranchId })
   showNodeModal.value = false
   nodeForm.value = { type: 'character', key: '', label: '' }
   await loadGraph()
@@ -427,38 +279,24 @@ async function handleCreateEdge() {
     fromId: selectedNode.value.id,
     toId: edgeForm.value.targetId,
     relation: edgeForm.value.relation,
-    weight: 1
+    weight: 1,
+    versionBranchId: versions.selectedVersionBranchId
   })
   cancelEdge()
   await loadGraph()
 }
 
 watch(() => route.params.storyId, () => {
-  loadGraph()
-  loadChapterTree()
+  versions.loadVersionBranches().then(loadGraph)
 })
 
-watch(branchMode, async (val) => {
-  if (val) {
-    await loadBranchSnapshot()
-  } else {
-    snapshotData.value = null
-    selectedBranchInfo.value = null
-    await nextTick()
-    initCytoscape()
-  }
-})
-
-watch(selectedBranchId, async () => {
-  if (branchMode.value) {
-    await loadBranchSnapshot()
-  }
+watch(() => versions.selectedVersionBranchId, async () => {
+  await loadGraph()
 })
 
 onMounted(() => {
   if (route.params.storyId) {
-    loadGraph()
-    loadChapterTree()
+    versions.loadVersionBranches().then(loadGraph)
   }
 })
 </script>

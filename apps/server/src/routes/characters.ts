@@ -6,6 +6,7 @@ export async function characterRoutes(app: FastifyInstance) {
     const { storyId } = request.params as any
     const characters = await app.prisma.character.findMany({
       where: { storyId },
+      include: { branchStates: true },
       orderBy: { createdAt: 'asc' }
     })
     return { success: true, data: characters }
@@ -24,11 +25,23 @@ export async function characterRoutes(app: FastifyInstance) {
         speechStyle: JSON.stringify(body.speechStyle || []),
         identity: JSON.stringify(body.identity || []),
         appearance: JSON.stringify(body.appearance || []),
-        temperament: JSON.stringify(body.temperament || []),
-        relationships: JSON.stringify(body.relationships || {}),
-        status: JSON.stringify(body.status || {})
+        temperament: JSON.stringify(body.temperament || [])
       }
     })
+
+    // 如果提供了版本分支状态，同时创建 CharacterBranchState
+    const vbId = body.versionBranchId ?? ''
+    if (body.status !== undefined || body.relationships !== undefined) {
+      await app.prisma.characterBranchState.create({
+        data: {
+          characterId: character.id,
+          versionBranchId: vbId,
+          status: JSON.stringify(body.status || {}),
+          relationships: JSON.stringify(body.relationships || {})
+        }
+      })
+    }
+
     return { success: true, data: character }
   })
 
@@ -42,12 +55,40 @@ export async function characterRoutes(app: FastifyInstance) {
     if (body.identity !== undefined) data.identity = JSON.stringify(body.identity)
     if (body.appearance !== undefined) data.appearance = JSON.stringify(body.appearance)
     if (body.temperament !== undefined) data.temperament = JSON.stringify(body.temperament)
-    if (body.relationships !== undefined) data.relationships = JSON.stringify(body.relationships)
-    if (body.status !== undefined) data.status = JSON.stringify(body.status)
+
     const character = await app.prisma.character.update({
       where: { id: charId },
       data
     })
+
+    // 如果提供了版本分支状态，更新或创建 CharacterBranchState
+    const vbId = body.versionBranchId ?? ''
+    if (body.status !== undefined || body.relationships !== undefined) {
+      const existing = await app.prisma.characterBranchState.findUnique({
+        where: { characterId_versionBranchId: { characterId: charId, versionBranchId: vbId } }
+      })
+      const bsData: any = {}
+      if (body.status !== undefined) bsData.status = JSON.stringify(body.status)
+      if (body.relationships !== undefined) bsData.relationships = JSON.stringify(body.relationships)
+
+      if (existing) {
+        await app.prisma.characterBranchState.update({
+          where: { id: existing.id },
+          data: bsData
+        })
+      } else {
+        await app.prisma.characterBranchState.create({
+          data: {
+            characterId: charId,
+            versionBranchId: vbId,
+            status: JSON.stringify(body.status || {}),
+            relationships: JSON.stringify(body.relationships || {}),
+            ...bsData
+          }
+        })
+      }
+    }
+
     return { success: true, data: character }
   })
 

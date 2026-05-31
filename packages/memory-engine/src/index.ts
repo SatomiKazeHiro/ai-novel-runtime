@@ -101,10 +101,13 @@ export class MemoryManager {
     query: string,
     prisma: any,
     limit: number = 15,
-    beforeChapterNumber?: number
+    beforeChapterNumber?: number,
+    versionBranchId?: string
   ): Promise<MemoryEntry[]> {
+    const where: any = { storyId, layer: { in: ['global', 'chapter'] } }
+    if (versionBranchId) where.versionBranchId = versionBranchId
     const allMemories = await prisma.memory.findMany({
-      where: { storyId, layer: { in: ['global', 'chapter'] } },
+      where,
       include: { chapter: { select: { number: true, isSideStory: true } } },
       orderBy: { createdAt: 'desc' }
     })

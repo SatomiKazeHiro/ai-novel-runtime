@@ -14,7 +14,7 @@ export function useChapterTree(storyId: () => string | undefined) {
   const showCreateModal = ref(false)
   const showDevelopModal = ref(false)
   const createForm = ref({ title: '', outline: '', isSideStory: false })
-  const developForm = ref({ title: '', outline: '', isSideStory: false, branchName: '' })
+  const developForm = ref({ title: '', outline: '', isSideStory: false, versionBranchName: '' })
   const developParentId = ref('')
 
   async function loadChapterTree() {
@@ -37,7 +37,8 @@ export function useChapterTree(storyId: () => string | undefined) {
 
   function onDevelop(node: any) {
     developParentId.value = node.id
-    developForm.value = { title: '', outline: '', isSideStory: false, branchName: '' }
+    // 默认继承父章节版本名称，用户可修改以创建新版本
+    developForm.value = { title: '', outline: '', isSideStory: false, versionBranchName: node.versionBranch?.name || '' }
     showDevelopModal.value = true
   }
 
@@ -48,7 +49,7 @@ export function useChapterTree(storyId: () => string | undefined) {
         title: developForm.value.title,
         outline: developForm.value.outline,
         isSideStory: developForm.value.isSideStory,
-        branchName: developForm.value.branchName || (developForm.value.isSideStory ? '番外' : undefined)
+        versionBranchName: developForm.value.versionBranchName || undefined
       })
       showDevelopModal.value = false
       message.success('新章节已创建')

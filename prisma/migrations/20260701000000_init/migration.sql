@@ -11,11 +11,23 @@ CREATE TABLE "Story" (
 );
 
 -- CreateTable
+CREATE TABLE "VersionBranch" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "storyId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "forkFromChapterId" TEXT,
+    "forkFromVersionId" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "VersionBranch_storyId_fkey" FOREIGN KEY ("storyId") REFERENCES "Story" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
 CREATE TABLE "Chapter" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "storyId" TEXT NOT NULL,
     "parentChapterId" TEXT,
-    "branchName" TEXT,
+    "versionBranchId" TEXT NOT NULL,
     "number" REAL NOT NULL,
     "isSideStory" BOOLEAN NOT NULL DEFAULT false,
     "title" TEXT NOT NULL,
@@ -34,7 +46,8 @@ CREATE TABLE "Chapter" (
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "Chapter_storyId_fkey" FOREIGN KEY ("storyId") REFERENCES "Story" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "Chapter_parentChapterId_fkey" FOREIGN KEY ("parentChapterId") REFERENCES "Chapter" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
-    CONSTRAINT "Chapter_runtimeProfileId_fkey" FOREIGN KEY ("runtimeProfileId") REFERENCES "RuntimeProfile" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+    CONSTRAINT "Chapter_runtimeProfileId_fkey" FOREIGN KEY ("runtimeProfileId") REFERENCES "RuntimeProfile" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT "Chapter_versionBranchId_fkey" FOREIGN KEY ("versionBranchId") REFERENCES "VersionBranch" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 -- CreateTable
@@ -48,11 +61,20 @@ CREATE TABLE "Character" (
     "identity" TEXT NOT NULL DEFAULT '[]',
     "appearance" TEXT NOT NULL DEFAULT '[]',
     "temperament" TEXT NOT NULL DEFAULT '[]',
-    "relationships" TEXT NOT NULL DEFAULT '{}',
-    "status" TEXT NOT NULL DEFAULT '{}',
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "Character_storyId_fkey" FOREIGN KEY ("storyId") REFERENCES "Story" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "CharacterBranchState" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "characterId" TEXT NOT NULL,
+    "versionBranchId" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT '{}',
+    "relationships" TEXT NOT NULL DEFAULT '{}',
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "CharacterBranchState_characterId_fkey" FOREIGN KEY ("characterId") REFERENCES "Character" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 -- CreateTable
@@ -74,6 +96,7 @@ CREATE TABLE "Memory" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "storyId" TEXT NOT NULL,
     "chapterId" TEXT,
+    "versionBranchId" TEXT NOT NULL,
     "layer" TEXT NOT NULL,
     "content" TEXT NOT NULL,
     "tags" TEXT NOT NULL DEFAULT '[]',
@@ -88,6 +111,7 @@ CREATE TABLE "Memory" (
 CREATE TABLE "GraphNode" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "storyId" TEXT NOT NULL,
+    "versionBranchId" TEXT NOT NULL,
     "type" TEXT NOT NULL,
     "key" TEXT NOT NULL,
     "label" TEXT NOT NULL,
@@ -100,6 +124,7 @@ CREATE TABLE "GraphNode" (
 CREATE TABLE "GraphEdge" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "storyId" TEXT NOT NULL,
+    "versionBranchId" TEXT NOT NULL,
     "fromId" TEXT NOT NULL,
     "toId" TEXT NOT NULL,
     "relation" TEXT NOT NULL,
@@ -114,6 +139,7 @@ CREATE TABLE "GraphEdge" (
 CREATE TABLE "TimelineEvent" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "storyId" TEXT NOT NULL,
+    "versionBranchId" TEXT NOT NULL,
     "day" INTEGER NOT NULL,
     "events" TEXT NOT NULL DEFAULT '[]',
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -186,6 +212,7 @@ CREATE TABLE "WorkerTask" (
 CREATE TABLE "PlotArc" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "storyId" TEXT NOT NULL,
+    "versionBranchId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "type" TEXT NOT NULL DEFAULT 'main',
     "status" TEXT NOT NULL DEFAULT 'pending',
@@ -265,25 +292,37 @@ CREATE TABLE "PromptLog" (
 );
 
 -- CreateIndex
+CREATE INDEX "VersionBranch_storyId_idx" ON "VersionBranch"("storyId");
+
+-- CreateIndex
 CREATE INDEX "Chapter_storyId_parentChapterId_idx" ON "Chapter"("storyId", "parentChapterId");
 
 -- CreateIndex
 CREATE INDEX "Chapter_storyId_status_idx" ON "Chapter"("storyId", "status");
 
 -- CreateIndex
+CREATE INDEX "Chapter_versionBranchId_idx" ON "Chapter"("versionBranchId");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "Character_storyId_slug_key" ON "Character"("storyId", "slug");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "CharacterBranchState_characterId_versionBranchId_key" ON "CharacterBranchState"("characterId", "versionBranchId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "LoreItem_storyId_category_slug_key" ON "LoreItem"("storyId", "category", "slug");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "GraphNode_storyId_type_key_key" ON "GraphNode"("storyId", "type", "key");
+CREATE INDEX "Memory_storyId_versionBranchId_layer_idx" ON "Memory"("storyId", "versionBranchId", "layer");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "TimelineEvent_storyId_day_key" ON "TimelineEvent"("storyId", "day");
+CREATE UNIQUE INDEX "GraphNode_storyId_versionBranchId_type_key_key" ON "GraphNode"("storyId", "versionBranchId", "type", "key");
 
 -- CreateIndex
-CREATE INDEX "PlotArc_storyId_status_idx" ON "PlotArc"("storyId", "status");
+CREATE UNIQUE INDEX "TimelineEvent_storyId_versionBranchId_day_key" ON "TimelineEvent"("storyId", "versionBranchId", "day");
+
+-- CreateIndex
+CREATE INDEX "PlotArc_storyId_versionBranchId_status_idx" ON "PlotArc"("storyId", "versionBranchId", "status");
 
 -- CreateIndex
 CREATE INDEX "PromptLog_storyId_createdAt_idx" ON "PromptLog"("storyId", "createdAt");

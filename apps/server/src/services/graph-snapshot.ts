@@ -34,13 +34,15 @@ interface GraphDelta {
  */
 export async function buildGraphSnapshot(
   prisma: any,
-  storyId: string
+  storyId: string,
+  versionBranchId?: string
 ): Promise<GraphSnapshot> {
+  const vbId = versionBranchId ?? ''
   const nodes = await prisma.graphNode.findMany({
-    where: { storyId }
+    where: { storyId, versionBranchId: vbId }
   })
   const edges = await prisma.graphEdge.findMany({
-    where: { storyId },
+    where: { storyId, versionBranchId: vbId },
     include: { fromNode: true, toNode: true }
   })
 
@@ -135,33 +137,35 @@ export function computeGraphDelta(
 export async function saveGraphSnapshotAndDelta(
   app: FastifyInstance,
   chapterId: string,
-  storyId: string
+  storyId: string,
+  versionBranchId?: string
 ): Promise<{ snapshot: GraphSnapshot; delta: GraphDelta } | null> {
   const prisma = app.prisma
+  const vbId = versionBranchId ?? ''
 
   try {
     // 1. 获取当前章节
     const chapter = await prisma.chapter.findUnique({ where: { id: chapterId } })
     if (!chapter) return null
 
-    // 2. 构建当前图谱快照
-    const currentSnapshot = await buildGraphSnapshot(prisma, storyId)
+    // 2. 构建当前图谱快照（按分支隔离）
+    const currentSnapshot = await buildGraphSnapshot(prisma, storyId, vbId)
 
-    // 3. 获取上一章节的快照（父章节优先，否则取最近归档的）
+    // 3. 获取上一章节的快照（同分支父章节优先，否则取同分支最近归档的）
     let previousSnapshot: GraphSnapshot | null = null
     if (chapter.parentChapterId) {
       const parent = await prisma.chapter.findUnique({
         where: { id: chapter.parentChapterId },
-        select: { graphSnapshot: true }
+        select: { graphSnapshot: true, versionBranchId: true }
       })
-      if (parent?.graphSnapshot) {
+      if (parent?.graphSnapshot && parent.versionBranchId === vbId) {
         previousSnapshot = JSON.parse(parent.graphSnapshot)
       }
     }
-    // 如果父章节没有快照，尝试取最近归档的
+    // 如果父章节没有快照，尝试取同分支最近归档的
     if (!previousSnapshot) {
       const lastArchived = await prisma.chapter.findFirst({
-        where: { storyId, status: 'archived', id: { not: chapterId } },
+        where: { storyId, versionBranchId: vbId, status: 'archived', id: { not: chapterId } },
         orderBy: { number: 'desc' },
         select: { graphSnapshot: true }
       })

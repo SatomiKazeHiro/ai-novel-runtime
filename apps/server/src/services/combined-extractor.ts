@@ -25,11 +25,16 @@ export async function extractAndSaveAll(
 ): Promise<{ memories: number; nodes: number; edges: number; arcs: number } | null> {
   const prisma = app.prisma
 
-  // 加载已有弧线：只保留活跃/待收尾/待启动的 + 近期（30天内）更新过的
+  // 获取章节版本分支 ID
+  const chapter = await prisma.chapter.findUnique({ where: { id: chapterId }, select: { versionBranchId: true } })
+  const vbId = chapter?.versionBranchId ?? ''
+
+  // 加载已有弧线：只保留活跃/待收尾/待启动的 + 近期（30天内）更新过的（同分支）
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
   const existingArcs = await prisma.plotArc.findMany({
     where: {
       storyId,
+      versionBranchId: vbId,
       OR: [
         { status: { in: ['active', 'resolving', 'pending'] } },
         { updatedAt: { gte: thirtyDaysAgo } }
@@ -42,9 +47,9 @@ export async function extractAndSaveAll(
 
   // 加载已有节点（用于去重提示）：角色节点全部保留 + 其他类型只保留最近100个
   const [characterNodes, recentOtherNodes] = await Promise.all([
-    prisma.graphNode.findMany({ where: { storyId, type: 'character' } }),
+    prisma.graphNode.findMany({ where: { storyId, versionBranchId: vbId, type: 'character' } }),
     prisma.graphNode.findMany({
-      where: { storyId, type: { not: 'character' } },
+      where: { storyId, versionBranchId: vbId, type: { not: 'character' } },
       orderBy: { createdAt: 'desc' },
       take: 100
     })
@@ -113,15 +118,15 @@ ${content.slice(0, 8000)}`
 
     const result: CombinedExtractionResult = JSON.parse(cleanJsonBlock(raw))
 
-    // 保存记忆
-    await saveExtractedMemory(app, chapterId, storyId, result.memories)
+    // 保存记忆（按版本隔离）
+    await saveExtractedMemory(app, chapterId, storyId, result.memories, vbId)
 
-    // 保存图谱（过滤低重要性）
+    // 保存图谱（过滤低重要性，按版本隔离）
     const filteredNodes = (result.graph?.nodes || []).filter(n => n.importance >= 6)
-    await saveExtractedGraph(app, storyId, { nodes: filteredNodes, edges: result.graph?.edges || [] })
+    await saveExtractedGraph(app, storyId, { nodes: filteredNodes, edges: result.graph?.edges || [] }, vbId)
 
-    // 保存剧情弧线
-    await savePlotArcs(app, storyId, result.plotArcs?.arcs || [])
+    // 保存剧情弧线（按版本隔离）
+    await savePlotArcs(app, storyId, result.plotArcs?.arcs || [], vbId)
 
     const memCount = (result.memories?.mainEvents?.length || 0) +
                      (result.memories?.sideEvents?.length || 0) +

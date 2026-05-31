@@ -51,26 +51,28 @@ function calculateAverageJaccard(contents: string[]): number {
 export async function organizeMemoriesAfterArchive(
   app: FastifyInstance,
   storyId: string,
-  chapterId: string
+  chapterId: string,
+  versionBranchId?: string
 ): Promise<{ merged: number; updated: number; deleted: number }> {
   const prisma = app.prisma
+  const vbId = versionBranchId ?? ''
 
-  // 1. 获取本章新提取的记忆
+  // 1. 获取本章新提取的记忆（同分支）
   const newMemories = await prisma.memory.findMany({
-    where: { storyId, chapterId },
+    where: { storyId, chapterId, versionBranchId: vbId },
     orderBy: { importance: 'desc' }
   })
   if (newMemories.length === 0) return { merged: 0, updated: 0, deleted: 0 }
 
-  // 2. 获取可能相关的旧记忆（最近 20 条重要性 >= 5 的）
+  // 2. 获取可能相关的旧记忆（同分支，最近 20 条重要性 >= 5 的）
   const oldMemories = await prisma.memory.findMany({
-    where: { storyId, NOT: { chapterId }, importance: { gte: 5 } },
+    where: { storyId, versionBranchId: vbId, NOT: { chapterId }, importance: { gte: 5 } },
     orderBy: { createdAt: 'desc' },
     take: 20
   })
   if (oldMemories.length === 0) return { merged: 0, updated: 0, deleted: 0 }
 
-  app.log.info(`[MemoryOrganizer] Analyzing ${newMemories.length} new vs ${oldMemories.length} old memories`)
+  app.log.info(`[MemoryOrganizer] Analyzing ${newMemories.length} new vs ${oldMemories.length} old memories [${vbId}]`)
 
   // 3. 构造整理 Prompt
   const oldText = oldMemories.map((m, i) =>

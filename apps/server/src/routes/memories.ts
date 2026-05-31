@@ -4,8 +4,9 @@ export async function memoryRoutes(app: FastifyInstance) {
   // GET /api/stories/:storyId/memory
   app.get('/api/stories/:storyId/memory', async (request, reply) => {
     const { storyId } = request.params as any
-    const { layer } = request.query as any
+    const { layer, versionBranchId } = request.query as any
     const where: any = { storyId }
+    if (versionBranchId) where.versionBranchId = versionBranchId
     if (layer) where.layer = layer
     const items = await app.prisma.memory.findMany({
       where,
@@ -28,6 +29,7 @@ export async function memoryRoutes(app: FastifyInstance) {
       data: {
         storyId,
         chapterId: body.chapterId,
+        versionBranchId: body.versionBranchId ?? '',
         layer: body.layer,
         content: body.content,
         tags: JSON.stringify(body.tags || []),

@@ -5,8 +5,10 @@ export async function graphRoutes(app: FastifyInstance) {
   // GET /api/stories/:storyId/graph
   app.get('/api/stories/:storyId/graph', async (request, reply) => {
     const { storyId } = request.params as any
-    const nodes = await app.prisma.graphNode.findMany({ where: { storyId } })
-    const edges = await app.prisma.graphEdge.findMany({ where: { storyId } })
+    const { versionBranchId } = request.query as any
+    const vbId = versionBranchId ?? ''
+    const nodes = await app.prisma.graphNode.findMany({ where: { storyId, versionBranchId: vbId } })
+    const edges = await app.prisma.graphEdge.findMany({ where: { storyId, versionBranchId: vbId } })
     const gs = new GraphService()
     gs.import({ nodes: nodes.map(n => ({ id: n.id, type: n.type, key: n.key, label: n.label, ...JSON.parse(n.data) })), edges: edges.map(e => ({ source: e.fromId, target: e.toId, relation: e.relation, weight: e.weight })) })
     return { success: true, data: gs.export() }
@@ -34,6 +36,7 @@ export async function graphRoutes(app: FastifyInstance) {
     const node = await app.prisma.graphNode.create({
       data: {
         storyId,
+        versionBranchId: body.versionBranchId ?? '',
         type: body.type,
         key: body.key,
         label: body.label,
@@ -50,6 +53,7 @@ export async function graphRoutes(app: FastifyInstance) {
     const edge = await app.prisma.graphEdge.create({
       data: {
         storyId,
+        versionBranchId: body.versionBranchId ?? '',
         fromId: body.fromId,
         toId: body.toId,
         relation: body.relation,
