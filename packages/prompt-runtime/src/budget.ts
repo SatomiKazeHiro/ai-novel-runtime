@@ -1,4 +1,5 @@
 import { encodingForModel } from 'js-tiktoken'
+import { estimateTokens as heuristicEstimateTokens } from '@novel-runtime/shared'
 import type { BudgetConfig } from './index.js'
 
 export { BudgetConfig }
@@ -46,12 +47,7 @@ export function countTokens(text: string, model = 'deepseek-chat'): number {
     const encoder = getEncoder(model)
     return encoder.encode(text).length
   } catch {
-    let cn = 0, en = 0
-    for (const ch of text) {
-      if (/[\u4e00-\u9fff]/.test(ch)) cn++
-      else if (/[a-zA-Z]/.test(ch)) en++
-    }
-    return Math.ceil(cn + en * 0.25)
+    return heuristicEstimateTokens(text)
   }
 }
 

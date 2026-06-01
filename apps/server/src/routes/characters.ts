@@ -21,6 +21,7 @@ export async function characterRoutes(app: FastifyInstance) {
         storyId,
         slug: body.slug,
         name: body.name,
+        protagonist: body.protagonist ?? false,
         personality: JSON.stringify(body.personality || []),
         speechStyle: JSON.stringify(body.speechStyle || []),
         identity: JSON.stringify(body.identity || []),
@@ -49,6 +50,7 @@ export async function characterRoutes(app: FastifyInstance) {
     const { charId } = request.params as any
     const body = request.body as any
     const data: any = { name: body.name }
+    if (body.protagonist !== undefined) data.protagonist = body.protagonist
     if (body.personality !== undefined) data.personality = JSON.stringify(body.personality)
     if (body.speechStyle !== undefined) data.speechStyle = JSON.stringify(body.speechStyle)
     if (body.identity !== undefined) data.identity = JSON.stringify(body.identity)

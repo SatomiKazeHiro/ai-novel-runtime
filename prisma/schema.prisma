@@ -86,6 +86,7 @@ model Character {
   storyId       String
   slug          String
   name          String
+  protagonist   Boolean  @default(false) // 是否为主角
   personality   String   @default("[]") // JSON string array
   speechStyle   String   @default("[]") // JSON string array
   identity      String   @default("[]") // JSON string array: 身份标签
@@ -138,6 +139,7 @@ model Memory {
   storyId           String
   chapterId         String?
   fromChapterNumber Float?   // 来源章节序号（archive 时标记）
+  originUid         String?  // 事件起始UID，如 "1#A3F2"
   layer             String   // global, chapter, scene, temporary
   content           String
   tags              String   @default("[]") // JSON string array
@@ -150,6 +152,7 @@ model Memory {
 
   @@index([storyId, layer])
   @@index([storyId, fromChapterNumber])
+  @@index([storyId, originUid])
 }
 
 // 知识图谱节点

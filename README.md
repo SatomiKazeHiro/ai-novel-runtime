@@ -143,9 +143,7 @@ novel-runtime/
 │   └── warning-engine/        # 预警检测引擎
 ├── docs/
 │   ├── profiles/              # 预设写作人格（11 种类型）
-│   ├── implementation-plan.md
-│   ├── sql-reference.md
-│   └── nodejs_vue_3_ai_novel_runtime_architecture_spec_v_2.md
+│   └── sql-reference.md
 ├── prisma/
 │   ├── schema.prisma          # 数据库模型定义
 │   ├── migrations/            # SQL 迁移文件

@@ -55,20 +55,29 @@ export async function saveGraphSnapshotAndDelta(
       nodeIdMap.set(`${node.type}:${node.key}`, created.id)
     }
 
+    // 创建关系边，同时做去重兜底（防止 AI 返回的 mergedGraph 中有完全重复的边）
+    const seenEdges = new Set<string>()
     for (const edge of graphResult.mergedGraph.edges) {
       const fromId = nodeIdMap.get(`${edge.fromType}:${edge.fromKey}`)
       const toId = nodeIdMap.get(`${edge.toType}:${edge.toKey}`)
-      if (fromId && toId) {
-        await prisma.graphEdge.create({
-          data: {
-            storyId,
-            fromId,
-            toId,
-            relation: edge.relation,
-            weight: edge.weight || 1
-          }
-        })
+      if (!fromId || !toId) continue
+
+      const edgeKey = `${fromId}:${toId}:${edge.relation}`
+      if (seenEdges.has(edgeKey)) {
+        app.log.warn(`[GraphSnapshot] Skipping duplicate edge: ${edge.fromKey} -[${edge.relation}]-> ${edge.toKey}`)
+        continue
       }
+      seenEdges.add(edgeKey)
+
+      await prisma.graphEdge.create({
+        data: {
+          storyId,
+          fromId,
+          toId,
+          relation: edge.relation,
+          weight: edge.weight || 1
+        }
+      })
     }
 
     // 3. 保存到章节

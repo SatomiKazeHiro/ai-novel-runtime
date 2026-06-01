@@ -63,6 +63,7 @@ export async function extractGraphFromChapter(
 
 type 可选值：character(角色), faction(势力/组织), event(事件), item(物品/道具)
 relation 建议值：隶属、对抗、师徒、配偶、兄弟、持有、发生地点、涉及
+relation 应该是一个简洁的核心词或短语（2-6字为佳），直接表达两实体间的核心联系，不要带状语、从句或补充说明。
 
 已有实体（不要重复提取，但可补充新属性）：${Array.from(existingKeys).join(', ') || '无'}
 

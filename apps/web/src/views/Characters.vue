@@ -18,6 +18,9 @@
         <n-form-item label="姓名" required>
           <n-input v-model:value="form.name" placeholder="角色姓名" />
         </n-form-item>
+        <n-form-item label="主角">
+          <n-checkbox v-model:checked="form.protagonist"></n-checkbox>
+        </n-form-item>
         <n-form-item label="身份">
           <n-dynamic-tags v-model:value="form.identity" />
         </n-form-item>
@@ -54,7 +57,7 @@
 import { ref, onMounted, h, watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NH1, NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NDynamicTags,
+  NH1, NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NDynamicTags, NCheckbox,
   type DataTableColumns
 } from 'naive-ui'
 import { charactersApi } from '../api/characters'
@@ -69,6 +72,7 @@ const editId = ref('')
 const form = ref({
   slug: '',
   name: '',
+  protagonist: false,
   identity: [] as string[],
   appearance: [] as string[],
   temperament: [] as string[],
@@ -109,6 +113,7 @@ function formatJson(jsonStr: string): string {
 const columns: DataTableColumns<any> = [
   { title: '标识', key: 'slug', width: 100 },
   { title: '姓名', key: 'name', width: 100 },
+  { title: '主角', key: 'protagonist', width: 60, render: (row) => row.protagonist ? h('span', { style: 'color: #f0a020' }, '★') : '' },
   { title: '身份', key: 'identity', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.identity) },
   { title: '外貌', key: 'appearance', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.appearance) },
   { title: '气质', key: 'temperament', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.temperament) },
@@ -148,7 +153,7 @@ async function loadCharacters() {
 
 function resetForm() {
   form.value = {
-    slug: '', name: '',
+    slug: '', name: '', protagonist: false,
     identity: [], appearance: [], temperament: [],
     personality: [], speechStyle: [],
     relationships: {}, status: {}
@@ -168,6 +173,7 @@ function openEdit(row: any) {
   form.value = {
     slug: row.slug,
     name: row.name,
+    protagonist: row.protagonist ?? false,
     identity: JSON.parse(row.identity || '[]'),
     appearance: JSON.parse(row.appearance || '[]'),
     temperament: JSON.parse(row.temperament || '[]'),
@@ -183,6 +189,7 @@ async function handleSubmit() {
   if (!route.params.storyId) return
   const data = {
     name: form.value.name,
+    protagonist: form.value.protagonist,
     identity: form.value.identity,
     appearance: form.value.appearance,
     temperament: form.value.temperament,

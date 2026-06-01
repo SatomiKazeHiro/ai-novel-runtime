@@ -8,16 +8,70 @@
       </n-space>
     </n-space>
 
+    <!-- 剧情发展轴 -->
     <n-card size="small" style="margin-bottom: 16px">
-      <n-space>
-        <n-tag v-for="t in typeLegend" :key="t.type" :color="{ color: t.color, textColor: '#fff', borderColor: t.color }">
-          {{ t.label }}
-        </n-tag>
-        <n-text depth="3">点击节点可选中，选中后点击另一节点可添加关系</n-text>
+      <n-space vertical size="small">
+        <n-text depth="3" style="font-size: 12px">剧情发展轴 — 选择章节查看该章归档时的图谱状态</n-text>
+        <n-scrollbar x-scrollable>
+          <n-space>
+            <n-button
+              v-for="ch in chapters"
+              :key="ch.id"
+              :type="selectedChapterId === ch.id ? 'primary' : 'default'"
+              size="small"
+              @click="selectChapter(ch.id)"
+            >
+              {{ ch.title }}
+            </n-button>
+          </n-space>
+        </n-scrollbar>
       </n-space>
     </n-card>
 
-    <div ref="cyContainer" style="width: 100%; height: 600px; border: 1px solid var(--n-border-color); border-radius: 8px; background: var(--n-card-color);"></div>
+    <!-- 视图切换 + 图例 -->
+    <n-card size="small" style="margin-bottom: 16px">
+      <n-space justify="space-between" align="center">
+        <n-radio-group v-model:value="viewMode" size="small">
+          <n-radio-button value="snapshot">累计全局</n-radio-button>
+          <n-radio-button value="delta">本章纯净</n-radio-button>
+        </n-radio-group>
+        <n-space align="center">
+          <n-tag
+            v-if="viewMode === 'snapshot' && (diffStats.addedNodes > 0 || diffStats.addedEdges > 0)"
+            size="small"
+            :color="{ color: '#22c55e', textColor: '#fff', borderColor: '#22c55e' }"
+          >
+            本章新增 {{ diffStats.addedNodes }} 节点 / {{ diffStats.addedEdges }} 关系
+          </n-tag>
+          <n-tag
+            v-for="t in typeLegend"
+            :key="t.type"
+            :color="{ color: t.color, textColor: '#fff', borderColor: t.color }"
+          >
+            {{ t.label }}
+          </n-tag>
+        </n-space>
+      </n-space>
+    </n-card>
+
+    <!-- 纯净视图提示 -->
+    <n-alert v-if="viewMode === 'delta'" type="info" size="small" style="margin-bottom: 16px" :show-icon="false">
+      本章纯净视图只展示该章明确提及的实体和关系，不夹带全局历史信息。
+    </n-alert>
+
+    <!-- 新增高亮提示 -->
+    <n-alert
+      v-if="viewMode === 'snapshot' && (diffStats.addedNodes > 0 || diffStats.addedEdges > 0)"
+      type="success"
+      size="small"
+      style="margin-bottom: 16px"
+      :show-icon="false"
+    >
+      绿色高亮 = 相比上一章新增或更新的内容
+    </n-alert>
+
+    <!-- 图谱画布 -->
+    <div ref="cyContainer" style="width: 100%; height: 520px; border: 1px solid var(--n-border-color); border-radius: 8px; background: var(--n-card-color);"></div>
 
     <n-empty v-if="!displayGraphData || displayGraphData.nodes.length === 0" description="暂无图谱数据" style="margin-top: 24px" />
 
@@ -69,17 +123,29 @@
 import { ref, onMounted, watch, computed, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NH1, NSpace, NButton, NSelect, NCard, NTag, NText, NModal, NForm, NFormItem, NInput, NEmpty
+  NH1, NSpace, NButton, NSelect, NCard, NTag, NText, NModal, NForm, NFormItem, NInput, NEmpty,
+  NRadioGroup, NRadioButton, NScrollbar, NAlert
 } from 'naive-ui'
 import { graphApi } from '../api/graph'
+import { chaptersApi } from '../api/chapters'
 import cytoscape from 'cytoscape'
 
 const route = useRoute()
 const cyContainer = ref<HTMLDivElement>()
-const graphData = ref<any>(null)
 const showNodeModal = ref(false)
 const showEdgeModal = ref(false)
 const selectedNode = ref<any>(null)
+
+const chapters = ref<any[]>([])
+const selectedChapterId = ref<string>('')
+const viewMode = ref<'snapshot' | 'delta'>('snapshot')
+
+// 当前章节的图谱数据
+const currentSnapshot = ref<any>(null)
+const currentDelta = ref<any>(null)
+
+// 上一章的 snapshot 缓存（用于 diff）
+const prevSnapshot = ref<any>(null)
 
 const nodeForm = ref({ type: 'character', key: '', label: '' })
 const edgeForm = ref({ targetId: '', relation: '' })
@@ -109,22 +175,98 @@ const targetNodeOptions = computed(() => {
     .map((n: any) => ({ label: `${n.label} (${n.type})`, value: n.id }))
 })
 
-const displayGraphData = computed(() => graphData.value)
+// 根据视图模式决定展示的数据
+const displayGraphData = computed(() => {
+  if (viewMode.value === 'delta') {
+    return currentDelta.value
+  }
+  return currentSnapshot.value
+})
+
+// Diff 统计
+const diffStats = computed(() => {
+  if (!currentSnapshot.value || !prevSnapshot.value) {
+    return { addedNodes: 0, addedEdges: 0 }
+  }
+  const prevNodeSet = new Set((prevSnapshot.value.nodes || []).map((n: any) => `${n.type}:${n.key}`))
+  const prevEdgeSet = new Set((prevSnapshot.value.edges || []).map((e: any) =>
+    `${e.fromType}:${e.fromKey}:${e.relation}:${e.toType}:${e.toKey}`
+  ))
+
+  const addedNodes = (currentSnapshot.value.nodes || []).filter((n: any) =>
+    !prevNodeSet.has(`${n.type}:${n.key}`)
+  ).length
+
+  const addedEdges = (currentSnapshot.value.edges || []).filter((e: any) =>
+    !prevEdgeSet.has(`${e.fromType}:${e.fromKey}:${e.relation}:${e.toType}:${e.toKey}`)
+  ).length
+
+  return { addedNodes, addedEdges }
+})
 
 let cy: cytoscape.Core | null = null
+
+function computeNewIds(): { newNodes: Set<string>; newEdges: Set<string> } {
+  const newNodes = new Set<string>()
+  const newEdges = new Set<string>()
+
+  if (!currentSnapshot.value || !prevSnapshot.value) {
+    return { newNodes, newEdges }
+  }
+
+  const prevNodeSet = new Set((prevSnapshot.value.nodes || []).map((n: any) => `${n.type}:${n.key}`))
+  const prevEdgeSet = new Set((prevSnapshot.value.edges || []).map((e: any) =>
+    `${e.fromType}:${e.fromKey}:${e.relation}:${e.toType}:${e.toKey}`
+  ))
+
+  for (const n of currentSnapshot.value.nodes || []) {
+    const key = `${n.type}:${n.key}`
+    if (!prevNodeSet.has(key)) newNodes.add(key)
+  }
+
+  for (const e of currentSnapshot.value.edges || []) {
+    const key = `${e.fromType}:${e.fromKey}:${e.relation}:${e.toType}:${e.toKey}`
+    if (!prevEdgeSet.has(key)) newEdges.add(key)
+  }
+
+  return { newNodes, newEdges }
+}
 
 function initCytoscape() {
   if (!cyContainer.value || !displayGraphData.value) return
   if (cy) { cy.destroy(); cy = null }
   if (displayGraphData.value.nodes.length === 0) return
 
+  const { newNodes, newEdges } = viewMode.value === 'snapshot' ? computeNewIds() : { newNodes: new Set<string>(), newEdges: new Set<string>() }
+
+  // 收集所有有效节点 ID，过滤掉源或目标不存在的边（避免 AI 生成的 delta 数据不一致导致报错）
+  const validNodeIds = new Set<string>(
+    displayGraphData.value.nodes.map((n: any) => `${n.type}:${n.key}`)
+  )
+
   const elements = [
-    ...displayGraphData.value.nodes.map((n: any) => ({
-      data: { id: n.id, label: n.label, type: n.type, key: n.key, ...n }
-    })),
-    ...displayGraphData.value.edges.map((e: any) => ({
-      data: { id: `${e.source}-${e.relation}-${e.target}`, source: e.source, target: e.target, label: e.relation }
-    }))
+    ...displayGraphData.value.nodes.map((n: any) => {
+      const nodeId = `${n.type}:${n.key}`
+      const isNew = newNodes.has(nodeId)
+      return {
+        data: { id: nodeId, label: n.label, type: n.type, key: n.key, isNew, ...n }
+      }
+    }),
+    ...displayGraphData.value.edges
+      .filter((e: any) => {
+        const sourceId = `${e.fromType}:${e.fromKey}`
+        const targetId = `${e.toType}:${e.toKey}`
+        return validNodeIds.has(sourceId) && validNodeIds.has(targetId)
+      })
+      .map((e: any) => {
+        const sourceId = `${e.fromType}:${e.fromKey}`
+        const targetId = `${e.toType}:${e.toKey}`
+        const edgeId = `${sourceId}-${e.relation}-${targetId}`
+        const isNew = newEdges.has(`${e.fromType}:${e.fromKey}:${e.relation}:${e.toType}:${e.toKey}`)
+        return {
+          data: { id: edgeId, source: sourceId, target: targetId, label: e.relation, isNew }
+        }
+      })
   ]
 
   cy = cytoscape({
@@ -143,15 +285,17 @@ function initCytoscape() {
           'text-outline-color': '#000',
           'text-outline-width': 2,
           'text-valign': 'center',
-          'text-halign': 'center'
+          'text-halign': 'center',
+          'border-width': (ele: any) => ele.data('isNew') ? 3 : 0,
+          'border-color': '#22c55e'
         }
       },
       {
         selector: 'edge',
         style: {
-          'width': 2,
-          'line-color': '#94a3b8',
-          'target-arrow-color': '#94a3b8',
+          'width': (ele: any) => ele.data('isNew') ? 3 : 2,
+          'line-color': (ele: any) => ele.data('isNew') ? '#22c55e' : '#94a3b8',
+          'target-arrow-color': (ele: any) => ele.data('isNew') ? '#22c55e' : '#94a3b8',
           'target-arrow-shape': 'triangle',
           'curve-style': 'bezier',
           'label': 'data(label)',
@@ -230,15 +374,134 @@ function resetLayout() {
   layout.run()
 }
 
-async function loadGraph() {
-  if (!route.params.storyId) {
-    graphData.value = null
-    return
+async function loadChapters() {
+  if (!route.params.storyId) return
+  const res = await chaptersApi.list(route.params.storyId as string)
+  const list = res.data.data || []
+  // 按 number 排序，主线在前，番外按父章节分组
+  list.sort((a: any, b: any) => a.number - b.number)
+  chapters.value = list
+
+  // 默认选中最后一个已归档的章节，如果没有则选第一个
+  const lastArchived = [...list].reverse().find((c: any) => c.status === 'archived')
+  if (lastArchived) {
+    await selectChapter(lastArchived.id)
+  } else if (list.length > 0) {
+    await selectChapter(list[0].id)
   }
-  const res = await graphApi.get(route.params.storyId as string)
-  graphData.value = res.data.data
+}
+
+async function selectChapter(chapterId: string) {
+  selectedChapterId.value = chapterId
+  await loadChapterGraph(chapterId)
+}
+
+const TYPE_NORMALIZE_MAP: Record<string, string> = {
+  // 中文映射
+  '角色': 'character', '人物': 'character',
+  '势力': 'faction', '组织': 'faction', '门派': 'faction',
+  '事件': 'event',
+  '物品': 'item', '道具': 'item', '武器': 'item', '装备': 'item',
+  '兵器': 'item', '法宝': 'item', '灵器': 'item',
+  // AI 可能自创的英文类型（统一收敛到四类）
+  'weapon': 'item', 'prop': 'item', 'object': 'item', 'tool': 'item',
+  'armor': 'item', 'treasure': 'item', 'artifact': 'item', 'gear': 'item',
+  'realm': 'faction', 'sect': 'faction', 'clan': 'faction', 'guild': 'faction',
+  'place': 'event', 'location': 'event', 'scene': 'event',
+}
+
+function normalizeType(type: string): string {
+  return TYPE_NORMALIZE_MAP[type] || type
+}
+
+function normalizeGraph(rawNodes: any[], rawEdges: any[]) {
+  // 1. 规范化节点 type
+  const nodes = (rawNodes || []).map(n => ({
+    ...n,
+    type: normalizeType(n.type || 'character'),
+  }))
+
+  // 2. 建立 key -> 实际 type 映射（解决 AI 返回的节点 type 和边 type 不一致问题）
+  const keyToType = new Map<string, string>()
+  for (const n of nodes) {
+    keyToType.set(n.key, n.type)
+  }
+
+  // 3. 规范化边：先用映射表转换 type，再用节点实际 type 修正
+  const edges = (rawEdges || []).map(e => {
+    const fromType = keyToType.get(e.fromKey) || normalizeType(e.fromType || 'character')
+    const toType = keyToType.get(e.toKey) || normalizeType(e.toType || 'character')
+    return { ...e, fromType, toType }
+  })
+
+  return { nodes, edges }
+}
+
+async function loadChapterGraph(chapterId: string) {
+  const res = await graphApi.getSnapshot(chapterId)
+  const data = res.data.data
+
+  // 转换 snapshot 为前端需要的格式，同时做 type 规范化
+  const snapshot = normalizeGraph(data.snapshot?.nodes, data.snapshot?.edges)
+  const delta = normalizeGraph(data.delta?.nodes, data.delta?.edges)
+
+  currentSnapshot.value = {
+    nodes: snapshot.nodes.map((n: any) => ({
+      id: `${n.type}:${n.key}`,
+      type: n.type,
+      key: n.key,
+      label: n.label,
+      ...n.data
+    })),
+    edges: snapshot.edges.map((e: any) => ({
+      source: `${e.fromType}:${e.fromKey}`,
+      target: `${e.toType}:${e.toKey}`,
+      relation: e.relation,
+      ...e
+    }))
+  }
+
+  currentDelta.value = {
+    nodes: delta.nodes.map((n: any) => ({
+      id: `${n.type}:${n.key}`,
+      type: n.type,
+      key: n.key,
+      label: n.label,
+      ...n.data
+    })),
+    edges: delta.edges.map((e: any) => ({
+      source: `${e.fromType}:${e.fromKey}`,
+      target: `${e.toType}:${e.toKey}`,
+      relation: e.relation,
+      ...e
+    }))
+  }
+
+  // 加载上一章的 snapshot 用于 diff
+  await loadPrevSnapshot(chapterId)
+
   await nextTick()
   initCytoscape()
+}
+
+async function loadPrevSnapshot(currentChapterId: string) {
+  const currentIndex = chapters.value.findIndex(c => c.id === currentChapterId)
+  if (currentIndex <= 0) {
+    prevSnapshot.value = null
+    return
+  }
+  // 找前一个章节（按 number 排序后的前一个）
+  const prevChapter = chapters.value[currentIndex - 1]
+  if (!prevChapter) {
+    prevSnapshot.value = null
+    return
+  }
+  try {
+    const res = await graphApi.getSnapshot(prevChapter.id)
+    prevSnapshot.value = res.data.data.snapshot
+  } catch {
+    prevSnapshot.value = null
+  }
 }
 
 async function handleCreateNode() {
@@ -246,7 +509,10 @@ async function handleCreateNode() {
   await graphApi.createNode(route.params.storyId as string, { ...nodeForm.value })
   showNodeModal.value = false
   nodeForm.value = { type: 'character', key: '', label: '' }
-  await loadGraph()
+  // 刷新当前视图
+  if (selectedChapterId.value) {
+    await loadChapterGraph(selectedChapterId.value)
+  }
 }
 
 function cancelEdge() {
@@ -265,16 +531,24 @@ async function handleCreateEdge() {
     weight: 1
   })
   cancelEdge()
-  await loadGraph()
+  if (selectedChapterId.value) {
+    await loadChapterGraph(selectedChapterId.value)
+  }
 }
 
 watch(() => route.params.storyId, () => {
-  loadGraph()
+  loadChapters()
+})
+
+watch(viewMode, () => {
+  if (selectedChapterId.value) {
+    nextTick(() => initCytoscape())
+  }
 })
 
 onMounted(() => {
   if (route.params.storyId) {
-    loadGraph()
+    loadChapters()
   }
 })
 </script>

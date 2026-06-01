@@ -1,4 +1,18 @@
 import type { FastifyInstance } from 'fastify'
+import { z } from 'zod'
+
+const createStorySchema = z.object({
+  title: z.string().min(1, '标题不能为空'),
+  description: z.string().optional(),
+  runtimeProfileId: z.string().nullable().optional()
+})
+
+const updateStorySchema = z.object({
+  title: z.string().min(1, '标题不能为空').optional(),
+  description: z.string().optional(),
+  status: z.enum(['active', 'archived', 'deleted']).optional(),
+  runtimeProfileId: z.string().nullable().optional()
+})
 
 export async function storyRoutes(app: FastifyInstance) {
   // GET /stories
@@ -15,7 +29,11 @@ export async function storyRoutes(app: FastifyInstance) {
 
   // POST /stories
   app.post('/', async (request, reply) => {
-    const body = request.body as any
+    const parseResult = createStorySchema.safeParse(request.body)
+    if (!parseResult.success) {
+      return reply.status(400).send({ success: false, error: parseResult.error.errors.map(e => e.message).join('; ') })
+    }
+    const body = parseResult.data
     const story = await app.prisma.story.create({
       data: {
         title: body.title,
@@ -49,7 +67,11 @@ export async function storyRoutes(app: FastifyInstance) {
   // PUT /stories/:id
   app.put('/:id', async (request, reply) => {
     const { id } = request.params as any
-    const body = request.body as any
+    const parseResult = updateStorySchema.safeParse(request.body)
+    if (!parseResult.success) {
+      return reply.status(400).send({ success: false, error: parseResult.error.errors.map(e => e.message).join('; ') })
+    }
+    const body = parseResult.data
     const story = await app.prisma.story.update({
       where: { id },
       data: {

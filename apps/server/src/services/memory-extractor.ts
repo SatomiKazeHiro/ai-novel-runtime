@@ -1,15 +1,20 @@
 import type { FastifyInstance } from 'fastify'
+import { randomBytes } from 'crypto'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
 import { cleanJsonBlock } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
-import { maybeCompressMemories } from './memory-compressor.js'
 import { getEncoding } from 'js-tiktoken'
 
 const enc = getEncoding('cl100k_base')
 
 function tokenSet(text: string): Set<number> {
   return new Set(enc.encode(text))
+}
+
+function generateOriginUid(chapterNumber: number): string {
+  const hex = randomBytes(2).toString('hex').toUpperCase()
+  return `${chapterNumber}#${hex}`
 }
 
 function jaccardSimilarity(a: Set<number>, b: Set<number>): number {
@@ -40,9 +45,15 @@ export interface SceneMemory {
   importance?: number   // AI 判断的重要性 1-10，默认 7
 }
 
+export interface ExtractedEvent {
+  description: string    // 简洁描述"有什么人做了什么"
+  participants: string[] // 参与该事件的所有角色
+  importance: number     // 事件在本章的重要性（4~7），主角参与时 AI 自行 +1，最终 5~8
+}
+
 export interface MemoryExtractionResult {
-  mainEvents: string[]        // 主线事件（重要剧情推进）
-  sideEvents: string[]        // 支线/旁支事件
+  mainEvents: ExtractedEvent[]  // 主要事件（importance >= 8 或剧情核心）
+  sideEvents: ExtractedEvent[]  // 次要事件
   emotions: string[]
   foreshadowing: string[]
   relationshipChanges: string[]
@@ -60,20 +71,40 @@ export async function extractMemoryFromChapter(
 ): Promise<MemoryExtractionResult | null> {
   const prisma = app.prisma
 
+  // 查询本故事的主角名单
+  const protagonists = await prisma.character.findMany({
+    where: { storyId, protagonist: true },
+    select: { name: true }
+  })
+  const protagonistNames = protagonists.map(p => p.name)
+
   // 加载 Runtime Base + Memory Worker Task
   const base = await loadRuntimeBase(storyId, prisma)
   const task = await loadWorkerTask(storyId, 'memory', prisma)
 
   const extractPrompt = `请分析以下小说章节，提取关键信息并以严格 JSON 格式返回。不要返回 markdown 代码块，不要返回任何解释文字，只返回纯 JSON 对象。
 
+本故事主角：${protagonistNames.join('、') || '无明确主角'}
+
 提取原则：
-1. 【主线事件合并】同一主线剧情链上的连续事件应合并为一个整体事件描述，不要拆分。
-2. 【支线独立】与主线并行的独立支线作为独立条目。
-3. 【去重过滤】只提取对剧情有实质推动作用的事件，路人提及、环境描写、过渡段落不要提取。
+1. 【事件结构化】每条事件必须明确：有什么人做了什么，还有哪些角色参与。
+2. 【重要性自评】根据事件在本章的篇幅占比和剧情推动作用，为每条事件评定 importance（4~7）。
+3. 【主角加成】如果事件有主角参与，请在 importance 基础上自行 +1，最终 importance 范围为 5~8。
+4. 【去重过滤】只提取对剧情有实质推动作用的事件，路人提及、环境描写、过渡段落不要提取。
+
+importance 评分标准：
+- 7: 本章核心转折/高潮，占大量篇幅
+- 6: 重要推进，占中等篇幅
+- 5: 有一定作用，占少量篇幅
+- 4: 过渡/铺垫，篇幅很短
+
+主角参与且最终达到 8 分的事件视为"主要事件"，放入 mainEvents；其他放入 sideEvents。
+
+**重要：mainEvents 和 sideEvents 数组的顺序必须和事件在文章中的出现顺序完全一致，不能打乱，更不能把结尾的事件放到数组开头。**
 
 要求提取以下字段：
-- mainEvents: 主线事件（字符串数组）
-- sideEvents: 支线/旁支事件（字符串数组）
+- mainEvents: 主要事件（对象数组，每个对象包含 description / participants / importance）
+- sideEvents: 次要事件（对象数组，格式同上）
 - emotions: 主要角色的情绪变化（字符串数组）
 - foreshadowing: 新埋下的伏笔（字符串数组）
 - relationshipChanges: 角色关系变化（字符串数组）
@@ -81,6 +112,13 @@ export async function extractMemoryFromChapter(
 - timelineDay: 本章发生在第几天（数字，不确定则返回 null）
 - summary: 本章一句话摘要（50字以内）
 - scenes: 场景记忆数组（见下方说明）
+
+事件格式示例：
+{
+  "description": "许青向姜禾解释现代社会的身份制度和法律危险",
+  "participants": ["许青", "姜禾"],
+  "importance": 6
+}
 
 【场景记忆 scenes 提取规则】
 - 只提取"推动剧情发展的地点"或"承担主要事件的地点"
@@ -91,7 +129,7 @@ export async function extractMemoryFromChapter(
 scenes 格式：
 [{ "location": "光明顶", "description": "海拔极高，常年云雾缭绕", "event": "六大门派围攻明教总坛", "importance": 9 }]
 
-importance 标准：
+场景 importance 标准：
 - 7-10：核心剧情地点（决战、关键转折、贯穿全书的场所）
 - 4-6：有一定事件发生的地点
 - 1-3：路人提及、一笔带过、无实质事件
@@ -142,26 +180,30 @@ export async function saveExtractedMemory(
   let recentSets = recentMemories.map(m => tokenSet(m.content))
   let skipped = 0
 
-  async function saveIfUnique(content: string, layer: string, tags: string[], importance: number) {
+  async function saveIfUnique(content: string, layer: string, tags: string[], importance: number, originUid?: string) {
     if (await checkDuplicateMemory(prisma, storyId, content, recentSets)) {
       skipped++
       return
     }
     await prisma.memory.create({
-      data: { storyId, chapterId, fromChapterNumber: chNum, layer, content, tags: JSON.stringify(tags), importance }
+      data: { storyId, chapterId, fromChapterNumber: chNum, layer, content, tags: JSON.stringify(tags), importance, originUid }
     })
     recentSets.unshift(tokenSet(content))
     if (recentSets.length > 50) recentSets.pop()
   }
 
-  // 1. 保存主线事件记忆（高重要性）
+  // 1. 保存主要事件记忆
   for (const event of result.mainEvents || []) {
-    await saveIfUnique(`主线：${event}`, 'chapter', ['auto-extracted', 'main-plot'], 9)
+    const content = `${event.description} | 参与者：${event.participants.join('、')}`
+    const originUid = generateOriginUid(chNum)
+    await saveIfUnique(content, 'chapter', ['auto-extracted', 'main-plot'], event.importance, originUid)
   }
 
-  // 2. 保存支线事件记忆（中等重要性）
+  // 2. 保存次要事件记忆
   for (const event of result.sideEvents || []) {
-    await saveIfUnique(`支线：${event}`, 'chapter', ['auto-extracted', 'side-plot'], 6)
+    const content = `${event.description} | 参与者：${event.participants.join('、')}`
+    const originUid = generateOriginUid(chNum)
+    await saveIfUnique(content, 'chapter', ['auto-extracted'], event.importance, originUid)
   }
 
   // 3. 保存情绪/伏笔/关系变化
@@ -226,7 +268,7 @@ export async function saveExtractedMemory(
       where: { storyId_day: { storyId, day: result.timelineDay } }
     })
 
-    const dayEvents = [...(result.mainEvents || [])]
+    const dayEvents = (result.mainEvents || []).map(e => e.description)
     if (existing) {
       const oldEvents = JSON.parse(existing.events || '[]')
       await prisma.timelineEvent.update({
@@ -254,12 +296,8 @@ export async function saveExtractedMemory(
     })
   }
 
-  // 8. 触发记忆压缩（每 5 章自动压缩一次）
-  try {
-    await maybeCompressMemories(app, storyId)
-  } catch (err: any) {
-    app.log.error(`[MemoryExtractor] Compression check failed: ${err.message}`)
-  }
+  // 8. 记忆压缩已废弃，由 memory-optimizer 替代
+  app.log.info(`[MemoryExtractor] Skipped compression (replaced by memory-optimizer)`)
 
   app.log.info(`[MemoryExtractor] Saved memories and synced character status`)
 }

@@ -16,6 +16,7 @@ export function useChapterTree(storyId: () => string | undefined) {
   const createForm = ref({ title: '', outline: '', isSideStory: false })
   const developForm = ref({ title: '', outline: '', isSideStory: false })
   const developParentId = ref('')
+  const developForceSideStory = ref(false)
 
   async function loadChapterTree() {
     const sid = storyId()
@@ -35,10 +36,24 @@ export function useChapterTree(storyId: () => string | undefined) {
     selectedChapterId.value = node.id
   }
 
+  function findMaxNumber(nodes: any[]): number {
+    let max = -Infinity
+    for (const n of nodes) {
+      max = Math.max(max, n.number || 0)
+      if (n.children?.length) {
+        max = Math.max(max, findMaxNumber(n.children))
+      }
+    }
+    return max
+  }
+
   function onDevelop(node: any) {
     developParentId.value = node.id
-    // 默认继承父章节版本名称，用户可修改以创建新版本
-    developForm.value = { title: '', outline: '', isSideStory: false }
+    // 已有子节点 或 不是全局最新章节 → 只能发展番外
+    const maxNumber = findMaxNumber(chapterTree.value)
+    const forceSideStory = node.hasChildren === true || (node.number || 0) < maxNumber
+    developForceSideStory.value = forceSideStory
+    developForm.value = { title: '', outline: '', isSideStory: forceSideStory }
     showDevelopModal.value = true
   }
 
@@ -107,6 +122,7 @@ export function useChapterTree(storyId: () => string | undefined) {
     createForm,
     developForm,
     developParentId,
+    developForceSideStory,
     loadChapterTree,
     onNodeSelect,
     onDevelop,

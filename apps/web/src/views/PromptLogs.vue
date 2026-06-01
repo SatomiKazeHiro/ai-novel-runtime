@@ -102,7 +102,7 @@ import {
   NTabs, NTabPane, NCode, NScrollbar, NStatistic, NAlert,
   type DataTableColumns
 } from 'naive-ui'
-import { api } from '../utils/api.js'
+import { api } from '../utils/api'
 
 const route = useRoute()
 const storyId = computed(() => route.params.storyId as string)

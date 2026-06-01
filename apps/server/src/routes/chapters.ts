@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { generateQueue } from '../queue/index.js'
 import { extractAndSaveAll } from '../services/combined-extractor.js'
-import { organizeMemoriesAfterArchive } from '../services/memory-organizer.js'
+import { optimizeMemories } from '../services/memory-optimizer.js'
 import { getActivePlotArcs } from '../services/plot-extractor.js'
 import { saveGraphSnapshotAndDelta, type GraphSnapshot } from '../services/graph-snapshot.js'
 import { organizeGraph } from '../services/graph-organizer.js'
@@ -65,20 +65,19 @@ export async function chapterRoutes(app: FastifyInstance) {
   app.post('/api/stories/:storyId/chapters', async (request, reply) => {
     const { storyId } = request.params as any
     const body = request.body as any
-    const isSideStory = body.isSideStory === true
-    let number: number
-    if (isSideStory && body.number !== undefined) {
-      number = parseFloat(body.number)
-    } else if (isSideStory) {
-      const lastChapter = await getLastChapter(app.prisma, storyId)
-      number = (lastChapter?.number || 0) + 0.5
-    } else {
-      const lastChapter = await app.prisma.chapter.findFirst({
-        where: { storyId, isSideStory: false },
-        orderBy: { number: 'desc' }
-      })
-      number = (lastChapter?.number || 0) + 1
+
+    const existingCount = await app.prisma.chapter.count({ where: { storyId } })
+    if (existingCount > 0) {
+      return reply.status(400).send({ success: false, error: '已有章节，无法新建根章节' })
     }
+
+    // 无章节时强制非番外
+    const isSideStory = false
+    const lastChapter = await app.prisma.chapter.findFirst({
+      where: { storyId, isSideStory: false },
+      orderBy: { number: 'desc' }
+    })
+    const number = (lastChapter?.number || 0) + 1
 
     const chapter = await app.prisma.chapter.create({
       data: {
@@ -499,16 +498,16 @@ export async function chapterRoutes(app: FastifyInstance) {
       })
     }
 
-    // AI 记忆整理（失败则阻止归档）
-    let organized: { merged: number; updated: number; deleted: number } | null = null
+    // 记忆优化（生成全局记忆）
+    let optimizedCount = 0
     try {
-      organized = await organizeMemoriesAfterArchive(app, chapter.storyId, chapterId)
-      app.log.info(`[Archive] Memory organized: merged=${organized.merged}, updated=${organized.updated}, deleted=${organized.deleted}`)
+      optimizedCount = await optimizeMemories(app, chapter.storyId, chapterId, chapter.number)
+      app.log.info(`[Archive] Memory optimized: ${optimizedCount} global memories`)
     } catch (err: any) {
-      app.log.error(`[Archive] Memory organization failed: ${err.message}`)
+      app.log.error(`[Archive] Memory optimization failed: ${err.message}`)
       return reply.status(500).send({
         success: false,
-        error: `归档失败：记忆整理出错（${err.message}）。章节状态未变更，请检查 AI 配置后重试。`
+        error: `归档失败：记忆优化出错（${err.message}）。章节状态未变更，请检查 AI 配置后重试。`
       })
     }
 
@@ -517,7 +516,7 @@ export async function chapterRoutes(app: FastifyInstance) {
 
     return {
       success: true,
-      data: { extraction, organized, graph: graphSaved }
+      data: { extraction, optimizedCount, graph: graphSaved }
     }
   })
 
@@ -539,6 +538,12 @@ export async function chapterRoutes(app: FastifyInstance) {
     }
 
     const isSideStory = body.isSideStory === true
+
+    // 已有子章节的只能发展番外
+    const hasChildren = await prisma.chapter.count({ where: { parentChapterId: chapterId } })
+    if (hasChildren > 0 && !isSideStory) {
+      return reply.status(400).send({ success: false, error: '该章节已有后续章节，只能发展番外章节' })
+    }
 
     // 主线只能从最新章节发展
     if (!isSideStory) {

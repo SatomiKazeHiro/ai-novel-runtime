@@ -193,6 +193,9 @@ importers:
       '@novel-runtime/shared':
         specifier: workspace:*
         version: link:../shared
+      js-tiktoken:
+        specifier: ^1.0.21
+        version: 1.0.21
     devDependencies:
       typescript:
         specifier: ^5.7.0
@@ -200,6 +203,9 @@ importers:
 
   packages/prompt-runtime:
     dependencies:
+      '@novel-runtime/ai-provider':
+        specifier: workspace:*
+        version: link:../ai-provider
       '@novel-runtime/shared':
         specifier: workspace:*
         version: link:../shared
@@ -222,16 +228,6 @@ importers:
         version: 5.9.3
 
   packages/shared:
-    devDependencies:
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/warning-engine:
-    dependencies:
-      '@novel-runtime/shared':
-        specifier: workspace:*
-        version: link:../shared
     devDependencies:
       typescript:
         specifier: ^5.7.0

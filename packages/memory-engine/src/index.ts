@@ -8,7 +8,8 @@ export interface MemoryEntry {
   importance: number
   tags: string[]
   createdAt?: Date
-  chapterNumber?: number // 该记忆所属章节的序号，global 层为 undefined
+  chapterNumber?: number // 该记忆所属章节的序号
+  originUid?: string     // 事件起始UID
 }
 
 function tokenize(text: string): number[] {
@@ -51,7 +52,8 @@ export class MemoryManager {
       importance: m.importance,
       tags: JSON.parse(m.tags),
       createdAt: m.createdAt,
-      chapterNumber: undefined
+      chapterNumber: undefined,
+      originUid: m.originUid
     }))
   }
 
@@ -75,7 +77,8 @@ export class MemoryManager {
         importance: m.importance,
         tags: JSON.parse(m.tags),
         createdAt: m.createdAt,
-        chapterNumber: chapter?.number
+        chapterNumber: chapter?.number,
+        originUid: m.originUid
       }))
   }
 
@@ -142,7 +145,8 @@ export class MemoryManager {
           importance: m.importance,
           tags: JSON.parse(m.tags || '[]'),
           createdAt: m.createdAt,
-          chapterNumber: m.chapter?.number
+          chapterNumber: m.chapter?.number,
+          originUid: m.originUid
         } as MemoryEntry,
         score
       }
@@ -173,8 +177,8 @@ export class MemoryManager {
 
   /**
    * 智能格式化记忆，用于注入 Prompt
-   * - 按重要性降序排列
-   * - 去重（相同内容只保留最新）
+   * - 按章节号升序排列（时间线清晰）
+   * - 去重（相同内容只保留 importance 最高的一条）
    * - 章节距离衰减（>5章 -1，>10章 -2，>20章 -3）
    * - global 记忆不衰减
    * - 主线优先（main-plot 标签 +2 importance）
@@ -191,10 +195,25 @@ export class MemoryManager {
     }
     let uniqueEntries = Array.from(contentMap.values())
 
-    // 2. 推断当前章节号（取 entries 中最大的 chapterNumber）
+    // 2. 同一 originUid 只取最新（最大 chapterNumber）
+    const uidMap = new Map<string, MemoryEntry>()
+    const withoutUid: MemoryEntry[] = []
+    for (const entry of uniqueEntries) {
+      if (!entry.originUid) {
+        withoutUid.push(entry)
+        continue
+      }
+      const existing = uidMap.get(entry.originUid)
+      if (!existing || (entry.chapterNumber || 0) > (existing.chapterNumber || 0)) {
+        uidMap.set(entry.originUid, entry)
+      }
+    }
+    uniqueEntries = [...Array.from(uidMap.values()), ...withoutUid]
+
+    // 3. 推断当前章节号（取 entries 中最大的 chapterNumber）
     const currentChapterNumber = Math.max(0, ...entries.map(e => e.chapterNumber || 0))
 
-    // 3. 章节距离衰减：global 记忆不衰减
+    // 4. 章节距离衰减：global 记忆不衰减
     for (const entry of uniqueEntries) {
       if (entry.chapterNumber !== undefined && currentChapterNumber > 0) {
         const dist = currentChapterNumber - entry.chapterNumber
@@ -208,28 +227,37 @@ export class MemoryManager {
       }
     }
 
-    // 4. 主线优先：带 main-plot 标签的 +2 importance
-    for (const entry of uniqueEntries) {
-      if (entry.tags.includes('main-plot')) {
-        entry.importance += 2
-      }
-    }
-
-    // 5. 按 importance 降序排列
-    uniqueEntries.sort((a, b) => b.importance - a.importance)
+    // 5. 主线优先：带 main-plot 标签的 +2 importance（已取消，importance 由 AI 在提取时直接评定）
+    // for (const entry of uniqueEntries) {
+    //   if (entry.tags.includes('main-plot')) {
+    //     entry.importance += 2
+    //   }
+    // }
 
     // 6. 截断：只保留重要性 >= 5 的前 30 条
     const filtered = uniqueEntries.filter(e => e.importance >= 5).slice(0, 30)
 
     if (filtered.length === 0) return '无记忆信息'
 
-    // 7. 格式化输出：同时显示绝对章节号和相对距离
+    // 7. 按章节号升序排列（global 无 chapterNumber 的放最后）
+    filtered.sort((a, b) => {
+      const aNum = a.chapterNumber ?? Infinity
+      const bNum = b.chapterNumber ?? Infinity
+      if (aNum !== bNum) return aNum - bNum
+      return b.importance - a.importance
+    })
+
+    // 8. 格式化输出：(第X章·Y章前·重要度Z) 或 (第X章·重要度Z)
     const lines = filtered.map(e => {
-      const marker = e.tags.includes('main-plot') ? '【主线】' : ''
-      const distMarker = e.chapterNumber !== undefined && currentChapterNumber > 0
-        ? `(第${e.chapterNumber}章·${currentChapterNumber - e.chapterNumber}章前) `
-        : ''
-      return `- [${e.layer}]${marker} ${distMarker}${e.content}`
+      const dist = e.chapterNumber !== undefined && currentChapterNumber > 0
+        ? currentChapterNumber - e.chapterNumber
+        : null
+      const distText = dist !== null && dist > 0 ? `·${dist}章前` : ''
+      const importanceText = `·重要度${e.importance}`
+      const chapterText = e.chapterNumber !== undefined
+        ? `(第${e.chapterNumber}章${distText}${importanceText})`
+        : `(全局${importanceText})`
+      return `- [${e.layer}]${chapterText} ${e.content}`
     })
 
     return lines.join('\n')

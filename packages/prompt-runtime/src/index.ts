@@ -53,13 +53,7 @@ export interface PipelineResult {
   totalTokens: number
 }
 
-import { getEncoding } from 'js-tiktoken'
-
-const enc = getEncoding('cl100k_base')
-
-function estimateTokens(text: string): number {
-  return enc.encode(text).length
-}
+import { estimateTokens } from '@novel-runtime/ai-provider'
 
 interface LayerDef {
   key: keyof PromptLayers

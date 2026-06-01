@@ -3,6 +3,7 @@ import { api } from '../utils/api'
 export interface CharacterCreate {
   slug: string
   name: string
+  protagonist?: boolean
   personality?: string[]
   speechStyle?: string[]
   identity?: string[]
@@ -14,6 +15,7 @@ export interface CharacterCreate {
 
 export interface CharacterUpdate {
   name?: string
+  protagonist?: boolean
   personality?: string[]
   speechStyle?: string[]
   identity?: string[]
