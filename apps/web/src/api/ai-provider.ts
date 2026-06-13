@@ -9,6 +9,7 @@ export interface AiProviderCreate {
   maxTokens?: number
   temperature?: number
   isDefault?: boolean
+  remarks?: string
 }
 
 export interface AiProviderUpdate {
@@ -20,6 +21,15 @@ export interface AiProviderUpdate {
   maxTokens?: number
   temperature?: number
   isDefault?: boolean
+  remarks?: string
+}
+
+export interface AiProviderTest {
+  name: string
+  apiKey?: string
+  baseUrl?: string
+  model: string
+  id?: string
 }
 
 export const aiProviderApi = {
@@ -28,5 +38,6 @@ export const aiProviderApi = {
   create: (data: AiProviderCreate) => api.post('/api/ai-providers', data),
   update: (id: string, data: AiProviderUpdate) => api.put(`/api/ai-providers/${id}`, data),
   remove: (id: string) => api.delete(`/api/ai-providers/${id}`),
-  setDefault: (id: string) => api.post(`/api/ai-providers/${id}/default`)
+  setDefault: (id: string) => api.post(`/api/ai-providers/${id}/default`),
+  test: (data: AiProviderTest) => api.post('/api/ai-providers/test', data)
 }

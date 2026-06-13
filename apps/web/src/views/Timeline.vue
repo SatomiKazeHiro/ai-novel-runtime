@@ -15,7 +15,7 @@
           </n-ul>
           <n-space>
             <n-button size="tiny" @click="startEdit(evt)">编辑</n-button>
-            <n-button size="tiny" type="error" @click="handleDelete(evt.id)">删除</n-button>
+            <n-button size="tiny" type="error" @click="handleDelete(evt)">删除</n-button>
           </n-space>
         </n-timeline-item>
       </n-timeline>
@@ -46,11 +46,13 @@ import { ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NH1, NSpace, NButton, NModal, NForm, NFormItem, NInputNumber, NDynamicTags,
-  NTimeline, NTimelineItem, NUl, NLi, NEmpty, NSpin
+  NTimeline, NTimelineItem, NUl, NLi, NEmpty, NSpin,
+  useDialog
 } from 'naive-ui'
 import { timelineApi } from '../api/timeline'
 
 const route = useRoute()
+const dialog = useDialog()
 const events = ref<any[]>([])
 const loading = ref(false)
 const showModal = ref(false)
@@ -90,9 +92,18 @@ async function handleSave() {
   await loadTimeline()
 }
 
-async function handleDelete(id: string) {
-  await timelineApi.remove(id)
-  await loadTimeline()
+function handleDelete(evt: any) {
+  dialog.warning({
+    title: '确认删除',
+    content: `确定要删除第 ${evt.day} 天的时间线事件吗？删除后不可恢复。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    positiveButtonProps: { type: 'error' },
+    onPositiveClick: async () => {
+      await timelineApi.remove(evt.id)
+      await loadTimeline()
+    }
+  })
 }
 
 watch(() => route.params.storyId, () => {

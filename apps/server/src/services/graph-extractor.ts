@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
-import { cleanJsonBlock } from '@novel-runtime/shared'
+import { cleanJsonBlock, safeJsonParse } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
 
@@ -116,7 +116,7 @@ export async function saveExtractedGraph(
       // 已有节点，更新 data（合并新信息）
       const existingId = nodeMap.get(compositeKey)!
       const existing = existingNodes.find(n => n.id === existingId)
-      const existingData = existing ? JSON.parse(existing.data || '{}') : {}
+      const existingData = safeJsonParse(existing?.data, {})
       const mergedData = { ...existingData, ...(node.data || {}) }
       await prisma.graphNode.update({
         where: { id: existingId },

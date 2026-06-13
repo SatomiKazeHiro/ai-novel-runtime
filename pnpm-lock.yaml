@@ -81,6 +81,9 @@ importers:
       dotenv:
         specifier: ^16.4.0
         version: 16.6.1
+      es-toolkit:
+        specifier: ^1.47.0
+        version: 1.47.0
       fastify:
         specifier: ^5.0.0
         version: 5.8.5
@@ -228,6 +231,13 @@ importers:
         version: 5.9.3
 
   packages/shared:
+    dependencies:
+      es-toolkit:
+        specifier: ^1.47.0
+        version: 1.47.0
+      js-tiktoken:
+        specifier: ^1.0.21
+        version: 1.0.21
     devDependencies:
       typescript:
         specifier: ^5.7.0

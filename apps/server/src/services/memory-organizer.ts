@@ -1,11 +1,8 @@
 import type { FastifyInstance } from 'fastify'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
-import { cleanJsonBlock } from '@novel-runtime/shared'
-import { getEncoding } from 'js-tiktoken'
+import { cleanJsonBlock, tokenSet, jaccardSimilarity } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
-
-const enc = getEncoding('cl100k_base')
 
 interface OrganizeAction {
   action: 'merge' | 'update' | 'delete' | 'keep'
@@ -18,17 +15,6 @@ interface OrganizeAction {
 
 interface OrganizeResult {
   actions: OrganizeAction[]
-}
-
-function tokenSet(text: string): Set<number> {
-  return new Set(enc.encode(text))
-}
-
-function jaccardSimilarity(a: Set<number>, b: Set<number>): number {
-  if (a.size === 0 || b.size === 0) return 0
-  const intersection = new Set([...a].filter(x => b.has(x)))
-  const union = new Set([...a, ...b])
-  return intersection.size / union.size
 }
 
 function calculateAverageJaccard(contents: string[]): number {

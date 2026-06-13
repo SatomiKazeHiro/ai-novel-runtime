@@ -15,6 +15,7 @@ export interface ChapterUpdate {
   sceneLocation?: string
   sceneMood?: string
   sceneGoal?: string
+  aiProviderConfigId?: string | null
 }
 
 export const chaptersApi = {

@@ -10,12 +10,13 @@ datasource db {
 
 // 小说工程
 model Story {
-  id          String   @id @default(uuid())
-  title       String
-  description String?
-  status      String   @default("active") // active, completed, archived
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  title              String
+  description        String?
+  status             String   @default("active") // active, completed, archived
+  aiProviderConfigId String?  // 小说默认运行模型
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   // 关联
   chapters    Chapter[]
@@ -26,14 +27,15 @@ model Story {
   graphEdges  GraphEdge[]
   timelineEvents TimelineEvent[]
   drafts      Draft[]
-  promptConfigs PromptConfig[]
   scores      Score[]
   plotArcs    PlotArc[]
-  aiProviderConfigs AiProviderConfig[]
+  aiProviderConfigs AiProviderConfig[] @relation("AiProviderConfigStory")
   promptLogs       PromptLog[]
   runtimeProfile   RuntimeProfile? @relation(fields: [runtimeProfileId], references: [id])
   runtimeProfileId String?
+  defaultAiProvider AiProviderConfig? @relation("StoryDefaultAiProvider", fields: [aiProviderConfigId], references: [id])
   workerTasks  WorkerTask[]
+  workerBindings StoryWorkerBinding[]
 }
 
 // 章节
@@ -56,7 +58,8 @@ model Chapter {
   sceneGoal         String?
 
   // 写作人格绑定（可覆盖小说默认人格）
-  runtimeProfileId  String?
+  runtimeProfileId   String?
+  aiProviderConfigId String?  // 章节覆盖的运行模型
 
   // 生成时记录的完整 Prompt（用于回溯）
   compiledPrompt    String?  // JSON: { systemMessage, userMessage, meta }
@@ -72,6 +75,7 @@ model Chapter {
   parentChapter     Chapter? @relation("ChapterBranches", fields: [parentChapterId], references: [id], onDelete: SetNull)
   childChapters     Chapter[] @relation("ChapterBranches")
   runtimeProfile    RuntimeProfile? @relation(fields: [runtimeProfileId], references: [id])
+  aiProviderConfig  AiProviderConfig? @relation("ChapterAiProvider", fields: [aiProviderConfigId], references: [id])
   drafts            Draft[]
   memories          Memory[]
   scores            Score[]
@@ -223,21 +227,6 @@ model Draft {
   chapter         Chapter  @relation(fields: [chapterId], references: [id], onDelete: Cascade)
 }
 
-// Prompt 配置（旧版，保留兼容）
-model PromptConfig {
-  id          String   @id @default(uuid())
-  storyId     String
-  type        String   // system, jailbreak, story, character, lore, scene, memory, style, instruction
-  name        String
-  content     String
-  order       Int      @default(0)
-  enabled     Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  story       Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-}
-
 // Runtime Profile（Shared Runtime Base：Identity + Settings + Behavior + Jailbreak）
 model RuntimeProfile {
   id          String   @id @default(uuid())
@@ -260,7 +249,8 @@ model RuntimeProfile {
 // Worker Task（不同 Worker 的 Task Layer）
 model WorkerTask {
   id          String   @id @default(uuid())
-  storyId     String?
+  storyId     String?  // 旧字段，兼容保留，后续废弃
+  type        String   @default("custom") // system | custom
   name        String   @default("")  // Task 名称，方便管理
   workerType  String   // generation | scoring | memory | graph | timeline | rewrite
   taskPrompt  String   // Task Layer 内容
@@ -269,6 +259,22 @@ model WorkerTask {
   updatedAt   DateTime @updatedAt
 
   story       Story?   @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  bindings    StoryWorkerBinding[]
+}
+
+// 小说 Worker Task 绑定（每类 Worker 显式选择用哪个 Task）
+model StoryWorkerBinding {
+  id           String   @id @default(uuid())
+  storyId      String
+  workerType   String   // generation | scoring | memory | graph | timeline | rewrite
+  workerTaskId String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  story        Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  workerTask   WorkerTask @relation(fields: [workerTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([storyId, workerType])
 }
 
 // 剧情弧线
@@ -318,6 +324,7 @@ model Score {
 model AiProviderConfig {
   id            String   @id @default(uuid())
   storyId       String?
+  type          String   @default("custom") // system | custom
   name          String   // openai, claude, deepseek, gemini, etc.
   apiKey        String?
   baseUrl       String?
@@ -326,10 +333,13 @@ model AiProviderConfig {
   maxTokens     Int      @default(4096)
   temperature   Float    @default(0.7)
   isDefault     Boolean  @default(false)
+  remarks       String?  // 备注/说明
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  story         Story?   @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  story         Story?   @relation("AiProviderConfigStory", fields: [storyId], references: [id], onDelete: Cascade)
+  defaultForStories Story[] @relation("StoryDefaultAiProvider")
+  chapters      Chapter[] @relation("ChapterAiProvider")
   promptLogs    PromptLog[]
 }
 

@@ -4,14 +4,16 @@ import { z } from 'zod'
 const createStorySchema = z.object({
   title: z.string().min(1, '标题不能为空'),
   description: z.string().optional(),
-  runtimeProfileId: z.string().nullable().optional()
+  runtimeProfileId: z.string().nullable().optional(),
+  aiProviderConfigId: z.string().nullable().optional()
 })
 
 const updateStorySchema = z.object({
   title: z.string().min(1, '标题不能为空').optional(),
   description: z.string().optional(),
   status: z.enum(['active', 'archived', 'deleted']).optional(),
-  runtimeProfileId: z.string().nullable().optional()
+  runtimeProfileId: z.string().nullable().optional(),
+  aiProviderConfigId: z.string().nullable().optional()
 })
 
 export async function storyRoutes(app: FastifyInstance) {
@@ -21,7 +23,8 @@ export async function storyRoutes(app: FastifyInstance) {
       orderBy: { updatedAt: 'desc' },
       include: {
         _count: { select: { chapters: true, characters: true } },
-        runtimeProfile: { select: { id: true, name: true } }
+        runtimeProfile: { select: { id: true, name: true } },
+        defaultAiProvider: { select: { id: true, name: true, model: true } }
       }
     })
     return { success: true, data: stories }
@@ -38,13 +41,30 @@ export async function storyRoutes(app: FastifyInstance) {
       data: {
         title: body.title,
         description: body.description || '',
-        runtimeProfileId: body.runtimeProfileId || null
+        runtimeProfileId: body.runtimeProfileId || null,
+        aiProviderConfigId: body.aiProviderConfigId || null
       },
       include: {
         _count: { select: { chapters: true, characters: true } },
-        runtimeProfile: { select: { id: true, name: true } }
+        runtimeProfile: { select: { id: true, name: true } },
+        defaultAiProvider: { select: { id: true, name: true, model: true } }
       }
     })
+
+    // 自动为小说绑定系统默认的 WorkerTask
+    const systemTasks = await app.prisma.workerTask.findMany({
+      where: { type: 'system', enabled: true }
+    })
+    for (const task of systemTasks) {
+      await app.prisma.storyWorkerBinding.create({
+        data: {
+          storyId: story.id,
+          workerType: task.workerType,
+          workerTaskId: task.id
+        }
+      })
+    }
+
     return { success: true, data: story }
   })
 
@@ -78,7 +98,8 @@ export async function storyRoutes(app: FastifyInstance) {
         title: body.title,
         description: body.description,
         status: body.status,
-        runtimeProfileId: body.runtimeProfileId !== undefined ? body.runtimeProfileId : undefined
+        runtimeProfileId: body.runtimeProfileId !== undefined ? body.runtimeProfileId : undefined,
+        aiProviderConfigId: body.aiProviderConfigId !== undefined ? body.aiProviderConfigId : undefined
       },
       include: {
         _count: { select: { chapters: true, characters: true } },

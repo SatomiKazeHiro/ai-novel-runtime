@@ -1,19 +1,76 @@
 import { createProvider } from '@novel-runtime/ai-provider'
 import type { FastifyInstance } from 'fastify'
 
+export async function getProviderById(prisma: any, id: string) {
+  const config = await prisma.aiProviderConfig.findUnique({ where: { id } })
+  if (!config) return null
+  return {
+    provider: createProvider({
+      name: config.name,
+      apiKey: config.apiKey || undefined,
+      baseUrl: config.baseUrl || undefined,
+      model: config.model,
+      maxTokens: config.maxTokens,
+      temperature: config.temperature
+    }),
+    config
+  }
+}
+
 export async function getDefaultProvider(prisma: any) {
   const aiConfig = await prisma.aiProviderConfig.findFirst({
     where: { isDefault: true }
   })
   if (!aiConfig) return null
-  return createProvider({
-    name: aiConfig.name,
-    apiKey: aiConfig.apiKey || undefined,
-    baseUrl: aiConfig.baseUrl || undefined,
-    model: aiConfig.model,
-    maxTokens: aiConfig.maxTokens,
-    temperature: aiConfig.temperature
+  return getProviderById(prisma, aiConfig.id)
+}
+
+export async function resolveProvider(
+  prisma: any,
+  storyId: string,
+  chapterId?: string
+): Promise<{ provider: any; config: any } | null> {
+  // 1. 章节覆盖
+  if (chapterId) {
+    const chapter = await prisma.chapter.findUnique({
+      where: { id: chapterId },
+      select: { aiProviderConfigId: true }
+    })
+    if (chapter?.aiProviderConfigId) {
+      const result = await getProviderById(prisma, chapter.aiProviderConfigId)
+      if (result) return result
+    }
+  }
+
+  // 2. 小说默认
+  const story = await prisma.story.findUnique({
+    where: { id: storyId },
+    select: { aiProviderConfigId: true }
   })
+  if (story?.aiProviderConfigId) {
+    const result = await getProviderById(prisma, story.aiProviderConfigId)
+    if (result) return result
+  }
+
+  // 3. 全局默认（custom）
+  const globalConfig = await prisma.aiProviderConfig.findFirst({
+    where: { isDefault: true, type: 'custom' }
+  })
+  if (globalConfig) {
+    const result = await getProviderById(prisma, globalConfig.id)
+    if (result) return result
+  }
+
+  // 4. 系统默认（.env）
+  const systemConfig = await prisma.aiProviderConfig.findFirst({
+    where: { type: 'system' }
+  })
+  if (systemConfig) {
+    const result = await getProviderById(prisma, systemConfig.id)
+    if (result) return result
+  }
+
+  return null
 }
 
 export async function initAiProviderConfig(app: FastifyInstance) {
@@ -28,7 +85,7 @@ export async function initAiProviderConfig(app: FastifyInstance) {
   }
 
   const existing = await app.prisma.aiProviderConfig.findFirst({
-    where: { name: 'deepseek', isDefault: true }
+    where: { name: 'deepseek', type: 'system' }
   })
 
   if (existing) {
@@ -47,6 +104,7 @@ export async function initAiProviderConfig(app: FastifyInstance) {
 
   await app.prisma.aiProviderConfig.create({
     data: {
+      type: 'system',
       name: 'deepseek',
       apiKey,
       baseUrl,

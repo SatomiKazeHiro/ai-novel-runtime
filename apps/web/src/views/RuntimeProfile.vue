@@ -72,6 +72,7 @@ import {
   type DataTableColumns
 } from 'naive-ui'
 import { runtimeApi } from '../api/runtime'
+import { safeJsonParse } from '@novel-runtime/shared'
 
 interface ProfileSettings {
   language?: string
@@ -114,16 +115,12 @@ const columns: DataTableColumns<any> = [
   { title: '名称', key: 'name', width: 150 },
   { title: 'Identity', key: 'identity', ellipsis: { tooltip: true }, width: 250 },
   { title: 'Language', key: 'settings', width: 90, render(row) {
-    try {
-      const s = JSON.parse(row.settings || '{}')
-      return s.language || 'CN'
-    } catch { return 'CN' }
+    const s = safeJsonParse<Record<string, any>>(row.settings, {})
+    return s.language || 'CN'
   }},
   { title: 'Uncensored', key: 'settings', width: 100, render(row) {
-    try {
-      const s = JSON.parse(row.settings || '{}')
-      return s.uncensored ? 'Yes' : 'No'
-    } catch { return 'No' }
+    const s = safeJsonParse<Record<string, any>>(row.settings, {})
+    return s.uncensored ? 'Yes' : 'No'
   }},
   { title: '默认', key: 'isDefault', width: 80, render(row) { return row.isDefault ? '是' : '否' } },
   {
@@ -158,16 +155,12 @@ function openCreate() {
 }
 
 function parseSettings(settingsStr: string): ProfileSettings {
-  try {
-    const parsed = JSON.parse(settingsStr || '{}')
-    return {
-      language: parsed.language ?? 'CN',
-      uncensored: parsed.uncensored ?? true,
-      repeat: parsed.repeat ?? false,
-      speciality: parsed.speciality ?? ''
-    }
-  } catch {
-    return { ...defaultSettings }
+  const parsed = safeJsonParse<Record<string, any>>(settingsStr, {})
+  return {
+    language: parsed.language ?? 'CN',
+    uncensored: parsed.uncensored ?? true,
+    repeat: parsed.repeat ?? false,
+    speciality: parsed.speciality ?? ''
   }
 }
 

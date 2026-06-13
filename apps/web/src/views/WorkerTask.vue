@@ -9,7 +9,7 @@
     </n-space>
 
     <n-alert type="info" style="margin-bottom: 16px">
-      此处配置的是全局默认 Worker Task。每个小说可在设计空间内覆盖专属 Task。
+      此处配置的是全局 Worker Task。系统内置的 Task 不可编辑删除，但你可以"以此为基础新建"自己的版本。
     </n-alert>
 
     <n-data-table :columns="columns" :data="filteredTasks" :loading="loading" />
@@ -44,7 +44,7 @@
 <script setup lang="ts">
 import { ref, onMounted, h, computed } from 'vue'
 import {
-  NH1, NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSelect, NSwitch, NScrollbar, NAlert,
+  NH1, NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSelect, NSwitch, NScrollbar, NAlert, NTag,
   type DataTableColumns
 } from 'naive-ui'
 import { workerTaskApi } from '../api/worker-task'
@@ -72,20 +72,35 @@ const workerTypeOptions = [
 ]
 
 const filteredTasks = computed(() => {
-  if (!filterWorkerType.value) return tasks.value
-  return tasks.value.filter(t => t.workerType === filterWorkerType.value)
+  let list = tasks.value
+  if (filterWorkerType.value) list = list.filter(t => t.workerType === filterWorkerType.value)
+  return list
 })
 
 const columns: DataTableColumns<any> = [
   { title: '名称', key: 'name', width: 180, render(row) { return row.name || '-' } },
+  {
+    title: '类型', key: 'type', width: 100, render(row) {
+      return row.type === 'system'
+        ? h(NTag, { type: 'warning', size: 'small' }, { default: () => '系统内置' })
+        : h(NTag, { type: 'default', size: 'small' }, { default: () => '自定义' })
+    }
+  },
   { title: 'Worker 类型', key: 'workerType', width: 150 },
   { title: 'Task Prompt', key: 'taskPrompt', ellipsis: { tooltip: true } },
   { title: '启用', key: 'enabled', width: 80, render(row) { return row.enabled ? '是' : '否' } },
   {
     title: '操作',
     key: 'actions',
-    width: 150,
+    width: 180,
     render(row) {
+      if (row.type === 'system') {
+        return h(NSpace, null, {
+          default: () => [
+            h(NButton, { size: 'small', onClick: () => cloneFromSystem(row) }, { default: () => '以此为基础新建' })
+          ]
+        })
+      }
       return h(NSpace, null, {
         default: () => [
           h(NButton, { size: 'small', onClick: () => startEdit(row) }, { default: () => '编辑' }),
@@ -99,7 +114,7 @@ const columns: DataTableColumns<any> = [
 async function loadTasks() {
   loading.value = true
   try {
-    const res = await workerTaskApi.list({ storyId: 'null' })
+    const res = await workerTaskApi.list()
     tasks.value = res.data.data
   } finally {
     loading.value = false
@@ -109,6 +124,17 @@ async function loadTasks() {
 function openCreate() {
   editingId.value = null
   form.value = { name: '', workerType: 'generation', taskPrompt: '', enabled: true }
+  showModal.value = true
+}
+
+function cloneFromSystem(row: any) {
+  editingId.value = null
+  form.value = {
+    name: row.name ? row.name.replace('[系统] ', '').replace('（系统）', '') + '（自定义）' : '',
+    workerType: row.workerType,
+    taskPrompt: row.taskPrompt,
+    enabled: row.enabled
+  }
   showModal.value = true
 }
 

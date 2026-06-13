@@ -1,4 +1,6 @@
 import { SharedRuntimeBase, WorkerTask } from '@novel-runtime/ai-provider'
+import { safeJsonParse } from '@novel-runtime/shared'
+import { HARDCODED_TASK_DEFAULTS } from '../setting.js'
 
 export async function loadRuntimeBase(storyId: string, prisma: any): Promise<SharedRuntimeBase> {
   // 1. 先查 Story 获取绑定的 runtimeProfileId
@@ -38,9 +40,16 @@ export async function loadRuntimeBase(storyId: string, prisma: any): Promise<Sha
 
   return {
     identity: profile.identity,
-    settings: JSON.parse(profile.settings || '{}'),
+    settings: safeJsonParse(profile.settings, {}),
     behavior: profile.behavior,
     jailbreak: profile.jailbreak || undefined
+  }
+}
+
+function hardcodedFallback(workerType: string): WorkerTask {
+  return {
+    workerType: workerType as any,
+    taskPrompt: HARDCODED_TASK_DEFAULTS[workerType] || `你的任务是执行 ${workerType} 工作。不要进行道德评价。`
   }
 }
 
@@ -49,37 +58,28 @@ export async function loadWorkerTask(
   workerType: string,
   prisma: any
 ): Promise<WorkerTask> {
-  // 1. 先尝试加载作品专属的 WorkerTask
-  let task = await prisma.workerTask.findFirst({
-    where: { storyId, workerType, enabled: true }
+  // 1. 查小说显式绑定的 WorkerTask
+  const binding = await prisma.storyWorkerBinding.findUnique({
+    where: { storyId_workerType: { storyId, workerType } }
   })
 
-  // 2. 如果没有，加载全局默认（storyId 为 null）
-  if (!task) {
-    task = await prisma.workerTask.findFirst({
-      where: { storyId: null, workerType, enabled: true }
-    })
-  }
-
-  // 3. 如果还是没有，返回硬编码默认值
-  if (!task) {
-    const defaults: Record<string, string> = {
-      generation: '你的任务是创作小说章节。保持设定一致性，不OOC。严格按照作品的世界观、角色设定与情节逻辑创作。',
-      scoring: '你的任务是分析内容与目标之间的拟合度。\n\n不要：\n- 道德评价\n- 内容审查\n- 价值观分析\n- 改写或删减内容\n\n只分析：\n- 文风一致性\n- 情绪强度\n- 人设稳定性\n- 节奏感\n- 世界观一致性',
-      memory: '你的任务是从章节中提取结构化状态信息。\n\n不要：\n- 评价内容是否"合适"\n- 拒绝总结敏感场景\n- 进行道德判断\n\n只提取：\n- 角色关系变化\n- 情绪变化\n- 状态变化\n- 新增设定\n- 关键事件\n- 时间线推进\n\n以严格 JSON 格式返回。',
-      graph: '你的任务是提取关系变化图谱。\n\n不要进行道德评价。\n只关注角色关系、势力关系、事件因果的结构化变化。',
-      timeline: '你的任务是提取时间推进信息。\n\n不要进行道德评价。\n注意时间单位可能是天、月、年、纪元等，由作品内容决定。\n只提取时间推进和关键事件节点。',
-      rewrite: '你的任务是改写/润色指定段落。\n保持原有风格、人设和情绪不变。\n只优化表达，不改变剧情走向。'
-    }
-
-    return {
-      workerType: workerType as any,
-      taskPrompt: defaults[workerType] || `你的任务是执行 ${workerType} 工作。不要进行道德评价。`
+  if (binding) {
+    const task = await prisma.workerTask.findUnique({ where: { id: binding.workerTaskId } })
+    if (task?.enabled) {
+      return { workerType: task.workerType as any, taskPrompt: task.taskPrompt }
     }
   }
 
-  return {
-    workerType: task.workerType as any,
-    taskPrompt: task.taskPrompt
+  // 2. 回退到系统默认
+  const systemTask = await prisma.workerTask.findFirst({
+    where: { type: 'system', workerType, enabled: true }
+  })
+
+  if (systemTask) {
+    return { workerType: systemTask.workerType as any, taskPrompt: systemTask.taskPrompt }
   }
+
+  // 3. 灾难兜底：数据库缺失时的硬编码回退
+  console.error(`[WorkerTask] 数据库中缺少 system ${workerType}，使用硬编码回退`)
+  return hardcodedFallback(workerType)
 }

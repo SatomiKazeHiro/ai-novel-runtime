@@ -19,6 +19,7 @@ import { workerTaskRoutes } from './routes/worker-task.js'
 import { aiProviderRoutes } from './routes/ai-provider.js'
 import { initAiProviderConfig } from './services/ai-provider-init.js'
 import { initRuntimeProfile } from './services/runtime-profile-init.js'
+import { initWorkerTasks } from './services/worker-task-init.js'
 import { createGenerateProcessor } from './services/generate-processor.js'
 import { registerGenerateProcessor } from './queue/index.js'
 
@@ -46,6 +47,9 @@ export async function buildApp() {
 
   // Init default Runtime Profile from JSON
   await initRuntimeProfile(app)
+
+  // Init default Worker Tasks (global defaults)
+  await initWorkerTasks(app)
 
   // Register queue processors
   registerGenerateProcessor(createGenerateProcessor(app))

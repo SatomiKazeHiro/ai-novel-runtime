@@ -20,7 +20,7 @@
 - **Prompt Pipeline** — Pipeline 式 Prompt 组装，Token 预算控制，动态裁剪，Stateless Generation
 - **多模型兼容** — OpenAI / DeepSeek / Claude / Gemini 等统一接口
 - **知识图谱** — 人物关系图、势力图、事件图、物品图的可视化与管理（全局工作表）
-- **分层记忆** — Global / Chapter / Scene / Temporary 四层记忆系统，语义检索 + 近似去重 + AI 记忆整理
+- **分层记忆** — Global / Chapter / Scene / Temporary 四层记忆系统，语义检索 + 近似去重 + AI 记忆优化（每章归档后自动融合新旧记忆）
 - **剧情弧线追踪** — 追踪主线/支线剧情进展，标注未解悬念
 - **任务队列** — 生成/评分异步化（BullMQ + Redis，开发环境自动回退内存队列）
 
@@ -102,8 +102,9 @@ novel-runtime/
 │   │       │   ├── graph-extractor.ts
 │   │       │   ├── plot-extractor.ts
 │   │       │   ├── graph-snapshot.ts
-│   │       │   ├── memory-compressor.ts
-│   │       │   └── memory-organizer.ts
+│   │       │   ├── memory-compressor.ts     # @deprecated，已被 memory-optimizer 取代
+│   │       │   ├── memory-organizer.ts      # @deprecated，已被 memory-optimizer 取代
+│   │       │   └── memory-optimizer.ts      # 每章归档后优化 global 层记忆
 │   │       └── queue/
 │   │           └── index.ts
 │   └── web/                 # Vue 3 前端
@@ -140,7 +141,7 @@ novel-runtime/
 │   ├── memory-engine/         # 分层记忆管理 + 语义检索
 │   ├── knowledge-graph/       # graphology 图引擎封装
 │   ├── scoring-engine/        # 评分引擎接口
-│   └── warning-engine/        # 预警检测引擎
+│   └── warning-engine/        # 已移除（占位包）
 ├── docs/
 │   ├── profiles/              # 预设写作人格（11 种类型）
 │   └── sql-reference.md
@@ -165,7 +166,7 @@ novel-runtime/
 | `Character` | 角色卡（静态属性：性格、外貌、说话风格） |
 | `CharacterBranchState` | 角色历史快照（按 `fromChapterNumber` 记录动态状态变化） |
 | `LoreItem` | 世界观条目（境界/地图/功法/势力/物品/规则） |
-| `Memory` | 记忆（global/chapter/scene/temporary，按 `fromChapterNumber` 标记生命周期） |
+| `Memory` | 记忆（global=每章优化后的状态快照/chapter=原始提取/scene/temporary） |
 | `GraphNode` / `GraphEdge` | 知识图谱节点与边（全局工作表） |
 | `TimelineEvent` | 时间线事件（按 `fromChapterNumber` 标记生命周期） |
 | `PlotArc` | 剧情弧线（全局） |
@@ -322,14 +323,14 @@ Temporary Memory → 临时上下文
 - **Checkpoint 机制**：生成第 N 章时，只读取最后一个已归档章节之前的记忆
 - **语义检索**：基于 token 频率向量的余弦相似度，综合得分 = `sim * 0.7 + importance * 0.3`
 - **近似去重**：Jaccard > 0.82 的记忆自动去重
-- **AI 记忆整理**：归档后自动触发，对新旧记忆做语义 merge/update/delete
+- **AI 记忆优化**：归档后自动触发，基于上一章 global + 本章 raw 生成新的 global 快照，保留历史版本
 
 ### 章节状态机
 
 ```
 Draft → Generated → Selected → Archived
   ↓         ↓          ↓              ↑
-Rejected  (无)      (无)      合并提取（记忆+图谱+弧线）+ AI记忆整理 + graphSnapshot
+Rejected  (无)      (无)      合并提取（记忆+图谱+弧线）+ 图谱整理 + 记忆优化 + graphSnapshot
 ```
 
 ---

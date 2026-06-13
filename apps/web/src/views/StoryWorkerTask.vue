@@ -2,191 +2,149 @@
   <div>
     <n-space justify="space-between" align="center" style="margin-bottom: 16px">
       <n-h1>Worker Task 配置</n-h1>
-      <n-space>
-        <n-select v-model:value="filterScope" :options="scopeOptions" style="width: 140px" />
-        <n-select v-model:value="filterWorkerType" :options="[{ label: '全部类型', value: '' }, ...workerTypeOptions]" style="width: 160px" placeholder="筛选类型" clearable />
-        <n-button type="primary" @click="openCreate">新建 Task</n-button>
-      </n-space>
+      <n-button type="primary" :loading="saving" @click="saveAll">保存配置</n-button>
     </n-space>
 
     <n-alert type="info" style="margin-bottom: 16px">
-      当前小说专属的 Worker Task 会覆盖全局默认。未覆盖的类型将自动回退到全局配置。
+      为当前小说的每个 Worker 类型选择使用的 Task。系统内置的 Task 会自动列出，你也可以在"全局 Worker Task 配置"页面创建自定义版本。
     </n-alert>
 
-    <n-data-table :columns="columns" :data="filteredTasks" :loading="loading" />
+    <n-spin :show="loading">
+      <n-tabs type="line" animated>
+        <n-tab-pane
+          v-for="config in workerConfigs"
+          :key="config.workerType"
+          :name="config.workerType"
+          :tab="config.label"
+        >
+          <n-space vertical>
+            <n-form-item :label="`选择 ${config.label} 的 Task`">
+              <n-select
+                v-model:value="selectedTaskIds[config.workerType]"
+                :options="getTaskOptions(config.workerType)"
+                placeholder="选择 Task"
+                clearable
+                style="width: 400px"
+              />
+            </n-form-item>
 
-    <n-modal v-model:show="showModal" :title="editingId ? '编辑 Task' : '新建 Task'" preset="card" style="width: 750px; max-height: 90vh">
-      <n-scrollbar style="max-height: 75vh">
-        <n-form :model="form" label-placement="left" label-width="110">
-          <n-form-item label="名称">
-            <n-input v-model:value="form.name" placeholder="Task 名称，如：本章生成策略" />
-          </n-form-item>
-          <n-form-item label="Worker 类型" required>
-            <n-select v-model:value="form.workerType" :options="workerTypeOptions" placeholder="选择 Worker 类型" />
-          </n-form-item>
-          <n-form-item label="Task Prompt" required>
-            <n-input v-model:value="form.taskPrompt" type="textarea" :rows="10" placeholder="该 Worker 的 Task Layer 内容..." />
-          </n-form-item>
-          <n-form-item label="启用">
-            <n-switch v-model:value="form.enabled" />
-          </n-form-item>
-        </n-form>
-      </n-scrollbar>
-      <template #footer>
-        <n-space justify="end">
-          <n-button @click="showModal = false">取消</n-button>
-          <n-button type="primary" @click="handleSave">保存</n-button>
-        </n-space>
-      </template>
-    </n-modal>
+            <n-descriptions v-if="getSelectedTask(config.workerType)" bordered :column="1" size="small">
+              <n-descriptions-item label="名称">
+                {{ getSelectedTask(config.workerType)?.name || '-' }}
+              </n-descriptions-item>
+              <n-descriptions-item label="类型">
+                <n-tag :type="getSelectedTask(config.workerType)?.type === 'system' ? 'warning' : 'default'" size="small">
+                  {{ getSelectedTask(config.workerType)?.type === 'system' ? '系统内置' : '自定义' }}
+                </n-tag>
+              </n-descriptions-item>
+              <n-descriptions-item label="Task Prompt">
+                <div style="white-space: pre-wrap; font-size: 13px; max-height: 400px; overflow-y: auto;">
+                  {{ getSelectedTask(config.workerType)?.taskPrompt || '-' }}
+                </div>
+              </n-descriptions-item>
+            </n-descriptions>
+
+            <n-empty v-else description="未选择 Task，将回退到系统默认" />
+          </n-space>
+        </n-tab-pane>
+      </n-tabs>
+    </n-spin>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, h, computed } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NH1, NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSelect, NSwitch, NScrollbar, NAlert, NTag,
-  type DataTableColumns
+  NH1, NSpace, NButton, NSelect, NFormItem, NDescriptions, NDescriptionsItem, NTag, NEmpty, NSpin, NAlert,
+  NTabs, NTabPane,
+  useMessage
 } from 'naive-ui'
 import { workerTaskApi } from '../api/worker-task'
 
 const route = useRoute()
+const message = useMessage()
 const storyId = computed(() => route.params.storyId as string)
 
-const tasks = ref<any[]>([])
 const loading = ref(false)
-const showModal = ref(false)
-const editingId = ref<string | null>(null)
-const filterWorkerType = ref('')
-const filterScope = ref('all')
+const saving = ref(false)
+const bindings = ref<any[]>([])
+const allTasks = ref<any[]>([])
 
-const form = ref({
-  name: '',
-  workerType: 'generation',
-  taskPrompt: '',
-  enabled: true
+const selectedTaskIds = ref<Record<string, string | null>>({
+  generation: null,
+  scoring: null,
+  memory: null,
+  graph: null,
+  timeline: null,
+  rewrite: null
 })
 
-const workerTypeOptions = [
-  { label: 'Generation（生成）', value: 'generation' },
-  { label: 'Scoring（评分）', value: 'scoring' },
-  { label: 'Memory（记忆提取）', value: 'memory' },
-  { label: 'Graph（图谱提取）', value: 'graph' },
-  { label: 'Timeline（时间线）', value: 'timeline' },
-  { label: 'Rewrite（改写）', value: 'rewrite' }
+const workerConfigs = [
+  { workerType: 'generation', label: 'Generation（章节生成）' },
+  { workerType: 'scoring', label: 'Scoring（内容评分）' },
+  { workerType: 'memory', label: 'Memory（记忆提取）' },
+  { workerType: 'graph', label: 'Graph（图谱提取）' },
+  { workerType: 'timeline', label: 'Timeline（时间线提取）' },
+  { workerType: 'rewrite', label: 'Rewrite（改写润色）' }
 ]
 
-const scopeOptions = [
-  { label: '全部', value: 'all' },
-  { label: '当前小说', value: 'story' },
-  { label: '全局继承', value: 'global' }
-]
+function getTaskOptions(workerType: string) {
+  const tasks = allTasks.value.filter(t => t.workerType === workerType && (t.type === 'system' || t.storyId === null))
+  return tasks.map((t: any) => ({
+    label: `${t.name} (${t.type === 'system' ? '系统' : '自定义'})`,
+    value: t.id
+  }))
+}
 
-const filteredTasks = computed(() => {
-  let list = tasks.value
-  if (filterScope.value === 'story') list = list.filter(t => t.storyId === storyId.value)
-  if (filterScope.value === 'global') list = list.filter(t => !t.storyId)
-  if (filterWorkerType.value) list = list.filter(t => t.workerType === filterWorkerType.value)
-  return list
-})
+function getSelectedTask(workerType: string) {
+  const taskId = selectedTaskIds.value[workerType]
+  if (!taskId) return null
+  return allTasks.value.find(t => t.id === taskId) || null
+}
 
-const columns: DataTableColumns<any> = [
-  { title: '名称', key: 'name', width: 180, render(row) { return row.name || '-' } },
-  { title: '来源', key: 'scope', width: 100, render(row) {
-    return row.storyId
-      ? h(NTag, { type: 'success', size: 'small' }, { default: () => '当前小说' })
-      : h(NTag, { type: 'default', size: 'small' }, { default: () => '全局继承' })
-  }},
-  { title: 'Worker 类型', key: 'workerType', width: 150 },
-  { title: 'Task Prompt', key: 'taskPrompt', ellipsis: { tooltip: true } },
-  { title: '启用', key: 'enabled', width: 80, render(row) { return row.enabled ? '是' : '否' } },
-  {
-    title: '操作',
-    key: 'actions',
-    width: 150,
-    render(row) {
-      if (!row.storyId) {
-        return h(NButton, { size: 'small', onClick: () => copyFromGlobal(row) }, { default: () => '复制并覆盖' })
-      }
-      return h(NSpace, null, {
-        default: () => [
-          h(NButton, { size: 'small', onClick: () => startEdit(row) }, { default: () => '编辑' }),
-          h(NButton, { size: 'small', type: 'error', onClick: () => handleDelete(row.id) }, { default: () => '删除' })
-        ]
-      })
-    }
-  }
-]
-
-async function loadTasks() {
+async function loadData() {
   loading.value = true
   try {
-    const [storyRes, globalRes] = await Promise.all([
-      workerTaskApi.list({ storyId: storyId.value }),
-      workerTaskApi.list({ storyId: 'null' })
+    const [bindingsRes, tasksRes] = await Promise.all([
+      workerTaskApi.getBindings(storyId.value),
+      workerTaskApi.list()
     ])
-    const storyTasks = storyRes.data.data.map((t: any) => ({ ...t, scope: 'story' }))
-    const globalTasks = globalRes.data.data.map((t: any) => ({ ...t, scope: 'global' }))
-    // 去重：如果当前小说有某类型的 Task，则该全局 Task 被覆盖，不显示
-    const storyTypes = new Set(storyTasks.map((t: any) => t.workerType))
-    const visibleGlobals = globalTasks.filter((t: any) => !storyTypes.has(t.workerType))
-    tasks.value = [...storyTasks, ...visibleGlobals]
+
+    bindings.value = bindingsRes.data.data
+    allTasks.value = tasksRes.data.data
+
+    for (const config of workerConfigs) {
+      const binding = bindings.value.find((b: any) => b.workerType === config.workerType)
+      selectedTaskIds.value[config.workerType] = binding?.workerTaskId || null
+    }
   } finally {
     loading.value = false
   }
 }
 
-function openCreate() {
-  editingId.value = null
-  form.value = { name: '', workerType: 'generation', taskPrompt: '', enabled: true }
-  showModal.value = true
-}
-
-function copyFromGlobal(row: any) {
-  editingId.value = null
-  form.value = {
-    name: row.name ? `${row.name} (覆盖)` : '',
-    workerType: row.workerType,
-    taskPrompt: row.taskPrompt,
-    enabled: row.enabled
+async function saveAll() {
+  saving.value = true
+  try {
+    const promises: Promise<any>[] = []
+    for (const config of workerConfigs) {
+      const taskId = selectedTaskIds.value[config.workerType]
+      if (taskId) {
+        promises.push(workerTaskApi.updateBinding(storyId.value, {
+          workerType: config.workerType,
+          workerTaskId: taskId
+        }))
+      }
+    }
+    await Promise.all(promises)
+    message.success('配置已保存')
+    await loadData()
+  } catch (err: any) {
+    message.error('保存失败: ' + (err.message || '未知错误'))
+  } finally {
+    saving.value = false
   }
-  showModal.value = true
 }
 
-function startEdit(row: any) {
-  editingId.value = row.id
-  form.value = {
-    name: row.name || '',
-    workerType: row.workerType,
-    taskPrompt: row.taskPrompt,
-    enabled: row.enabled
-  }
-  showModal.value = true
-}
-
-async function handleSave() {
-  const payload = {
-    name: form.value.name,
-    workerType: form.value.workerType,
-    taskPrompt: form.value.taskPrompt,
-    enabled: form.value.enabled
-  }
-  if (editingId.value) {
-    await workerTaskApi.update(editingId.value, payload)
-  } else {
-    await workerTaskApi.create({ ...payload, storyId: storyId.value })
-  }
-  showModal.value = false
-  editingId.value = null
-  form.value = { name: '', workerType: 'generation', taskPrompt: '', enabled: true }
-  await loadTasks()
-}
-
-async function handleDelete(id: string) {
-  await workerTaskApi.remove(id)
-  await loadTasks()
-}
-
-onMounted(loadTasks)
+onMounted(loadData)
 </script>

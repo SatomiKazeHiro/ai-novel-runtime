@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import type { FastifyInstance } from 'fastify'
+import { safeJsonParse } from '@novel-runtime/shared'
 
 const PROFILES_DIR = resolve(process.cwd(), '../../docs/profiles')
 
@@ -23,11 +24,10 @@ export async function initRuntimeProfile(app: FastifyInstance) {
     const filePath = resolve(PROFILES_DIR, file)
     let profileData: any
 
-    try {
-      const raw = readFileSync(filePath, 'utf-8')
-      profileData = JSON.parse(raw)
-    } catch (err: any) {
-      app.log.warn(`Failed to parse profile ${file}: ${err.message}`)
+    const raw = readFileSync(filePath, 'utf-8')
+    profileData = safeJsonParse(raw, null)
+    if (!profileData) {
+      app.log.warn(`Failed to parse profile ${file}: invalid JSON`)
       continue
     }
 

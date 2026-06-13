@@ -61,6 +61,7 @@ import {
   type DataTableColumns
 } from 'naive-ui'
 import { charactersApi } from '../api/characters'
+import { safeJsonParse } from '@novel-runtime/shared'
 
 const route = useRoute()
 const characters = ref<any[]>([])
@@ -93,21 +94,13 @@ const statusJson = computed({
 })
 
 function formatTags(jsonStr: string): string {
-  try {
-    const arr = JSON.parse(jsonStr || '[]') as string[]
-    return arr.join(', ')
-  } catch {
-    return ''
-  }
+  const arr = safeJsonParse<string[]>(jsonStr, [])
+  return arr.join(', ')
 }
 
 function formatJson(jsonStr: string): string {
-  try {
-    const obj = JSON.parse(jsonStr || '{}')
-    return Object.entries(obj).map(([k, v]) => `${k}:${v}`).join(', ')
-  } catch {
-    return ''
-  }
+  const obj = safeJsonParse<Record<string, any>>(jsonStr, {})
+  return Object.entries(obj).map(([k, v]) => `${k}:${v}`).join(', ')
 }
 
 const columns: DataTableColumns<any> = [
@@ -119,8 +112,8 @@ const columns: DataTableColumns<any> = [
   { title: '气质', key: 'temperament', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.temperament) },
   { title: '性格', key: 'personality', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.personality) },
   { title: '说话风格', key: 'speechStyle', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.speechStyle) },
-  { title: '关系', key: 'relationships', ellipsis: { tooltip: true }, width: 140, render: (row) => formatJson(row.relationships) },
-  { title: '状态', key: 'status', ellipsis: { tooltip: true }, width: 140, render: (row) => formatJson(row.status) },
+  { title: '关系', key: 'relationships', ellipsis: { tooltip: true }, width: 140, render: (row) => formatJson(row.branchStates?.[0]?.relationships ?? '{}') },
+  { title: '状态', key: 'status', ellipsis: { tooltip: true }, width: 140, render: (row) => formatJson(row.branchStates?.[0]?.status ?? '{}') },
   {
     title: '操作',
     key: 'actions',
@@ -174,13 +167,13 @@ function openEdit(row: any) {
     slug: row.slug,
     name: row.name,
     protagonist: row.protagonist ?? false,
-    identity: JSON.parse(row.identity || '[]'),
-    appearance: JSON.parse(row.appearance || '[]'),
-    temperament: JSON.parse(row.temperament || '[]'),
-    personality: JSON.parse(row.personality || '[]'),
-    speechStyle: JSON.parse(row.speechStyle || '[]'),
-    relationships: JSON.parse(row.relationships || '{}'),
-    status: JSON.parse(row.status || '{}')
+    identity: safeJsonParse<string[]>(row.identity, []),
+    appearance: safeJsonParse<string[]>(row.appearance, []),
+    temperament: safeJsonParse<string[]>(row.temperament, []),
+    personality: safeJsonParse<string[]>(row.personality, []),
+    speechStyle: safeJsonParse<string[]>(row.speechStyle, []),
+    relationships: safeJsonParse<Record<string, any>>(row.branchStates?.[0]?.relationships ?? '{}', {}),
+    status: safeJsonParse<Record<string, any>>(row.branchStates?.[0]?.status ?? '{}', {})
   }
   showModal.value = true
 }

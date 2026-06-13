@@ -1,4 +1,5 @@
 import { getEncoding } from 'js-tiktoken'
+import { safeJsonParse } from '@novel-runtime/shared'
 
 const enc = getEncoding('cl100k_base')
 
@@ -50,7 +51,7 @@ export class MemoryManager {
       layer: m.layer,
       content: m.content,
       importance: m.importance,
-      tags: JSON.parse(m.tags),
+      tags: safeJsonParse<string[]>(m.tags, []),
       createdAt: m.createdAt,
       chapterNumber: undefined,
       originUid: m.originUid
@@ -68,14 +69,14 @@ export class MemoryManager {
     })
     return items
       .filter((m: any) => {
-        const tags = JSON.parse(m.tags || '[]')
+        const tags = safeJsonParse<string[]>(m.tags, [])
         return !tags.includes('compressed')
       })
       .map((m: any) => ({
         layer: m.layer,
         content: m.content,
         importance: m.importance,
-        tags: JSON.parse(m.tags),
+        tags: safeJsonParse<string[]>(m.tags, []),
         createdAt: m.createdAt,
         chapterNumber: chapter?.number,
         originUid: m.originUid
@@ -143,7 +144,7 @@ export class MemoryManager {
           layer: m.layer,
           content: m.content,
           importance: m.importance,
-          tags: JSON.parse(m.tags || '[]'),
+          tags: safeJsonParse<string[]>(m.tags, []),
           createdAt: m.createdAt,
           chapterNumber: m.chapter?.number,
           originUid: m.originUid

@@ -1,27 +1,13 @@
 import type { FastifyInstance } from 'fastify'
 import { randomBytes } from 'crypto'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
-import { cleanJsonBlock } from '@novel-runtime/shared'
+import { cleanJsonBlock, tokenSet, jaccardSimilarity, safeJsonParse } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
-import { getEncoding } from 'js-tiktoken'
-
-const enc = getEncoding('cl100k_base')
-
-function tokenSet(text: string): Set<number> {
-  return new Set(enc.encode(text))
-}
 
 function generateOriginUid(chapterNumber: number): string {
   const hex = randomBytes(2).toString('hex').toUpperCase()
   return `${chapterNumber}#${hex}`
-}
-
-function jaccardSimilarity(a: Set<number>, b: Set<number>): number {
-  if (a.size === 0 || b.size === 0) return 0
-  const intersection = new Set([...a].filter(x => b.has(x)))
-  const union = new Set([...a, ...b])
-  return intersection.size / union.size
 }
 
 /**
@@ -108,7 +94,7 @@ importance 评分标准：
 - emotions: 主要角色的情绪变化（字符串数组）
 - foreshadowing: 新埋下的伏笔（字符串数组）
 - relationshipChanges: 角色关系变化（字符串数组）
-- characterStatusChanges: 角色状态变化（对象，如 {"张三": {"rank": "初级", "location": "北京"}}}）
+- characterStatusChanges: 角色状态变化（对象，如 {"张三": {"rank": "初级", "location": "北京", "relationships": {"李四": "兄弟", "王五": "敌对"}}}）。其中 relationships 子键可选，用于表达该角色与其他角色的关系变化。
 - timelineDay: 本章发生在第几天（数字，不确定则返回 null）
 - summary: 本章一句话摘要（50字以内）
 - scenes: 场景记忆数组（见下方说明）
@@ -160,6 +146,206 @@ ${content.slice(0, 8000)}`
   }
 }
 
+export interface MemoryWrite {
+  storyId: string
+  chapterId: string
+  fromChapterNumber: number
+  layer: string
+  content: string
+  tags: string
+  importance: number
+  originUid?: string
+}
+
+export interface CharacterStateWrite {
+  characterId: string
+  fromChapterNumber: number
+  status: string
+  relationships: string
+}
+
+export interface TimelineEventWrite {
+  storyId: string
+  fromChapterNumber: number
+  day: number
+  events: string
+}
+
+export interface ArchiveMemoryData {
+  memories: MemoryWrite[]
+  characterStates: CharacterStateWrite[]
+  timelineEvents: TimelineEventWrite[]
+  summary: string | null
+}
+
+/**
+ * 准备待写入的记忆数据（纯数据准备，不写入数据库）
+ * 返回的数据后续需要在事务中统一提交
+ */
+export function prepareMemoryWrites(
+  storyId: string,
+  chapterId: string,
+  result: MemoryExtractionResult,
+  fromChapterNumber?: number
+): ArchiveMemoryData {
+  const chNum = fromChapterNumber ?? 0
+  const memories: MemoryWrite[] = []
+  const characterStates: CharacterStateWrite[] = []
+  let timelineEvents: TimelineEventWrite[] = []
+  let summary: string | null = null
+
+  // 1. 主要事件记忆
+  for (const event of result.mainEvents || []) {
+    const content = `${event.description} | 参与者：${event.participants.join('、')}`
+    const originUid = generateOriginUid(chNum)
+    memories.push({ storyId, chapterId, fromChapterNumber: chNum, layer: 'chapter', content, tags: JSON.stringify(['auto-extracted', 'main-plot']), importance: event.importance, originUid })
+  }
+
+  // 2. 次要事件记忆
+  for (const event of result.sideEvents || []) {
+    const content = `${event.description} | 参与者：${event.participants.join('、')}`
+    const originUid = generateOriginUid(chNum)
+    memories.push({ storyId, chapterId, fromChapterNumber: chNum, layer: 'chapter', content, tags: JSON.stringify(['auto-extracted']), importance: event.importance, originUid })
+  }
+
+  // 3. 情绪/伏笔/关系变化
+  if (result.emotions?.length) {
+    for (const e of result.emotions) {
+      memories.push({ storyId, chapterId, fromChapterNumber: chNum, layer: 'chapter', content: `情绪：${e}`, tags: JSON.stringify(['auto-extracted']), importance: 5 })
+    }
+  }
+  if (result.foreshadowing?.length) {
+    for (const e of result.foreshadowing) {
+      memories.push({ storyId, chapterId, fromChapterNumber: chNum, layer: 'chapter', content: `伏笔：${e}`, tags: JSON.stringify(['auto-extracted']), importance: 5 })
+    }
+  }
+  if (result.relationshipChanges?.length) {
+    for (const e of result.relationshipChanges) {
+      memories.push({ storyId, chapterId, fromChapterNumber: chNum, layer: 'chapter', content: `关系：${e}`, tags: JSON.stringify(['auto-extracted']), importance: 5 })
+    }
+  }
+
+  // 4. 场景记忆
+  for (const scene of result.scenes || []) {
+    const sceneContent = scene.description
+      ? `【${scene.location}】${scene.description} | 事件：${scene.event}`
+      : `【${scene.location}】事件：${scene.event}`
+    memories.push({ storyId, chapterId, fromChapterNumber: chNum, layer: 'scene', content: sceneContent, tags: JSON.stringify(['auto-extracted', 'scene-memory']), importance: scene.importance ?? 7 })
+  }
+
+  // 5. 全局记忆（角色状态变化）
+  for (const [charName, changes] of Object.entries(result.characterStatusChanges || {})) {
+    memories.push({
+      storyId, chapterId, fromChapterNumber: chNum,
+      layer: 'global',
+      content: `【${charName}】状态更新：${JSON.stringify(changes)}`,
+      tags: JSON.stringify(['auto-extracted', 'character-status']),
+      importance: 8
+    })
+
+    // 准备 CharacterBranchState 写入数据
+    const { relationships: relChanges, ...statusChanges } = changes as Record<string, any>
+    characterStates.push({
+      characterId: charName, // 注意：这里存的是名字，实际写入时需要根据 storyId+name 查找 character.id
+      fromChapterNumber: chNum,
+      status: JSON.stringify(statusChanges),
+      relationships: relChanges && typeof relChanges === 'object'
+        ? JSON.stringify(relChanges)
+        : '{}'
+    })
+  }
+
+  // 6. 时间线
+  if (result.timelineDay && typeof result.timelineDay === 'number') {
+    const dayEvents = (result.mainEvents || []).map(e => e.description)
+    timelineEvents.push({ storyId, fromChapterNumber: chNum, day: result.timelineDay, events: JSON.stringify(dayEvents) })
+  }
+
+  // 7. 摘要
+  if (result.summary) {
+    summary = result.summary
+  }
+
+  return { memories, characterStates, timelineEvents, summary }
+}
+
+/**
+ * 在事务中提交记忆写入
+ * 注意：characterStates 中的 characterId 是角色名字，需要在这里解析为实际 ID
+ */
+export async function commitMemoryWrites(
+  tx: any,
+  chapterId: string,
+  storyId: string,
+  data: ArchiveMemoryData,
+  existingCharacterMap?: Map<string, string> // name -> id
+): Promise<void> {
+  // 1. 写入 Memory
+  for (const mem of data.memories) {
+    await tx.memory.create({ data: mem })
+  }
+
+  // 2. 写入 CharacterBranchState（需要解析 characterId）
+  if (data.characterStates.length > 0) {
+    const charMap = existingCharacterMap || new Map<string, string>()
+    if (!existingCharacterMap) {
+      const characters = await tx.character.findMany({
+        where: { storyId },
+        select: { id: true, name: true }
+      })
+      for (const c of characters) charMap.set(c.name, c.id)
+    }
+
+    for (const state of data.characterStates) {
+      const characterId = charMap.get(state.characterId)
+      if (!characterId) continue
+
+      // 查最新状态做 merge
+      const latestState = await tx.characterBranchState.findFirst({
+        where: { characterId },
+        orderBy: { fromChapterNumber: 'desc' }
+      })
+      const currentStatus = safeJsonParse<Record<string, any>>(latestState?.status, {})
+      const currentRelationships = safeJsonParse<Record<string, any>>(latestState?.relationships, {})
+      const newStatus = safeJsonParse<Record<string, any>>(state.status, {})
+      const newRelationships = safeJsonParse<Record<string, any>>(state.relationships, {})
+
+      const mergedStatus = { ...currentStatus, ...newStatus }
+      const mergedRelationships = { ...currentRelationships, ...newRelationships }
+
+      await tx.characterBranchState.create({
+        data: {
+          characterId,
+          fromChapterNumber: state.fromChapterNumber,
+          status: JSON.stringify(mergedStatus),
+          relationships: JSON.stringify(mergedRelationships)
+        }
+      })
+    }
+  }
+
+  // 3. 写入 TimelineEvent
+  for (const te of data.timelineEvents) {
+    const existing = await tx.timelineEvent.findUnique({
+      where: { storyId_day: { storyId: te.storyId, day: te.day } }
+    })
+    if (existing) {
+      const oldEvents = safeJsonParse(existing.events, [])
+      const newEvents = safeJsonParse(te.events, [])
+      await tx.timelineEvent.update({
+        where: { id: existing.id },
+        data: { events: JSON.stringify([...oldEvents, ...newEvents]) }
+      })
+    } else {
+      await tx.timelineEvent.create({ data: te })
+    }
+  }
+}
+
+/**
+ * 兼容旧接口：直接写入数据库（非事务模式）
+ * 已废弃，新代码请使用 prepareMemoryWrites + commitMemoryWrites
+ */
 export async function saveExtractedMemory(
   app: FastifyInstance,
   chapterId: string,
@@ -168,9 +354,17 @@ export async function saveExtractedMemory(
   fromChapterNumber?: number
 ) {
   const prisma = app.prisma
-  const chNum = fromChapterNumber ?? 0
+  const data = prepareMemoryWrites(storyId, chapterId, result, fromChapterNumber)
 
-  // 预加载最近 50 条记忆用于去重
+  // 预加载角色映射
+  const characters = await prisma.character.findMany({
+    where: { storyId },
+    select: { id: true, name: true }
+  })
+  const charMap = new Map<string, string>()
+  for (const c of characters) charMap.set(c.name, c.id)
+
+  // 去重：查询最近 50 条记忆
   const recentMemories = await prisma.memory.findMany({
     where: { storyId },
     orderBy: { createdAt: 'desc' },
@@ -186,118 +380,70 @@ export async function saveExtractedMemory(
       return
     }
     await prisma.memory.create({
-      data: { storyId, chapterId, fromChapterNumber: chNum, layer, content, tags: JSON.stringify(tags), importance, originUid }
+      data: { storyId, chapterId, fromChapterNumber: fromChapterNumber ?? 0, layer, content, tags: JSON.stringify(tags), importance, originUid }
     })
     recentSets.unshift(tokenSet(content))
     if (recentSets.length > 50) recentSets.pop()
   }
 
-  // 1. 保存主要事件记忆
-  for (const event of result.mainEvents || []) {
-    const content = `${event.description} | 参与者：${event.participants.join('、')}`
-    const originUid = generateOriginUid(chNum)
-    await saveIfUnique(content, 'chapter', ['auto-extracted', 'main-plot'], event.importance, originUid)
-  }
-
-  // 2. 保存次要事件记忆
-  for (const event of result.sideEvents || []) {
-    const content = `${event.description} | 参与者：${event.participants.join('、')}`
-    const originUid = generateOriginUid(chNum)
-    await saveIfUnique(content, 'chapter', ['auto-extracted'], event.importance, originUid)
-  }
-
-  // 3. 保存情绪/伏笔/关系变化
-  const otherMemories: string[] = []
-  if (result.emotions?.length) otherMemories.push(...result.emotions.map(e => `情绪：${e}`))
-  if (result.foreshadowing?.length) otherMemories.push(...result.foreshadowing.map(e => `伏笔：${e}`))
-  if (result.relationshipChanges?.length) otherMemories.push(...result.relationshipChanges.map(e => `关系：${e}`))
-
-  for (const mem of otherMemories) {
-    await saveIfUnique(mem, 'chapter', ['auto-extracted'], 5)
-  }
-
-  // 4. 保存场景记忆（推动剧情发展的地点）
-  for (const scene of result.scenes || []) {
-    const sceneContent = scene.description
-      ? `【${scene.location}】${scene.description} | 事件：${scene.event}`
-      : `【${scene.location}】事件：${scene.event}`
-    await saveIfUnique(sceneContent, 'scene', ['auto-extracted', 'scene-memory'], scene.importance ?? 7)
-  }
-
-  // 5. 保存全局记忆（角色状态变化）+ 同步更新 CharacterBranchState（历史快照模式）
-  for (const [charName, changes] of Object.entries(result.characterStatusChanges || {})) {
-    // 5a. 保存到记忆表
-    await saveIfUnique(
-      `【${charName}】状态更新：${JSON.stringify(changes)}`,
-      'global',
-      ['auto-extracted', 'character-status'],
-      8
-    )
-
-    // 5b. 插入新的 CharacterBranchState 历史记录
-    try {
-      const character = await prisma.character.findFirst({
-        where: { storyId, name: charName }
-      })
-      if (character) {
-        const latestState = await prisma.characterBranchState.findFirst({
-          where: { characterId: character.id },
-          orderBy: { fromChapterNumber: 'desc' }
-        })
-        const currentStatus = latestState ? JSON.parse(latestState.status || '{}') : {}
-        const mergedStatus = { ...currentStatus, ...changes }
-        const currentRelationships = latestState ? JSON.parse(latestState.relationships || '{}') : {}
-        await prisma.characterBranchState.create({
-          data: {
-            characterId: character.id,
-            fromChapterNumber: chNum,
-            status: JSON.stringify(mergedStatus),
-            relationships: JSON.stringify(currentRelationships)
-          }
-        })
-        app.log.info(`[MemoryExtractor] Updated character status: ${charName} [第${chNum}章] -> ${JSON.stringify(changes)}`)
-      }
-    } catch (err: any) {
-      app.log.warn(`[MemoryExtractor] Failed to update character status for ${charName}: ${err.message}`)
+  // 写入 chapter 层记忆（去重）
+  for (const mem of data.memories) {
+    if (mem.layer === 'chapter' || mem.layer === 'scene') {
+      const tags = safeJsonParse<string[]>(mem.tags, [])
+      await saveIfUnique(mem.content, mem.layer, tags, mem.importance, mem.originUid)
+    } else {
+      await prisma.memory.create({ data: mem })
     }
   }
 
-  // 6. 更新时间线
-  if (result.timelineDay && typeof result.timelineDay === 'number') {
-    const existing = await prisma.timelineEvent.findUnique({
-      where: { storyId_day: { storyId, day: result.timelineDay } }
+  // 写入 CharacterBranchState
+  for (const state of data.characterStates) {
+    const cid = charMap.get(state.characterId)
+    if (!cid) continue
+    const latestState = await prisma.characterBranchState.findFirst({
+      where: { characterId: cid },
+      orderBy: { fromChapterNumber: 'desc' }
     })
+    const currentStatus = safeJsonParse<Record<string, any>>(latestState?.status, {})
+    const currentRelationships = safeJsonParse<Record<string, any>>(latestState?.relationships, {})
+    const newStatus = safeJsonParse<Record<string, any>>(state.status, {})
+    const newRelationships = safeJsonParse<Record<string, any>>(state.relationships, {})
+    const mergedStatus = { ...currentStatus, ...newStatus }
+    const mergedRelationships = { ...currentRelationships, ...newRelationships }
+    await prisma.characterBranchState.create({
+      data: {
+        characterId: cid,
+        fromChapterNumber: state.fromChapterNumber,
+        status: JSON.stringify(mergedStatus),
+        relationships: JSON.stringify(mergedRelationships)
+      }
+    })
+  }
 
-    const dayEvents = (result.mainEvents || []).map(e => e.description)
+  // 写入 TimelineEvent
+  for (const te of data.timelineEvents) {
+    const existing = await prisma.timelineEvent.findUnique({
+      where: { storyId_day: { storyId: te.storyId, day: te.day } }
+    })
     if (existing) {
-      const oldEvents = JSON.parse(existing.events || '[]')
+      const oldEvents = safeJsonParse(existing.events, [])
+      const newEvents = safeJsonParse(te.events, [])
       await prisma.timelineEvent.update({
         where: { id: existing.id },
-        data: { events: JSON.stringify([...oldEvents, ...dayEvents]) }
+        data: { events: JSON.stringify([...oldEvents, ...newEvents]) }
       })
     } else {
-      await prisma.timelineEvent.create({
-        data: {
-          storyId,
-          fromChapterNumber: chNum,
-          day: result.timelineDay,
-          events: JSON.stringify(dayEvents)
-        }
-      })
+      await prisma.timelineEvent.create({ data: te })
     }
-    app.log.info(`[MemoryExtractor] Timeline updated: Day ${result.timelineDay}`)
   }
 
-  // 7. 更新章节摘要
-  if (result.summary) {
+  // 更新章节摘要
+  if (data.summary) {
     await prisma.chapter.update({
       where: { id: chapterId },
-      data: { summary: result.summary }
+      data: { summary: data.summary }
     })
   }
 
-  // 8. 记忆压缩已废弃，由 memory-optimizer 替代
-  app.log.info(`[MemoryExtractor] Skipped compression (replaced by memory-optimizer)`)
-
-  app.log.info(`[MemoryExtractor] Saved memories and synced character status`)
+  app.log.info(`[MemoryExtractor] Saved memories and synced character status${skipped > 0 ? ` (${skipped} duplicates skipped)` : ''}`)
 }

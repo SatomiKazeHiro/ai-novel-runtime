@@ -1,14 +1,15 @@
 import type { FastifyInstance } from 'fastify'
 import { generateQueue } from '../queue/index.js'
-import { extractAndSaveAll } from '../services/combined-extractor.js'
+import { extractAll } from '../services/combined-extractor.js'
 import { optimizeMemories } from '../services/memory-optimizer.js'
-import { getActivePlotArcs } from '../services/plot-extractor.js'
+import { getActivePlotArcs, preparePlotArcWrites, commitPlotArcWrites } from '../services/plot-extractor.js'
 import { saveGraphSnapshotAndDelta, type GraphSnapshot } from '../services/graph-snapshot.js'
 import { organizeGraph } from '../services/graph-organizer.js'
+import { prepareMemoryWrites, commitMemoryWrites } from '../services/memory-extractor.js'
 import { PromptPipeline } from '@novel-runtime/prompt-runtime'
 import { MemoryManager } from '@novel-runtime/memory-engine'
 import { RuntimePromptCompiler, estimateTokens } from '@novel-runtime/ai-provider'
-import { formatCharacterSnapshot, generateFallbackContent, DEFAULT_PIPELINE_BUDGET, scaleBudget } from '@novel-runtime/shared'
+import { formatCharacterSnapshot, generateFallbackContent, DEFAULT_PIPELINE_BUDGET, scaleBudget, safeJsonParse } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { callAIWithLog } from '../services/ai-call-logger.js'
 
@@ -115,6 +116,7 @@ export async function chapterRoutes(app: FastifyInstance) {
     if (body.sceneLocation !== undefined) data.sceneLocation = body.sceneLocation
     if (body.sceneMood !== undefined) data.sceneMood = body.sceneMood
     if (body.sceneGoal !== undefined) data.sceneGoal = body.sceneGoal
+    if (body.aiProviderConfigId !== undefined) data.aiProviderConfigId = body.aiProviderConfigId || null
     const chapter = await app.prisma.chapter.update({ where: { id: chapterId }, data })
     return { success: true, data: chapter }
   })
@@ -182,8 +184,8 @@ export async function chapterRoutes(app: FastifyInstance) {
     })
     if (prevChapter?.graphSnapshot) {
       try {
-        const snapshot = JSON.parse(prevChapter.graphSnapshot)
-        await rebuildGraphFromSnapshot(prisma, chapter.storyId, snapshot)
+        const snapshot = safeJsonParse(prevChapter.graphSnapshot, null)
+        if (snapshot) await rebuildGraphFromSnapshot(prisma, chapter.storyId, snapshot)
         app.log.info(`[Delete] Rebuilt graph from chapter ${prevChapter.number} snapshot`)
       } catch (err: any) {
         app.log.error(`[Delete] Graph rebuild failed: ${err.message}`)
@@ -195,6 +197,32 @@ export async function chapterRoutes(app: FastifyInstance) {
     }
 
     await prisma.chapter.delete({ where: { id: chapterId } })
+
+    // 如果这是最后一个章节，清理故事级别的派生数据
+    const remainingChapters = await prisma.chapter.count({
+      where: { storyId: chapter.storyId }
+    })
+    if (remainingChapters === 0) {
+      try {
+        const { count: arcCount } = await prisma.plotArc.deleteMany({
+          where: { storyId: chapter.storyId }
+        })
+        const { count: logCount } = await prisma.promptLog.deleteMany({
+          where: { storyId: chapter.storyId }
+        })
+        // GraphNode/GraphEdge 已经在上面 else 分支清理，但如果走的是 rebuild 路径没清理，这里兜底
+        const { count: edgeCount } = await prisma.graphEdge.deleteMany({
+          where: { storyId: chapter.storyId }
+        })
+        const { count: nodeCount } = await prisma.graphNode.deleteMany({
+          where: { storyId: chapter.storyId }
+        })
+        app.log.info(`[Delete] Last chapter removed. Cleaned plotArc=${arcCount}, promptLog=${logCount}, graphNode=${nodeCount}, graphEdge=${edgeCount}`)
+      } catch (err: any) {
+        app.log.error(`[Delete] Final cleanup failed: ${err.message}`)
+      }
+    }
+
     return { success: true }
   })
 
@@ -252,9 +280,9 @@ export async function chapterRoutes(app: FastifyInstance) {
       lore: loreItems.map(l => `【${l.name}】${l.content}`).join('\n') || '无世界观设定信息',
       scene: `标题：${chapter.title || '未设定'}\n地点：${chapter.sceneLocation || '未设定'}\n氛围：${chapter.sceneMood || '未设定'}\n目标：${chapter.sceneGoal || '未设定'}`,
       memory: memoryManager.formatForPrompt(relevantMemories),
-      timeline: timelineEvents.map(t => `第${t.day}天：${JSON.parse(t.events).join('；')}`).join('\n'),
+      timeline: timelineEvents.map(t => `第${t.day}天：${safeJsonParse<string[]>(t.events, []).join('；')}`).join('\n'),
       plotArc: plotArcText || undefined,
-      output: `请根据以下大纲生成本章正文（约2000-4000字）：\n\n${chapter.outline || '无大纲'}`
+      output: `请根据以下大纲生成本章正文：\n\n${chapter.outline || '无大纲'}`
     })
 
     const compiler = new RuntimePromptCompiler()
@@ -337,7 +365,7 @@ export async function chapterRoutes(app: FastifyInstance) {
         lore: loreItems.map(l => `【${l.name}】${l.content}`).join('\n') || '无世界观设定信息',
         scene: `标题：${chapter.title || '未设定'}\n地点：${chapter.sceneLocation || '未设定'}\n氛围：${chapter.sceneMood || '未设定'}\n目标：${chapter.sceneGoal || '未设定'}`,
         memory: memoryManager.formatForPrompt(relevantMemories),
-        timeline: timelineEvents.map(t => `第${t.day}天：${JSON.parse(t.events).join('；')}`).join('\n'),
+        timeline: timelineEvents.map(t => `第${t.day}天：${safeJsonParse<string[]>(t.events, []).join('；')}`).join('\n'),
         plotArc: plotArcText || undefined,
         output: `请根据以下大纲生成本章正文（约2000-4000字）：\n\n${chapter.outline || '无大纲'}`
       })
@@ -446,16 +474,37 @@ export async function chapterRoutes(app: FastifyInstance) {
       return { success: true, data: { noContent: true } }
     }
 
-    // 主线有正文：全部步骤成功后统一归档
+    // 主线有正文：四阶段归档（提取 → 整理 → 事务写入 → 优化）
+
+    // 前置校验
+    const outlineText = chapter.outline || ''
+    const contentText = chapter.content || ''
+    if (!outlineText.trim()) {
+      return reply.status(400).send({ success: false, error: '归档失败：大纲不能为空' })
+    }
+    if (!contentText.trim()) {
+      return reply.status(400).send({ success: false, error: '归档失败：正文不能为空' })
+    }
+    if (contentText.length < outlineText.length) {
+      return reply.status(400).send({ success: false, error: `归档失败：正文长度（${contentText.length}）不能小于大纲长度（${outlineText.length}）` })
+    }
+
+    // 阶段 1：纯提取（AI 调用，不写数据库）
     let extraction = null
     try {
-      extraction = await extractAndSaveAll(app, chapterId, chapter.storyId, chapter.content, chapter.outline || undefined, chapter.number)
+      extraction = await extractAll(app, chapterId, chapter.storyId, contentText, outlineText || undefined, chapter.number)
       app.log.info(`[Archive] Combined extraction completed for chapter ${chapterId}`)
     } catch (err: any) {
       app.log.error(`[Archive] Combined extraction failed: ${err.message}`)
       return reply.status(500).send({
         success: false,
         error: `归档失败：内容提取出错（${err.message}）。章节状态未变更，请检查 AI 配置后重试。`
+      })
+    }
+    if (!extraction || !extraction.memories) {
+      return reply.status(500).send({
+        success: false,
+        error: `归档失败：内容提取返回空。章节状态未变更，请检查 AI 配置后重试。`
       })
     }
 
@@ -467,7 +516,7 @@ export async function chapterRoutes(app: FastifyInstance) {
         select: { graphSnapshot: true }
       })
       if (parent?.graphSnapshot) {
-        previousSnapshot = JSON.parse(parent.graphSnapshot)
+        previousSnapshot = safeJsonParse(parent.graphSnapshot, null)
       }
     }
     if (!previousSnapshot) {
@@ -477,42 +526,77 @@ export async function chapterRoutes(app: FastifyInstance) {
         select: { graphSnapshot: true }
       })
       if (lastArchived?.graphSnapshot) {
-        previousSnapshot = JSON.parse(lastArchived.graphSnapshot)
+        previousSnapshot = safeJsonParse(lastArchived.graphSnapshot, null)
       }
     }
 
-    const graphRaw = extraction?.graph || { nodes: [], edges: [] }
-    const graphOrganized = await organizeGraph(app, chapter.storyId, chapterId, previousSnapshot, graphRaw)
-    if (!graphOrganized) {
+    const graphRaw = extraction.graph || { nodes: [], edges: [] }
+    let graphOrganized: Awaited<ReturnType<typeof organizeGraph>>
+    try {
+      graphOrganized = await organizeGraph(app, chapter.storyId, chapterId, previousSnapshot, graphRaw)
+    } catch (err: any) {
+      app.log.error(`[Archive] Graph organize failed: ${err.message}`)
       return reply.status(500).send({
         success: false,
-        error: `归档失败：知识图谱整理出错。章节状态未变更，请检查 AI 配置后重试。`
+        error: `归档失败：知识图谱整理出错（${err.message}）。章节状态未变更，请检查 AI 配置后重试。`
       })
     }
 
-    const graphSaved = await saveGraphSnapshotAndDelta(app, chapterId, chapter.storyId, graphOrganized)
-    if (!graphSaved) {
+    // 阶段 3：事务写入（所有数据库操作一次性提交）
+    let graphSaved: { snapshot: GraphSnapshot; delta: GraphSnapshot } | null = null
+    try {
+      const memoryData = prepareMemoryWrites(chapter.storyId, chapterId, extraction.memories, chapter.number)
+      const plotArcWrites = extraction.plotArcs
+        ? await preparePlotArcWrites(prisma, chapter.storyId, extraction.plotArcs.arcs)
+        : []
+
+      graphSaved = await prisma.$transaction(async (tx) => {
+        // 1. 写入记忆、角色状态、时间线
+        await commitMemoryWrites(tx, chapterId, chapter.storyId, memoryData)
+
+        // 2. 更新章节摘要
+        if (memoryData.summary) {
+          await tx.chapter.update({
+            where: { id: chapterId },
+            data: { summary: memoryData.summary }
+          })
+        }
+
+        // 3. 写入剧情弧线
+        await commitPlotArcWrites(tx, plotArcWrites)
+
+        // 4. 写入图谱快照
+        const saved = await saveGraphSnapshotAndDelta(tx, chapterId, chapter.storyId, graphOrganized)
+        if (!saved) {
+          throw new Error('知识图谱保存失败')
+        }
+
+        // 5. 正式归档
+        await tx.chapter.update({
+          where: { id: chapterId },
+          data: { status: 'archived' }
+        })
+
+        return saved
+      })
+
+      app.log.info(`[Archive] Transaction committed for chapter ${chapterId}`)
+    } catch (err: any) {
+      app.log.error(`[Archive] Transaction failed: ${err.message}`)
       return reply.status(500).send({
         success: false,
-        error: `归档失败：知识图谱保存出错。章节状态未变更，请检查后重试。`
+        error: `归档失败：数据保存出错（${err.message}）。章节状态未变更，请检查 AI 配置后重试。`
       })
     }
 
-    // 记忆优化（生成全局记忆）
+    // 阶段 4：记忆优化（失败不阻塞归档）
     let optimizedCount = 0
     try {
       optimizedCount = await optimizeMemories(app, chapter.storyId, chapterId, chapter.number)
       app.log.info(`[Archive] Memory optimized: ${optimizedCount} global memories`)
     } catch (err: any) {
-      app.log.error(`[Archive] Memory optimization failed: ${err.message}`)
-      return reply.status(500).send({
-        success: false,
-        error: `归档失败：记忆优化出错（${err.message}）。章节状态未变更，请检查 AI 配置后重试。`
-      })
+      app.log.error(`[Archive] Memory optimization failed (non-blocking): ${err.message}`)
     }
-
-    // 全部成功后：正式归档
-    await prisma.chapter.update({ where: { id: chapterId }, data: { status: 'archived' } })
 
     return {
       success: true,

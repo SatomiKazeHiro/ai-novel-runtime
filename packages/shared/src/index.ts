@@ -68,13 +68,13 @@ export function estimateTokens(text: string): number {
 export function formatCharacterSnapshot(characters: any[]): string {
   if (characters.length === 0) return '无角色信息'
   return characters.map(c => {
-    const status = JSON.parse(c.status || '{}')
-    const rels = JSON.parse(c.relationships || '{}')
-    const personality = JSON.parse(c.personality || '[]') as string[]
-    const speechStyle = JSON.parse(c.speechStyle || '[]') as string[]
-    const identity = JSON.parse(c.identity || '[]') as string[]
-    const appearance = JSON.parse(c.appearance || '[]') as string[]
-    const temperament = JSON.parse(c.temperament || '[]') as string[]
+    const status = safeJsonParse(c.status, {})
+    const rels = safeJsonParse(c.relationships, {})
+    const personality = safeJsonParse<string[]>(c.personality, [])
+    const speechStyle = safeJsonParse<string[]>(c.speechStyle, [])
+    const identity = safeJsonParse<string[]>(c.identity, [])
+    const appearance = safeJsonParse<string[]>(c.appearance, [])
+    const temperament = safeJsonParse<string[]>(c.temperament, [])
 
     const statusStr = Object.entries(status).map(([k, v]) => `${k}:${v}`).join(', ')
     const relStr = Object.entries(rels).slice(0, 2).map(([k, v]) => `${k}-${v}`).join(', ')
@@ -93,6 +93,56 @@ export function formatCharacterSnapshot(characters: any[]): string {
 
 export function cleanJsonBlock(raw: string): string {
   return raw.replace(/```json\s*/g, '').replace(/```\s*$/g, '').trim()
+}
+
+/**
+ * 安全的 JSON.parse，失败时返回 fallback
+ */
+export function safeJsonParse<T>(str: string | null | undefined, fallback: T): T {
+  if (!str) return fallback
+  try {
+    return JSON.parse(str) as T
+  } catch {
+    return fallback
+  }
+}
+
+/**
+ * 安全的 JSON.stringify，失败时返回 fallback
+ */
+export function safeJsonStringify(obj: any, fallback = '{}'): string {
+  try {
+    return JSON.stringify(obj)
+  } catch {
+    return fallback
+  }
+}
+
+import { getEncoding } from 'js-tiktoken'
+const _enc = getEncoding('cl100k_base')
+
+/**
+ * 将文本转为 token ID 数组
+ */
+export function tokenize(text: string): number[] {
+  return _enc.encode(text)
+}
+
+/**
+ * 将文本转为 token ID 的 Set
+ */
+export function tokenSet(text: string): Set<number> {
+  return new Set(tokenize(text))
+}
+
+/**
+ * 计算两个 token Set 的 Jaccard 相似度
+ */
+export function jaccardSimilarity(a: Set<number>, b: Set<number>): number {
+  if (a.size === 0 || b.size === 0) return 0
+  const intersection = new Set([...a].filter(x => b.has(x)))
+  const union = new Set([...a, ...b])
+  return intersection.size / union.size
 }
 
 export function generateFallbackContent(chapter: any, index: number, reason?: string): string {

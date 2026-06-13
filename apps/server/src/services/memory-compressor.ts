@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
-import { cleanJsonBlock } from '@novel-runtime/shared'
+import { cleanJsonBlock, safeJsonParse } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
 
@@ -89,7 +89,7 @@ export async function maybeCompressMemories(
   for (const id of memoryIds) {
     const mem = await prisma.memory.findUnique({ where: { id } })
     if (mem) {
-      const tags = JSON.parse(mem.tags || '[]')
+      const tags = safeJsonParse<string[]>(mem.tags, [])
       if (!tags.includes('compressed')) {
         tags.push('compressed')
       }
@@ -165,7 +165,7 @@ function simpleMerge(memories: any[]): string[] {
 
 function extractBatchNumber(tagsJson: string): number {
   try {
-    const tags = JSON.parse(tagsJson || '[]')
+    const tags = safeJsonParse<string[]>(tagsJson, [])
     const batchTag = tags.find((t: string) => t.startsWith('batch-'))
     if (batchTag) {
       return parseInt(batchTag.replace('batch-', ''), 10) || 0

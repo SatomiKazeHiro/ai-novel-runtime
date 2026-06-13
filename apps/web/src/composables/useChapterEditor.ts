@@ -3,6 +3,7 @@ import { useMessage } from 'naive-ui'
 import { chaptersApi } from '../api/chapters'
 import { plotArcApi } from '../api/plot-arc'
 import { runtimeApi as runtimeProfileApi } from '../api/runtime'
+import { aiProviderApi } from '../api/ai-provider'
 
 export function useChapterEditor(storyId: () => string | undefined) {
   const message = useMessage()
@@ -13,6 +14,8 @@ export function useChapterEditor(storyId: () => string | undefined) {
   const editTitle = ref('')
   const selectedProfileId = ref<string | null>(null)
   const profileOptions = ref<any[]>([])
+  const selectedModelId = ref<string | null>(null)
+  const modelOptions = ref<any[]>([])
   const editForm = ref({ outline: '', content: '', sceneLocation: '', sceneMood: '', sceneGoal: '' })
   const plotArcs = ref<any[]>([])
   const graphDelta = ref<any>(null)
@@ -27,11 +30,22 @@ export function useChapterEditor(storyId: () => string | undefined) {
     } catch { /* ignore */ }
   }
 
+  async function loadModels() {
+    try {
+      const res = await aiProviderApi.list()
+      modelOptions.value = (res.data.data || []).map((m: any) => ({
+        label: `${m.name} / ${m.model}` + (m.isDefault ? ' (默认)' : ''),
+        value: m.id
+      }))
+    } catch { /* ignore */ }
+  }
+
   async function openEdit(row: any) {
     currentChapter.value = row
     selectedChapterId.value = row.id
     editTitle.value = row.title || ''
     selectedProfileId.value = row.runtimeProfileId || null
+    selectedModelId.value = row.aiProviderConfigId || null
     editForm.value = {
       outline: row.outline || '',
       content: row.content || '',
@@ -70,6 +84,9 @@ export function useChapterEditor(storyId: () => string | undefined) {
     if (editForm.value.sceneLocation !== currentChapter.value.sceneLocation) data.sceneLocation = editForm.value.sceneLocation
     if (editForm.value.sceneMood !== currentChapter.value.sceneMood) data.sceneMood = editForm.value.sceneMood
     if (editForm.value.sceneGoal !== currentChapter.value.sceneGoal) data.sceneGoal = editForm.value.sceneGoal
+    if (selectedModelId.value !== currentChapter.value.aiProviderConfigId) {
+      data.aiProviderConfigId = selectedModelId.value
+    }
 
     if (Object.keys(data).length === 0) {
       message.info('没有变更需要保存')
@@ -112,10 +129,13 @@ export function useChapterEditor(storyId: () => string | undefined) {
     editTitle,
     selectedProfileId,
     profileOptions,
+    selectedModelId,
+    modelOptions,
     editForm,
     plotArcs,
     graphDelta,
     loadProfiles,
+    loadModels,
     openEdit,
     backToTree,
     saveConfig,

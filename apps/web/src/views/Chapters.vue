@@ -69,19 +69,39 @@
 
             <!-- Step 1: 配置区 -->
             <n-card title="Step 1：配置区" style="margin-bottom: 24px">
-                <n-form-item
-                    label="写作人格"
-                    label-placement="left"
-                    label-width="80"
-                >
-                    <n-select
-                        v-model:value="editor.selectedProfileId"
-                        :options="editor.profileOptions"
-                        style="width: 280px"
-                        placeholder="选择写作人格"
-                        :disabled="isReadonly"
-                    />
-                </n-form-item>
+                <n-grid :cols="3" :x-gap="12">
+                    <n-grid-item>
+                        <n-form-item
+                            label="写作人格"
+                            label-placement="left"
+                            label-width="80"
+                        >
+                            <n-select
+                                v-model:value="editor.selectedProfileId"
+                                :options="editor.profileOptions"
+                                style="width: 280px"
+                                placeholder="选择写作人格"
+                                :disabled="isReadonly"
+                            />
+                        </n-form-item>
+                    </n-grid-item>
+                    <n-grid-item>
+                        <n-form-item
+                            label="运行模型"
+                            label-placement="left"
+                            label-width="80"
+                        >
+                            <n-select
+                                v-model:value="editor.selectedModelId"
+                                :options="editor.modelOptions"
+                                style="width: 280px"
+                                placeholder="选择运行模型"
+                                clearable
+                                :disabled="isReadonly"
+                            />
+                        </n-form-item>
+                    </n-grid-item>
+                </n-grid>
 
                 <n-divider />
 
@@ -211,17 +231,17 @@
                 </template>
             </n-card>
 
-            <!-- Step 2: 生成区 -->
+            <!-- Step 2: Prompt -->
             <n-card
                 v-if="!isReadonly"
-                title="Step 2：生成区"
+                title="Step 2：Prompt"
                 style="margin-bottom: 24px"
             >
                 <n-form-item label="Prompt 内容">
                     <n-input
                         v-model:value="prompt.editablePrompt"
                         type="textarea"
-                        :rows="12"
+                        :rows="10"
                         placeholder="点击「生成 Prompt」按钮生成 Prompt..."
                         readonly
                     />
@@ -310,258 +330,150 @@
                         />
                     </n-space>
                 </n-card>
-
-                <n-divider />
-
-                <!-- 候选生成 -->
-                <n-space align="center" style="margin-bottom: 16px">
-                    <n-button
-                        type="primary"
-                        @click="handleGenerateDefault"
-                        :loading="drafts.generating"
-                        :disabled="drafts.generating"
-                    >
-                        {{
-                            drafts.generating
-                                ? "生成中..."
-                                : "生成默认候选 (×3)"
-                        }}
-                    </n-button>
-                    <n-button
-                        @click="drafts.showCustomModal = true"
-                        :disabled="drafts.generating"
-                        >生成自定义候选 (×1)</n-button
-                    >
-                    <n-text v-if="drafts.generating" depth="3"
-                        >AI 正在创作中，请耐心等待</n-text
-                    >
-                </n-space>
-
-                <!-- 候选展示 -->
-                <n-grid
-                    v-if="drafts.drafts.length > 0"
-                    :cols="3"
-                    :x-gap="12"
-                    :y-gap="12"
-                >
-                    <n-grid-item v-for="draft in drafts.drafts" :key="draft.id">
-                        <n-card
-                            size="small"
-                            style="display: flex; flex-direction: column"
-                            :bordered="true"
-                        >
-                            <template #header>
-                                <n-space
-                                    align="center"
-                                    justify="space-between"
-                                    style="width: 100%"
-                                >
-                                    <n-text strong>{{ draft.version }}</n-text>
-                                    <n-tag
-                                        :type="draftStatusType(draft.status)"
-                                        size="small"
-                                        >{{ draft.status }}</n-tag
-                                    >
-                                </n-space>
-                            </template>
-
-                            <n-tabs type="segment" size="small" style="flex: 1">
-                                <n-tab-pane name="content" tab="结果">
-                                    <n-scrollbar style="max-height: 280px">
-                                        <n-space
-                                            v-if="draft.status === 'generating'"
-                                            vertical
-                                            align="center"
-                                            style="padding: 40px 0"
-                                        >
-                                            <n-spin size="medium" />
-                                            <n-text
-                                                depth="3"
-                                                style="font-size: 12px"
-                                                >AI 正在创作中...</n-text
-                                            >
-                                        </n-space>
-                                        <n-space
-                                            v-else-if="
-                                                draft.status === 'failed'
-                                            "
-                                            vertical
-                                            align="center"
-                                            style="padding: 20px 0"
-                                        >
-                                            <n-text
-                                                type="error"
-                                                style="font-size: 13px"
-                                                >生成失败</n-text
-                                            >
-                                            <n-text
-                                                depth="3"
-                                                style="font-size: 12px"
-                                                >{{
-                                                    draft.errorMessage ||
-                                                    "未知错误"
-                                                }}</n-text
-                                            >
-                                        </n-space>
-                                        <n-p
-                                            v-else
-                                            style="
-                                                white-space: pre-wrap;
-                                                line-height: 1.8;
-                                                font-size: 13px;
-                                            "
-                                            >{{
-                                                draft.content || "暂无内容"
-                                            }}</n-p
-                                        >
-                                    </n-scrollbar>
-                                </n-tab-pane>
-                                <n-tab-pane name="prompt" tab="Prompt">
-                                    <n-scrollbar style="max-height: 280px">
-                                        <n-p
-                                            style="
-                                                white-space: pre-wrap;
-                                                font-size: 12px;
-                                                color: #666;
-                                            "
-                                            >{{
-                                                prompt.formatCompiledPrompt(
-                                                    draft.compiledPrompt,
-                                                )
-                                            }}</n-p
-                                        >
-                                    </n-scrollbar>
-                                </n-tab-pane>
-                                <n-tab-pane name="params" tab="参数">
-                                    <n-space
-                                        vertical
-                                        size="small"
-                                        style="font-size: 12px"
-                                    >
-                                        <n-text
-                                            >temperature:
-                                            {{ draft.temperature }}</n-text
-                                        >
-                                        <n-text
-                                            >maxTokens:
-                                            {{ draft.maxTokens }}</n-text
-                                        >
-                                        <n-text
-                                            >model:
-                                            {{
-                                                formatParams(draft.params).model
-                                            }}</n-text
-                                        >
-                                        <n-text
-                                            >耗时:
-                                            {{
-                                                formatParams(draft.params)
-                                                    .durationMs
-                                            }}ms</n-text
-                                        >
-                                    </n-space>
-                                </n-tab-pane>
-                            </n-tabs>
-
-                            <template #footer>
-                                <n-space align="center">
-                                    <n-button
-                                        size="small"
-                                        type="primary"
-                                        @click="handleSelectDraft(draft.id)"
-                                        :disabled="
-                                            draft.status === 'generating' ||
-                                            !draft.content
-                                        "
-                                        >采用</n-button
-                                    >
-                                    <n-button
-                                        size="small"
-                                        @click="drafts.scoreDraft(draft.id)"
-                                        :loading="
-                                            drafts.scoringDraftId === draft.id
-                                        "
-                                        :disabled="
-                                            !draft.content ||
-                                            (drafts.scoringDraftId !== null &&
-                                                drafts.scoringDraftId !==
-                                                    draft.id)
-                                        "
-                                        >评分</n-button
-                                    >
-                                    <n-button
-                                        size="small"
-                                        @click="
-                                            drafts.confirmDeleteDraft(
-                                                draft.id,
-                                                draft.version,
-                                            )
-                                        "
-                                        >删除</n-button
-                                    >
-                                    <n-text
-                                        v-if="draft.content"
-                                        depth="3"
-                                        style="font-size: 12px"
-                                        >{{
-                                            draft.content.length.toLocaleString()
-                                        }}
-                                        字</n-text
-                                    >
-                                </n-space>
-                            </template>
-                        </n-card>
-                    </n-grid-item>
-                </n-grid>
             </n-card>
 
-            <!-- Step 3: 正文与归档 -->
+            <!-- Step 3: 正文编辑 -->
             <n-card
-                title="Step 3：正文与归档"
-                v-if="
-                    !isReadonly &&
-                    drafts.drafts.length > 0 &&
-                    drafts.drafts.some(
-                        (d: any) =>
-                            d.status === 'completed' || d.status === 'selected',
-                    )
-                "
+                title="Step 3：正文编辑"
+                v-if="!isReadonly"
+                style="margin-bottom: 24px"
             >
-                <n-input
-                    v-model:value="editor.editForm.content"
-                    type="textarea"
-                    :rows="20"
-                    placeholder="章节正文..."
-                    style="margin-bottom: 12px"
-                />
-                <n-space align="center" justify="space-between">
-                    <n-space>
-                        <n-button type="primary" @click="editor.saveContent"
-                            >保存正文</n-button
+                <n-grid :cols="2" :x-gap="16" style="min-height: 480px">
+                    <!-- 左侧：候选生成区 -->
+                    <n-grid-item>
+                        <n-space align="center" style="margin-bottom: 12px">
+                            <n-button
+                                type="primary"
+                                size="small"
+                                @click="handleGenerateDefault"
+                                :loading="drafts.generating"
+                                :disabled="drafts.generating"
+                            >
+                                {{ drafts.generating ? "生成中..." : "默认候选 ×3" }}
+                            </n-button>
+                            <n-button
+                                size="small"
+                                @click="drafts.showCustomModal = true"
+                                :disabled="drafts.generating"
+                                >自定义 ×1</n-button
+                            >
+                            <n-text v-if="drafts.generating" depth="3" style="font-size: 12px">AI 创作中...</n-text>
+                        </n-space>
+
+                        <!-- 候选 Tabs -->
+                        <n-tabs
+                            v-if="drafts.drafts.length > 0"
+                            type="card"
+                            size="small"
                         >
-                        <n-button
-                            @click="handleArchive"
-                            :loading="archiving"
-                            :disabled="
-                                !editor.editForm.content?.trim() || archiving
-                            "
+                            <n-tab-pane
+                                v-for="draft in drafts.drafts"
+                                :key="draft.id"
+                                :name="draft.id"
+                                :tab="draft.version"
+                            >
+                                <n-tabs type="segment" size="small" style="max-height: 360px">
+                                    <n-tab-pane name="content" tab="结果">
+                                        <n-scrollbar style="max-height: 300px">
+                                            <n-space
+                                                v-if="draft.status === 'generating'"
+                                                vertical
+                                                align="center"
+                                                style="padding: 40px 0"
+                                            >
+                                                <n-spin size="medium" />
+                                                <n-text depth="3" style="font-size: 12px">AI 正在创作中...</n-text>
+                                            </n-space>
+                                            <n-space
+                                                v-else-if="draft.status === 'failed'"
+                                                vertical
+                                                align="center"
+                                                style="padding: 20px 0"
+                                            >
+                                                <n-text type="error" style="font-size: 13px">生成失败</n-text>
+                                                <n-text depth="3" style="font-size: 12px">{{ draft.errorMessage || "未知错误" }}</n-text>
+                                            </n-space>
+                                            <n-p
+                                                v-else
+                                                style="white-space: pre-wrap; line-height: 1.8; font-size: 13px;"
+                                            >{{ draft.content || "暂无内容" }}</n-p>
+                                        </n-scrollbar>
+                                    </n-tab-pane>
+                                    <n-tab-pane name="prompt" tab="Prompt">
+                                        <n-scrollbar style="max-height: 300px">
+                                            <n-p style="white-space: pre-wrap; font-size: 12px; color: #666;">
+                                                {{ prompt.formatCompiledPrompt(draft.compiledPrompt) }}
+                                            </n-p>
+                                        </n-scrollbar>
+                                    </n-tab-pane>
+                                    <n-tab-pane name="params" tab="参数">
+                                        <n-space vertical size="small" style="font-size: 12px">
+                                            <n-text>temperature: {{ draft.temperature }}</n-text>
+                                            <n-text>maxTokens: {{ draft.maxTokens }}</n-text>
+                                            <n-text>model: {{ formatParams(draft.params).model }}</n-text>
+                                            <n-text>耗时: {{ formatParams(draft.params).durationMs }}ms</n-text>
+                                        </n-space>
+                                    </n-tab-pane>
+                                </n-tabs>
+
+                                <n-divider style="margin: 8px 0" />
+                                <n-space align="center" justify="space-between">
+                                    <n-space>
+                                        <n-button
+                                            size="small"
+                                            type="primary"
+                                            @click="handleAdoptDraft(draft)"
+                                            :disabled="draft.status === 'generating' || !draft.content"
+                                        >采用此版本</n-button>
+                                        <n-button
+                                            size="small"
+                                            @click="drafts.scoreDraft(draft.id)"
+                                            :loading="drafts.scoringDraftId === draft.id"
+                                            :disabled="!draft.content || (drafts.scoringDraftId !== null && drafts.scoringDraftId !== draft.id)"
+                                        >评分</n-button>
+                                        <n-button
+                                            size="small"
+                                            @click="drafts.confirmDeleteDraft(draft.id, draft.version)"
+                                        >删除</n-button>
+                                    </n-space>
+                                    <n-text v-if="draft.content" depth="3" style="font-size: 12px">
+                                        {{ draft.content.length.toLocaleString() }} 字
+                                    </n-text>
+                                </n-space>
+                            </n-tab-pane>
+                        </n-tabs>
+
+                        <!-- 空状态 -->
+                        <n-empty
+                            v-else
+                            description="暂无候选稿"
+                            style="margin-top: 40px"
                         >
-                            归档{{
-                                !editor.editForm.content?.trim()
-                                    ? "（需先填写正文）"
-                                    : ""
-                            }}
-                        </n-button>
-                    </n-space>
-                    <n-text depth="3" style="font-size: 13px">
-                        总字数：{{
-                            (
-                                editor.editForm.content || ""
-                            ).length.toLocaleString()
-                        }}
-                        字
-                    </n-text>
-                </n-space>
+                            <template #extra>
+                                <n-text depth="3" style="font-size: 12px">点击上方按钮生成，或直接编辑右侧正文</n-text>
+                            </template>
+                        </n-empty>
+                    </n-grid-item>
+
+                    <!-- 右侧：正文编辑区 -->
+                    <n-grid-item>
+                        <n-input
+                            v-model:value="editor.editForm.content"
+                            type="textarea"
+                            :rows="22"
+                            placeholder="在这里粘贴或编辑章节正文..."
+                        />
+                        <n-space align="center" justify="space-between" style="margin-top: 12px">
+                            <n-space>
+                                <n-button type="primary" size="small" @click="editor.saveContent">保存正文</n-button>
+                                <n-button size="small" @click="handleArchive" :loading="archiving">归档</n-button>
+                            </n-space>
+                            <n-text depth="3" style="font-size: 13px">
+                                {{ (editor.editForm.content || "").length.toLocaleString() }} 字
+                            </n-text>
+                        </n-space>
+                    </n-grid-item>
+                </n-grid>
             </n-card>
 
             <!-- Step 3 只读：正文展示 -->
@@ -876,6 +788,7 @@ import {
     NCollapse,
     NCollapseItem,
     NCheckbox,
+    useDialog,
 } from "naive-ui";
 import { ArrowBackOutline } from "@vicons/ionicons5";
 import ChapterBranchTree from "../components/ChapterBranchTree.vue";
@@ -899,11 +812,13 @@ const debouncedSaveConfig = useDebounceFn(editor.saveConfig, 500);
 // 归档状态（放在页面层因为涉及跳转）
 const archiving = ref(false);
 const isReadonly = ref(false);
+const dialog = useDialog();
 
 // ========== 生命周期 ==========
 onMounted(() => {
     prompt.loadDefaultModel();
     editor.loadProfiles();
+    editor.loadModels();
     if (route.params.storyId) tree.loadChapterTree();
 });
 
@@ -986,21 +901,62 @@ async function handleGenerateCustom() {
     drafts.showCustomModal = false;
 }
 
-async function handleSelectDraft(draftId: string) {
-    if (!editor.currentChapter) return;
-    const content = await drafts.selectDraft(editor.currentChapter.id, draftId);
-    if (content) editor.editForm.content = content;
+function handleAdoptDraft(draft: any) {
+    if (!draft.content) return;
+    const currentContent = editor.editForm.content || '';
+    if (currentContent.trim() && currentContent !== draft.content) {
+        dialog.warning({
+            title: '确认覆盖',
+            content: '右侧正文已有内容，采用此版本将覆盖当前正文。是否继续？',
+            positiveText: '覆盖',
+            negativeText: '取消',
+            positiveButtonProps: { type: 'primary' },
+            onPositiveClick: () => {
+                editor.editForm.content = draft.content;
+            }
+        });
+    } else {
+        editor.editForm.content = draft.content;
+    }
 }
 
-async function handleArchive() {
+function handleArchive() {
     if (!editor.currentChapter) return;
-    archiving.value = true;
-    try {
-        const result = await editor.archiveChapter(editor.editForm.content);
-        if (result.success) await handleBackToTree();
-    } finally {
-        archiving.value = false;
+    const outline = editor.editForm.outline || '';
+    const content = editor.editForm.content || '';
+    if (!outline.trim()) {
+        dialog.error({ title: '无法归档', content: '大纲不能为空' });
+        return;
     }
+    if (!content.trim()) {
+        dialog.error({ title: '无法归档', content: '正文不能为空' });
+        return;
+    }
+    if (content.length < outline.length) {
+        dialog.error({ title: '无法归档', content: `正文长度（${content.length}）不能小于大纲长度（${outline.length}）` });
+        return;
+    }
+    dialog.warning({
+        title: '确认归档',
+        content: '归档后将触发 AI 提取记忆、知识图谱等操作。确定要归档吗？',
+        positiveText: '归档',
+        negativeText: '取消',
+        positiveButtonProps: { type: 'primary' },
+        onPositiveClick: async () => {
+            archiving.value = true;
+            // try {
+            //     const result = await editor.archiveChapter(editor.editForm.content);
+            //     if (result.success) await handleBackToTree();
+            // } finally {
+            //     archiving.value = false;
+            // }
+            editor.archiveChapter(editor.editForm.content).then(result => {
+                if (result.success) handleBackToTree();
+            }).finally(() => {
+                archiving.value = false;
+            })
+        }
+    });
 }
 
 // ========== 辅助常量 & 函数 ==========
@@ -1054,22 +1010,5 @@ function arcStatusType(status?: string) {
     }
 }
 
-function draftStatusType(status?: string) {
-    switch (status) {
-        case "completed":
-            return "success";
-        case "candidate":
-            return "success";
-        case "selected":
-            return "info";
-        case "generating":
-            return "warning";
-        case "failed":
-            return "error";
-        case "rejected":
-            return "default";
-        default:
-            return "default";
-    }
-}
+
 </script>

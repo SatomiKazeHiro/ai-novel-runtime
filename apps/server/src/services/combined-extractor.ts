@@ -3,27 +3,28 @@ import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
 import { cleanJsonBlock } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
-import { saveExtractedMemory, type MemoryExtractionResult } from './memory-extractor.js'
+import { type MemoryExtractionResult, extractMemoryFromChapter } from './memory-extractor.js'
 import { type GraphExtractionResult } from './graph-extractor.js'
-import { savePlotArcs, type PlotArcAnalysis } from './plot-extractor.js'
+import { type PlotArcAnalysis, extractPlotArcs } from './plot-extractor.js'
 
-interface CombinedExtractionResult {
-  memories: MemoryExtractionResult
+export interface CombinedExtractionData {
+  memories: MemoryExtractionResult | null
   graph: GraphExtractionResult
-  plotArcs: PlotArcAnalysis
+  plotArcs: PlotArcAnalysis | null
 }
 
 /**
  * 合并提取：记忆 + 图谱 + 剧情弧线，一次 API 调用完成
+ * 纯提取，不写入数据库。写入请在外层事务中统一执行。
  */
-export async function extractAndSaveAll(
+export async function extractAll(
   app: FastifyInstance,
   chapterId: string,
   storyId: string,
   content: string,
   outline?: string,
   fromChapterNumber?: number
-): Promise<{ memories: number; graph: { nodes: any[]; edges: any[] }; arcs: number } | null> {
+): Promise<CombinedExtractionData | null> {
   const prisma = app.prisma
   const chNum = fromChapterNumber ?? 0
 
@@ -99,7 +100,7 @@ importance 评分标准：
 - emotions: 主要角色情绪变化（字符串数组）
 - foreshadowing: 新埋下的伏笔（字符串数组）
 - relationshipChanges: 角色关系变化（字符串数组）
-- characterStatusChanges: 角色状态变化（对象，如 {"张三": {"rank": "初级", "location": "北京"}}}）
+- characterStatusChanges: 角色状态变化（对象，如 {"张三": {"rank": "初级", "location": "北京", "relationships": {"李四": "兄弟", "王五": "敌对"}}}）。其中 relationships 子键可选，用于表达该角色与其他角色的关系变化。
 - timelineDay: 本章发生在第几天（数字，不确定则 null）
 - summary: 本章一句话摘要（50字以内）
 - scenes: 推动剧情的关键地点（对象数组，如 [{ "location": "名称", "description": "场景描写（可选）", "event": "在此发生的事件概括", "importance": 1-10 }]）
@@ -146,62 +147,31 @@ ${content.slice(0, 8000)}`
     })
     if (!raw) return null
 
-    const result: CombinedExtractionResult = JSON.parse(cleanJsonBlock(raw))
+    const result = JSON.parse(cleanJsonBlock(raw))
 
-    // 保存记忆（标记来源章节号）
-    await saveExtractedMemory(app, chapterId, storyId, result.memories, chNum)
+    const memories: MemoryExtractionResult = result.memories
+    const graph: GraphExtractionResult = result.graph || { nodes: [], edges: [] }
+    const plotArcs: PlotArcAnalysis = result.plotArcs
 
-    // 图谱提取结果（过滤低重要性 + type 规范化），由 graph-organizer 处理合并
-    const TYPE_MAP: Record<string, string> = {
-      '角色': 'character', '人物': 'character',
-      '势力': 'faction', '组织': 'faction', '门派': 'faction',
-      '事件': 'event',
-      '物品': 'item', '道具': 'item', '武器': 'item', '装备': 'item',
-      '兵器': 'item', '法宝': 'item', '灵器': 'item',
-      'weapon': 'item', 'prop': 'item', 'object': 'item', 'tool': 'item',
-      'armor': 'item', 'treasure': 'item', 'artifact': 'item', 'gear': 'item',
-      'realm': 'faction', 'sect': 'faction', 'clan': 'faction', 'guild': 'faction',
-      'place': 'event', 'location': 'event', 'scene': 'event',
-    }
-    const normalizeType = (t: string) => TYPE_MAP[t] || t
-
-    const filteredNodes = (result.graph?.nodes || []).filter(n => n.importance >= 6).map(n => ({
-      ...n,
-      type: normalizeType(n.type)
-    })) as any[]
-
-    // 建立 key -> 规范化后的 type 映射，用于修正边
-    const keyToType = new Map<string, string>()
-    for (const n of filteredNodes) keyToType.set(n.key, n.type)
-
-    const normalizedEdges = (result.graph?.edges || []).map(e => ({
-      ...e,
-      fromType: keyToType.get(e.fromKey) || normalizeType(e.fromType),
-      toType: keyToType.get(e.toKey) || normalizeType(e.toType)
-    }))
-
-    // 保存剧情弧线
-    await savePlotArcs(app, storyId, result.plotArcs?.arcs || [])
-
-    const memCount = (result.memories?.mainEvents?.length || 0) +
-                     (result.memories?.sideEvents?.length || 0) +
-                     (result.memories?.emotions?.length || 0) +
-                     (result.memories?.foreshadowing?.length || 0) +
-                     (result.memories?.relationshipChanges?.length || 0) +
-                     (result.memories?.scenes?.length || 0) +
-                     Object.keys(result.memories?.characterStatusChanges || {}).length
+    // 统计
+    const memCount = (memories?.mainEvents?.length || 0) +
+                     (memories?.sideEvents?.length || 0) +
+                     (memories?.emotions?.length || 0) +
+                     (memories?.foreshadowing?.length || 0) +
+                     (memories?.relationshipChanges?.length || 0) +
+                     (memories?.scenes?.length || 0) +
+                     Object.keys(memories?.characterStatusChanges || {}).length
 
     app.log.info(
-      `[CombinedExtractor] Saved: ${memCount} memories, ${filteredNodes.length} nodes, ${normalizedEdges.length} edges, ${result.plotArcs?.arcs?.length || 0} arcs`
+      `[CombinedExtractor] Extracted: ${memCount} memories, ${graph.nodes?.length || 0} nodes, ${graph.edges?.length || 0} edges, ${plotArcs?.arcs?.length || 0} arcs`
     )
 
-    return {
-      memories: memCount,
-      graph: { nodes: filteredNodes, edges: normalizedEdges },
-      arcs: result.plotArcs?.arcs?.length || 0
-    }
+    return { memories, graph, plotArcs }
   } catch (err: any) {
     app.log.error(`[CombinedExtractor] Failed: ${err.message}`)
     return null
   }
 }
+
+// 兼容旧接口
+export { extractMemoryFromChapter }

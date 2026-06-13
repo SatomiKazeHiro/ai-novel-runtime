@@ -64,38 +64,14 @@ export const generateQueue = redis
   ? new BullQueue('generate', { connection: redis })
   : new MemoryQueue('generate') as any
 
-export const scoreQueue = redis
-  ? new BullQueue('score', { connection: redis })
-  : new MemoryQueue('score') as any
-
-export const memoryQueue = redis
-  ? new BullQueue('memory', { connection: redis })
-  : new MemoryQueue('memory') as any
-
 // 处理器注册（同时支持 MemoryQueue 和 BullQueue Worker）
 let generateProcessor: Function | null = null
-let scoreProcessor: Function | null = null
-let memoryProcessor: Function | null = null
 
 export function registerGenerateProcessor(fn: Function) {
   generateProcessor = fn
   // 内存队列：直接绑定 handler
   if (!redis) {
     (generateQueue as MemoryQueue).on('generate-chapter', fn)
-  }
-}
-
-export function registerScoreProcessor(fn: Function) {
-  scoreProcessor = fn
-  if (!redis) {
-    (scoreQueue as MemoryQueue).on('score-draft', fn)
-  }
-}
-
-export function registerMemoryProcessor(fn: Function) {
-  memoryProcessor = fn
-  if (!redis) {
-    (memoryQueue as MemoryQueue).on('update-memory', fn)
   }
 }
 
@@ -114,21 +90,5 @@ export function startWorkers() {
     return await generateProcessor(job)
   }, { connection: redis })
 
-  const scoreWorker = new BullWorker('score', async (job: Job) => {
-    console.log('Processing score job', job.id)
-    if (!scoreProcessor) {
-      throw new Error('Score processor not registered')
-    }
-    return await scoreProcessor(job)
-  }, { connection: redis })
-
-  const memoryWorker = new BullWorker('memory', async (job: Job) => {
-    console.log('Processing memory job', job.id)
-    if (!memoryProcessor) {
-      throw new Error('Memory processor not registered')
-    }
-    return await memoryProcessor(job)
-  }, { connection: redis })
-
-  return { generateWorker, scoreWorker, memoryWorker }
+  return { generateWorker }
 }

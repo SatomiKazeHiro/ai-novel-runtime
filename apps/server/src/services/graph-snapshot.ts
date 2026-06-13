@@ -28,13 +28,11 @@ export interface GraphSnapshot {
  * graphDelta = A (AI 整理后的本章范围图谱)
  */
 export async function saveGraphSnapshotAndDelta(
-  app: FastifyInstance,
+  prisma: any,
   chapterId: string,
   storyId: string,
   graphResult: { mergedGraph: GraphSnapshot; chapterGraph: GraphSnapshot }
 ): Promise<{ snapshot: GraphSnapshot; delta: GraphSnapshot } | null> {
-  const prisma = app.prisma
-
   try {
     // 1. 清空当前工作表
     await prisma.graphEdge.deleteMany({ where: { storyId } })
@@ -63,10 +61,7 @@ export async function saveGraphSnapshotAndDelta(
       if (!fromId || !toId) continue
 
       const edgeKey = `${fromId}:${toId}:${edge.relation}`
-      if (seenEdges.has(edgeKey)) {
-        app.log.warn(`[GraphSnapshot] Skipping duplicate edge: ${edge.fromKey} -[${edge.relation}]-> ${edge.toKey}`)
-        continue
-      }
+      if (seenEdges.has(edgeKey)) continue
       seenEdges.add(edgeKey)
 
       await prisma.graphEdge.create({
@@ -89,11 +84,9 @@ export async function saveGraphSnapshotAndDelta(
       }
     })
 
-    app.log.info(`[GraphSnapshot] Chapter ${chapterId}: ${graphResult.mergedGraph.nodes.length} nodes, ${graphResult.mergedGraph.edges.length} edges`)
-
     return { snapshot: graphResult.mergedGraph, delta: graphResult.chapterGraph }
   } catch (err: any) {
-    app.log.error(`[GraphSnapshot] Failed: ${err.message}`)
+    console.error(`[GraphSnapshot] Failed: ${err.message}`)
     return null
   }
 }

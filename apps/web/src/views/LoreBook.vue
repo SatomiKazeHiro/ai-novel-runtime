@@ -2,22 +2,22 @@
   <div>
     <n-space justify="space-between" align="center" style="margin-bottom: 16px">
       <n-h1>世界观管理</n-h1>
-      <n-button type="primary" @click="showModal = true">新建条目</n-button>
+      <n-button type="primary" @click="openCreate">新建条目</n-button>
     </n-space>
 
     <n-tabs v-model:value="activeCategory" type="segment" @update:value="loadLore">
-      <n-tab-pane v-for="cat in categories" :key="cat.key" :name="cat.key" :tab="cat.label" />
+      <n-tab-pane v-for="cat in categories" :key="cat.value" :name="cat.value" :tab="cat.label" />
     </n-tabs>
 
     <n-data-table :columns="columns" :data="loreItems" :loading="loading" style="margin-top: 16px" />
 
-    <n-modal v-model:show="showModal" title="新建世界观条目" preset="card" style="width: 600px">
+    <n-modal v-model:show="showModal" :title="isEdit ? '编辑世界观条目' : '新建世界观条目'" preset="card" style="width: 600px">
       <n-form :model="form" label-placement="left" label-width="80">
         <n-form-item label="分类" required>
-          <n-select v-model:value="form.category" :options="categories" placeholder="选择分类" />
+          <n-select v-model:value="form.category" :options="categories" placeholder="选择分类" :disabled="isEdit" />
         </n-form-item>
         <n-form-item label="标识" required>
-          <n-input v-model:value="form.slug" placeholder="英文标识" />
+          <n-input v-model:value="form.slug" placeholder="英文标识" :disabled="isEdit" />
         </n-form-item>
         <n-form-item label="名称" required>
           <n-input v-model:value="form.name" placeholder="条目名称" />
@@ -29,7 +29,7 @@
       <template #footer>
         <n-space justify="end">
           <n-button @click="showModal = false">取消</n-button>
-          <n-button type="primary" @click="handleCreate">创建</n-button>
+          <n-button type="primary" @click="handleSubmit">{{ isEdit ? '保存' : '创建' }}</n-button>
         </n-space>
       </template>
     </n-modal>
@@ -41,24 +41,27 @@ import { ref, onMounted, h, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NH1, NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSelect, NTabs, NTabPane,
-  type DataTableColumns
+  useDialog, type DataTableColumns
 } from 'naive-ui'
 import { loreApi } from '../api/lore'
 
 const categories = [
-  { key: 'rank', label: '等级' },
-  { key: 'map', label: '地图' },
-  { key: 'skill', label: '技能' },
-  { key: 'faction', label: '势力' },
-  { key: 'item', label: '物品' },
-  { key: 'rule', label: '规则' }
+  { value: 'rank', label: '等级' },
+  { value: 'map', label: '地图' },
+  { value: 'skill', label: '技能' },
+  { value: 'faction', label: '势力' },
+  { value: 'item', label: '物品' },
+  { value: 'rule', label: '规则' }
 ]
 
 const route = useRoute()
+const dialog = useDialog()
 const activeCategory = ref('rank')
 const loreItems = ref<any[]>([])
 const loading = ref(false)
 const showModal = ref(false)
+const isEdit = ref(false)
+const editId = ref<string | null>(null)
 const form = ref({ category: 'rank', slug: '', name: '', content: '' })
 
 const columns: DataTableColumns<any> = [
@@ -68,9 +71,14 @@ const columns: DataTableColumns<any> = [
   {
     title: '操作',
     key: 'actions',
-    width: 100,
+    width: 160,
     render(row) {
-      return h(NButton, { size: 'small', type: 'error', onClick: () => handleDelete(row.id) }, { default: () => '删除' })
+      return h(NSpace, null, {
+        default: () => [
+          h(NButton, { size: 'small', onClick: () => openEdit(row) }, { default: () => '编辑' }),
+          h(NButton, { size: 'small', type: 'error', onClick: () => handleDelete(row) }, { default: () => '删除' })
+        ]
+      })
     }
   }
 ]
@@ -89,17 +97,53 @@ async function loadLore() {
   }
 }
 
-async function handleCreate() {
+function openCreate() {
+  isEdit.value = false
+  editId.value = null
+  form.value = { category: activeCategory.value, slug: '', name: '', content: '' }
+  showModal.value = true
+}
+
+function openEdit(row: any) {
+  isEdit.value = true
+  editId.value = row.id
+  form.value = {
+    category: row.category,
+    slug: row.slug,
+    name: row.name,
+    content: row.content || ''
+  }
+  showModal.value = true
+}
+
+async function handleSubmit() {
   if (!route.params.storyId || !form.value.slug || !form.value.name) return
-  await loreApi.create(route.params.storyId as string, form.value)
+
+  if (isEdit.value && editId.value) {
+    await loreApi.update(editId.value, { name: form.value.name, content: form.value.content })
+  } else {
+    await loreApi.create(route.params.storyId as string, form.value)
+  }
+
   showModal.value = false
+  isEdit.value = false
+  editId.value = null
   form.value = { category: activeCategory.value, slug: '', name: '', content: '' }
   await loadLore()
 }
 
-async function handleDelete(id: string) {
-  await loreApi.remove(id)
-  await loadLore()
+function handleDelete(row: any) {
+  dialog.warning({
+    title: '确认删除',
+    content: `确定要删除条目「${row.name}」吗？删除后不可恢复。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    positiveButtonProps: { type: 'error' },
+    onPositiveClick: async () => {
+      await loreApi.remove(row.id)
+      await loadLore()
+    }
+  })
 }
 
 watch(() => route.params.storyId, loadLore)

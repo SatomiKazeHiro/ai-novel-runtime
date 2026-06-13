@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
-import { cleanJsonBlock } from '@novel-runtime/shared'
+import { cleanJsonBlock, safeJsonParse } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
 
@@ -17,8 +17,24 @@ export interface PlotArcAnalysis {
   }>
 }
 
+export interface PlotArcWrite {
+  storyId: string
+  name: string
+  type: string
+  status: string
+  progress: number
+  stages: string
+  currentStage: string
+  nextGoal: string
+  unresolved: string
+  summary: string
+  isNew: boolean
+  existingId?: string
+}
+
 /**
  * 分析章节内容，提取/更新剧情弧线
+ * 纯提取，不写入数据库
  */
 export async function extractPlotArcs(
   app: FastifyInstance,
@@ -29,7 +45,7 @@ export async function extractPlotArcs(
 ): Promise<PlotArcAnalysis | null> {
   const prisma = app.prisma
 
-  // 1. 获取现有弧线
+  // 1. 获取现有弧线（用于构建 Prompt）
   const existingArcs = await prisma.plotArc.findMany({
     where: { storyId },
     orderBy: { updatedAt: 'desc' }
@@ -38,7 +54,7 @@ export async function extractPlotArcs(
   // 2. 构建提示
   const existingArcsText = existingArcs.length > 0
     ? existingArcs.map(a => {
-        const stages = JSON.parse(a.stages || '[]')
+        const stages = safeJsonParse(a.stages, [])
         return `- ${a.name} (${a.type}, ${a.status}, 进度${a.progress}%): 当前阶段「${a.currentStage || '未知'}」, 下一目标「${a.nextGoal || '未知'}」`
       }).join('\n')
     : '暂无已追踪的剧情弧线'
@@ -89,10 +105,6 @@ ${content.slice(0, 5000)}
     if (!raw) return null
 
     const result: PlotArcAnalysis = JSON.parse(cleanJsonBlock(raw))
-
-    // 4. 保存到数据库
-    await savePlotArcs(app, storyId, result.arcs || [])
-
     return result
   } catch (err: any) {
     app.log.error(`[PlotExtractor] Failed: ${err.message}`)
@@ -101,21 +113,22 @@ ${content.slice(0, 5000)}
 }
 
 /**
- * 保存提取的剧情弧线到数据库
+ * 准备剧情弧线待写入数据（纯数据准备）
  */
-export async function savePlotArcs(
-  app: FastifyInstance,
+export async function preparePlotArcWrites(
+  prisma: any,
   storyId: string,
   arcs: PlotArcAnalysis['arcs']
-) {
-  const prisma = app.prisma
+): Promise<PlotArcWrite[]> {
+  const writes: PlotArcWrite[] = []
+
   for (const arc of arcs || []) {
     const existing = await prisma.plotArc.findFirst({
       where: { storyId, name: arc.name }
     })
 
     const stages = existing
-      ? JSON.parse(existing.stages || '[]')
+      ? safeJsonParse<any[]>(existing.stages, [])
       : []
 
     // 如果当前阶段是新的，添加到 stages 列表
@@ -123,7 +136,9 @@ export async function savePlotArcs(
       stages.push({ stage: arc.currentStage, completed: arc.status === 'completed', description: arc.summary })
     }
 
-    const data = {
+    writes.push({
+      storyId,
+      name: arc.name,
       type: arc.type,
       status: arc.status,
       progress: arc.progress,
@@ -131,19 +146,50 @@ export async function savePlotArcs(
       currentStage: arc.currentStage,
       nextGoal: arc.nextGoal,
       unresolved: JSON.stringify(arc.unresolved || []),
-      summary: arc.summary
+      summary: arc.summary,
+      isNew: !existing,
+      existingId: existing?.id
+    })
+  }
+
+  return writes
+}
+
+/**
+ * 在事务中提交剧情弧线写入
+ */
+export async function commitPlotArcWrites(tx: any, writes: PlotArcWrite[]): Promise<void> {
+  for (const w of writes) {
+    const data = {
+      type: w.type,
+      status: w.status,
+      progress: w.progress,
+      stages: w.stages,
+      currentStage: w.currentStage,
+      nextGoal: w.nextGoal,
+      unresolved: w.unresolved,
+      summary: w.summary
     }
 
-    if (existing) {
-      await prisma.plotArc.update({ where: { id: existing.id }, data })
-      app.log.info(`[PlotExtractor] Updated arc: ${arc.name} -> ${arc.status} ${arc.progress}%`)
-    } else {
-      await prisma.plotArc.create({
-        data: { storyId, name: arc.name, ...data }
-      })
-      app.log.info(`[PlotExtractor] Created new arc: ${arc.name}`)
+    if (w.isNew) {
+      await tx.plotArc.create({ data: { storyId: w.storyId, name: w.name, ...data } })
+    } else if (w.existingId) {
+      await tx.plotArc.update({ where: { id: w.existingId }, data })
     }
   }
+}
+
+/**
+ * 兼容旧接口：直接写入数据库
+ * 已废弃，新代码请使用 preparePlotArcWrites + commitPlotArcWrites
+ */
+export async function savePlotArcs(
+  app: FastifyInstance,
+  storyId: string,
+  arcs: PlotArcAnalysis['arcs']
+) {
+  const writes = await preparePlotArcWrites(app.prisma, storyId, arcs)
+  await commitPlotArcWrites(app.prisma, writes)
 }
 
 /**
@@ -167,7 +213,7 @@ export async function getActivePlotArcs(
   if (arcs.length === 0) return ''
 
   const lines = arcs.map((a: any) => {
-    const unresolved = JSON.parse(a.unresolved || '[]')
+    const unresolved = safeJsonParse(a.unresolved, [])
     let text = `[${a.type === 'main' ? '主线' : '支线'}] ${a.name}（进度${a.progress}%）\n  当前：${a.currentStage || '未知'}\n  目标：${a.nextGoal || '待定'}`
     if (unresolved.length > 0) {
       text += `\n  悬念：${unresolved.join('、')}`

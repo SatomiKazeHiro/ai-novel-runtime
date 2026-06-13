@@ -23,6 +23,7 @@
     "@novel-runtime/shared": "workspace:*",
     "bullmq": "^5.76.8",
     "dotenv": "^16.4.0",
+    "es-toolkit": "^1.47.0",
     "fastify": "^5.0.0",
     "fastify-plugin": "^5.0.0",
     "ioredis": "^5.10.1",

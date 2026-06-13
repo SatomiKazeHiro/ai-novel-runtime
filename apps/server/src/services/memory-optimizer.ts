@@ -154,6 +154,7 @@ ${rawText}
     return memories.length
   } catch (err: any) {
     app.log.error(`[MemoryOptimizer] Failed: ${err.message}`)
-    return 0
+    // 失败不阻塞归档，由调用方决定是否继续
+    throw err
   }
 }

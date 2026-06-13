@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { GraphService } from '@novel-runtime/knowledge-graph'
+import { safeJsonParse, safeJsonStringify } from '@novel-runtime/shared'
 
 export async function graphRoutes(app: FastifyInstance) {
   // GET /api/stories/:storyId/graph
@@ -31,10 +32,8 @@ export async function graphRoutes(app: FastifyInstance) {
       select: { graphSnapshot: true, graphDelta: true, title: true, number: true, status: true }
     })
     if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
-    let snapshot = null
-    let delta = null
-    try { if (chapter.graphSnapshot) snapshot = JSON.parse(chapter.graphSnapshot) } catch {}
-    try { if (chapter.graphDelta) delta = JSON.parse(chapter.graphDelta) } catch {}
+    const snapshot = safeJsonParse(chapter.graphSnapshot, null)
+    const delta = safeJsonParse(chapter.graphDelta, null)
     return { success: true, data: { chapter: { title: chapter.title, number: chapter.number, status: chapter.status }, snapshot, delta } }
   })
 
@@ -49,7 +48,7 @@ export async function graphRoutes(app: FastifyInstance) {
         type: body.type,
         key: body.key,
         label: body.label,
-        data: JSON.stringify(body.data || {})
+        data: safeJsonStringify(body.data, '{}')
       }
     })
 
@@ -58,14 +57,14 @@ export async function graphRoutes(app: FastifyInstance) {
       where: { storyId, status: 'archived' },
       orderBy: { number: 'desc' }
     })
-    if (lastArchived?.graphSnapshot) {
-      const snapshot = JSON.parse(lastArchived.graphSnapshot)
-      const exists = snapshot.nodes.some((n: any) => n.type === body.type && n.key === body.key)
+    const snapshot = safeJsonParse<Record<string, any> | null>(lastArchived?.graphSnapshot, null)
+    if (snapshot && lastArchived) {
+      const exists = snapshot.nodes?.some((n: any) => n.type === body.type && n.key === body.key)
       if (!exists) {
         snapshot.nodes.push({ type: body.type, key: body.key, label: body.label, data: body.data || {} })
         await app.prisma.chapter.update({
           where: { id: lastArchived.id },
-          data: { graphSnapshot: JSON.stringify(snapshot) }
+          data: { graphSnapshot: safeJsonStringify(snapshot) }
         })
       }
     }
@@ -93,12 +92,12 @@ export async function graphRoutes(app: FastifyInstance) {
       where: { storyId, status: 'archived' },
       orderBy: { number: 'desc' }
     })
-    if (lastArchived?.graphSnapshot) {
-      const snapshot = JSON.parse(lastArchived.graphSnapshot)
+    const snapshot = safeJsonParse<Record<string, any> | null>(lastArchived?.graphSnapshot, null)
+    if (snapshot && lastArchived) {
       const fromNode = await app.prisma.graphNode.findUnique({ where: { id: body.fromId } })
       const toNode = await app.prisma.graphNode.findUnique({ where: { id: body.toId } })
       if (fromNode && toNode) {
-        const exists = snapshot.edges.some((e: any) =>
+        const exists = snapshot.edges?.some((e: any) =>
           e.fromType === fromNode.type && e.fromKey === fromNode.key &&
           e.toType === toNode.type && e.toKey === toNode.key &&
           e.relation === body.relation
@@ -111,7 +110,7 @@ export async function graphRoutes(app: FastifyInstance) {
           })
           await app.prisma.chapter.update({
             where: { id: lastArchived.id },
-            data: { graphSnapshot: JSON.stringify(snapshot) }
+            data: { graphSnapshot: safeJsonStringify(snapshot) }
           })
         }
       }

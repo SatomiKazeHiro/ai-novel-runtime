@@ -18,5 +18,9 @@
   },
   "devDependencies": {
     "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "es-toolkit": "^1.47.0",
+    "js-tiktoken": "^1.0.21"
   }
 }

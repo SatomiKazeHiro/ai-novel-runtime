@@ -94,7 +94,6 @@
 | `@novel-runtime/memory-engine` | `packages/memory-engine` | 记忆提取、语义搜索、Prompt 格式化 |
 | `@novel-runtime/knowledge-graph` | `packages/knowledge-graph` | 内存图服务（graphology 封装） |
 | `@novel-runtime/scoring-engine` | `packages/scoring-engine` | 规则评分引擎（AI 评分在服务端实现） |
-| `@novel-runtime/warning-engine` | `packages/warning-engine` | **占位包**，源码只有 `// Warning engine removed` |
 
 所有包的 `tsconfig.json` 统一：`target: ES2022`、`module: NodeNext`、`strict: true`、生成 `.d.ts` + sourceMap。
 
@@ -313,15 +312,24 @@ Prisma 的 JSON 字段（`personality`、`metadata`、`params`、`settings`、`g
 3. 全局默认 Profile
 4. 硬编码兜底
 
-### 5.6 归档伪事务
+### 5.6 归档事务
 
-`archive` 不是数据库事务，但采用"全部步骤成功后才改状态"的策略：
-1. 提取记忆 + 图谱 + 剧情弧线
-2. 整理图谱 + 整理记忆
-3. 压缩记忆（每 5 章）
-4. 最终 `status: 'archived'`
+归档流程采用**四阶段 + 真实事务**策略：
 
-如果中间任何一步失败，章节状态不会变成 `archived`。
+1. **提取阶段**（`extractAll`）：纯 AI 调用，不写数据库
+2. **整理阶段**（`organizeGraph`）：纯 AI 调用，整理知识图谱
+3. **事务写入阶段**（`prisma.$transaction`）：所有数据库操作一次性提交
+   - Memory、CharacterBranchState、TimelineEvent
+   - Chapter.summary
+   - PlotArc
+   - GraphNode/GraphEdge、Chapter.graphSnapshot/graphDelta
+   - Chapter.status = 'archived'
+4. **优化阶段**（`optimizeMemories`）：生成全局记忆，失败不阻塞归档
+
+**保证**：
+- 阶段 1/2 失败 → 没有任何数据写入
+- 阶段 3 失败 → 事务回滚，数据零变更
+- 阶段 4 失败 → 归档已成功，仅全局记忆优化未执行
 
 ### 5.7 Naive UI 组件导入
 

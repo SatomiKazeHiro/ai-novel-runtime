@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import type { CompiledPrompt } from '@novel-runtime/ai-provider'
-import { getDefaultProvider } from './ai-provider-init.js'
+import { resolveProvider } from './ai-provider-init.js'
 
 export interface AICallOptions {
   storyId: string
@@ -24,19 +24,13 @@ export async function callAIWithLog(
   const prisma = app.prisma
   const { storyId, chapterId, callType, compiled, temperature, maxTokens } = options
 
-  const provider = await getDefaultProvider(prisma)
-  if (!provider?.generateWithRuntime) {
-    app.log.warn(`[AICallLogger] No provider configured for ${callType}, skipping`)
+  const resolved = await resolveProvider(prisma, storyId, chapterId)
+  if (!resolved?.provider?.generateWithRuntime) {
+    app.log.warn(`[AICallLogger] No provider resolved for ${callType}, skipping`)
     return null
   }
 
-  const aiConfig = await prisma.aiProviderConfig.findFirst({
-    where: { isDefault: true }
-  })
-  if (!aiConfig) {
-    app.log.warn(`[AICallLogger] No default AI provider config found`)
-    return null
-  }
+  const { provider, config: aiConfig } = resolved
 
   const startTime = Date.now()
 

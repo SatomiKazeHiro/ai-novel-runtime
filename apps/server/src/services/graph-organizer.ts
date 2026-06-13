@@ -12,7 +12,7 @@ export async function organizeGraph(
   chapterId: string,
   previousSnapshot: GraphSnapshot | null,
   extractedGraph: GraphExtractionResult
-): Promise<{ mergedGraph: GraphSnapshot; chapterGraph: GraphSnapshot } | null> {
+): Promise<{ mergedGraph: GraphSnapshot; chapterGraph: GraphSnapshot }> {
   const prisma = app.prisma
 
   const base = await loadRuntimeBase(storyId, prisma)
@@ -85,11 +85,19 @@ chapterGraph 是本章的范围图谱（基于本章新提取独立生成，只�
 
     const raw = await callAIWithLog(app, {
       storyId, chapterId, callType: 'graph_organize',
-      compiled, temperature: 0.2, maxTokens: 4096
+      compiled, temperature: 0.2, maxTokens: 8192
     })
-    if (!raw) return null
+    if (!raw) {
+      throw new Error('未配置可用的 AI Provider，请检查模型配置')
+    }
 
-    const result = JSON.parse(cleanJsonBlock(raw))
+    let result: any
+    try {
+      result = JSON.parse(cleanJsonBlock(raw))
+    } catch (parseErr: any) {
+      app.log.error(`[GraphOrganizer] JSON parse failed. Raw: ${raw.slice(0, 500)}`)
+      throw new Error(`AI 返回格式错误，无法解析 JSON: ${parseErr.message}`)
+    }
 
     const mergedGraph: GraphSnapshot = {
       nodes: result.mergedGraph?.nodes || [],
@@ -108,6 +116,6 @@ chapterGraph 是本章的范围图谱（基于本章新提取独立生成，只�
     return { mergedGraph, chapterGraph }
   } catch (err: any) {
     app.log.error(`[GraphOrganizer] Failed: ${err.message}`)
-    return null
+    throw err
   }
 }

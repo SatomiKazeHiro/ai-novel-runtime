@@ -20,7 +20,7 @@
 | `updatedAt` | DateTime | 自动更新 |
 
 **关系**：
-- 1:N `Chapter`、`Character`、`LoreItem`、`Memory`、`GraphNode`、`GraphEdge`、`TimelineEvent`、`Draft`、`PromptConfig`、`Score`、`PlotArc`、`AiProviderConfig`、`WorkerTask`
+- 1:N `Chapter`、`Character`、`LoreItem`、`Memory`、`GraphNode`、`GraphEdge`、`TimelineEvent`、`Draft`、`Score`、`PlotArc`、`AiProviderConfig`、`WorkerTask`
 - N:1 `RuntimeProfile`（通过 `runtimeProfileId` 绑定，可选）
 
 ---
@@ -353,20 +353,6 @@
 
 ---
 
-### `PromptConfig` — Prompt 模板配置（旧版兼容）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | String PK | |
-| `storyId` | String FK → Story | |
-| `type` | String | `system` / `jailbreak` / `story` / `character` / `lore` / `scene` / `memory` / `style` / `instruction` |
-| `name` | String | |
-| `content` | String | |
-| `order` | Int | |
-| `enabled` | Boolean | |
-
----
-
 ## 6. 关系总览
 
 ```
@@ -383,7 +369,6 @@ Story
 ├── AiProviderConfig (1:N, storyId 可选)
 ├── WorkerTask (1:N, storyId 可选)
 ├── RuntimeProfile (N:1, storyId 可选)
-├── PromptConfig (1:N)
 ├── Score (1:N)
 └── PromptLog (1:N)
 ```
@@ -394,7 +379,7 @@ Story
 
 | 时间戳 | 说明 |
 |--------|------|
-| `20260516092617_init` | 初始建表（Story/Chapter/Character/LoreItem/Memory/GraphNode/GraphEdge/TimelineEvent/Draft/PromptConfig/Score） |
+| `20260516092617_init` | 初始建表（Story/Chapter/Character/LoreItem/Memory/GraphNode/GraphEdge/TimelineEvent/Draft/Score） |
 | `20260518000000_add_runtime_profile_worker_task_plot_arc` | 新增 RuntimeProfile、WorkerTask、PlotArc |
 | `20260518000001_add_ai_provider_context_length` | AiProviderConfig 增加 contextLength 字段 |
 | `20260518022500_add_prompt_log` | 新增 PromptLog 表 |

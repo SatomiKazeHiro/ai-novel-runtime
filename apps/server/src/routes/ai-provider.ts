@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import { createProvider } from '@novel-runtime/ai-provider'
 
 export async function aiProviderRoutes(app: FastifyInstance) {
   // GET /api/ai-providers — 列表
@@ -31,7 +32,8 @@ export async function aiProviderRoutes(app: FastifyInstance) {
       contextLength: body.contextLength ?? 64000,
       maxTokens: body.maxTokens ?? 4096,
       temperature: body.temperature ?? 0.7,
-      isDefault: body.isDefault ?? false
+      isDefault: body.isDefault ?? false,
+      remarks: body.remarks || null
     }
 
     // 如果设为默认，取消其他默认
@@ -49,6 +51,12 @@ export async function aiProviderRoutes(app: FastifyInstance) {
   // PUT /api/ai-providers/:id — 更新
   app.put('/api/ai-providers/:id', async (request, reply) => {
     const { id } = request.params as any
+    const existing = await app.prisma.aiProviderConfig.findUnique({ where: { id } })
+    if (!existing) return reply.status(404).send({ success: false, error: 'Config not found' })
+    if (existing.type === 'system') {
+      return reply.status(403).send({ success: false, error: '系统默认配置不可编辑' })
+    }
+
     const body = request.body as any
     const data: any = {}
 
@@ -60,6 +68,7 @@ export async function aiProviderRoutes(app: FastifyInstance) {
     if (body.maxTokens !== undefined) data.maxTokens = body.maxTokens
     if (body.temperature !== undefined) data.temperature = body.temperature
     if (body.isDefault !== undefined) data.isDefault = body.isDefault
+    if (body.remarks !== undefined) data.remarks = body.remarks || null
 
     // 如果设为默认，取消其他默认
     if (data.isDefault) {
@@ -76,6 +85,11 @@ export async function aiProviderRoutes(app: FastifyInstance) {
   // DELETE /api/ai-providers/:id — 删除
   app.delete('/api/ai-providers/:id', async (request, reply) => {
     const { id } = request.params as any
+    const existing = await app.prisma.aiProviderConfig.findUnique({ where: { id } })
+    if (!existing) return reply.status(404).send({ success: false, error: 'Config not found' })
+    if (existing.type === 'system') {
+      return reply.status(403).send({ success: false, error: '系统默认配置不可删除' })
+    }
     await app.prisma.aiProviderConfig.delete({ where: { id } })
     return { success: true }
   })
@@ -92,5 +106,39 @@ export async function aiProviderRoutes(app: FastifyInstance) {
       data: { isDefault: true }
     })
     return { success: true, data: config }
+  })
+
+  // POST /api/ai-providers/test — 检测连通性
+  app.post('/api/ai-providers/test', async (request, reply) => {
+    const body = request.body as any
+    const { name, apiKey, baseUrl, model, id } = body
+
+    if (!name || !model) {
+      return reply.status(400).send({ success: false, error: '模型商和模型名称不能为空' })
+    }
+
+    let finalApiKey = apiKey
+    // 编辑模式下 apiKey 为空，尝试从数据库读取现有配置
+    if ((!finalApiKey || finalApiKey === '') && id) {
+      const existing = await app.prisma.aiProviderConfig.findUnique({
+        where: { id },
+        select: { apiKey: true }
+      })
+      if (existing?.apiKey) {
+        finalApiKey = existing.apiKey
+      }
+    }
+
+    if (!finalApiKey) {
+      return reply.status(400).send({ success: false, error: 'API Key 未配置' })
+    }
+
+    try {
+      const provider = createProvider({ name, apiKey: finalApiKey, baseUrl: baseUrl || undefined, model })
+      const result = await provider.testConnection()
+      return result
+    } catch (err: any) {
+      return { success: false, message: err.message }
+    }
   })
 }

@@ -4,6 +4,7 @@ export interface StoryCreate {
   title: string
   description?: string
   runtimeProfileId?: string | null
+  aiProviderConfigId?: string | null
 }
 
 export interface StoryUpdate {
@@ -11,6 +12,7 @@ export interface StoryUpdate {
   description?: string
   status?: string
   runtimeProfileId?: string | null
+  aiProviderConfigId?: string | null
 }
 
 export const storiesApi = {
