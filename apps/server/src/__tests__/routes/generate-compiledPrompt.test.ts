@@ -128,9 +128,11 @@ describe('generate route — compiledPrompt validation', () => {
       { chapterId: 'c1' }
     )
 
-    // Validation passed: status must not be 400. The route may or may not
-    // reach a successful end (other mocks may short-circuit), but the
-    // important guarantee is that validation did not reject it.
-    expect(result.status).not.toBe(400)
+    // Validation passed: response must not carry the zod validation error.
+    // (Status alone is too weak — a 500 from an unrelated downstream failure
+    // would also pass `not 400`; assert the validation-specific rejection
+    // is absent.)
+    const body = JSON.stringify(result.body)
+    expect(body).not.toContain('compiledPrompt 格式错误')
   })
 })
