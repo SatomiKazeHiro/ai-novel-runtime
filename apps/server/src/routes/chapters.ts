@@ -14,18 +14,9 @@ import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { callAIWithLog } from '../services/ai-call-logger.js'
 
 export async function chapterRoutes(app: FastifyInstance) {
-  // 状态转换校验已下线（Q#3 决策 2026-06-16：helper 死代码，删除直至需要集中校验时再回填）。
+  // 状态转换校验已下线（Q#3 决策 2026-06-16：assertStatusTransition +
+  // assertStatusIn 两个 helper 死代码，删除直至需要集中校验时再回填）。
   // 当前每个路由用 `chapter.status === 'xxx'` 内联校验。
-
-  function assertStatusIn(
-    chapter: { id: string; status: string; number: number },
-    allowedStatuses: string[],
-    operation: string
-  ) {
-    if (!allowedStatuses.includes(chapter.status)) {
-      throw new Error(`章节 ${chapter.number} 当前状态为 ${chapter.status}，不允许执行 ${operation}`)
-    }
-  }
 
   // GET /api/stories/:storyId/chapters
   app.get('/api/stories/:storyId/chapters', async (request, reply) => {
