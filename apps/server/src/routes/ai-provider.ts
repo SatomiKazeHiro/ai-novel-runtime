@@ -2,18 +2,30 @@ import type { FastifyInstance } from 'fastify'
 import { createProvider } from '@novel-runtime/ai-provider'
 
 export async function aiProviderRoutes(app: FastifyInstance) {
-  // GET /api/ai-providers — 列表
+  // GET /api/ai-providers — 列表（apiKey 排除以防泄漏）
   app.get('/api/ai-providers', async (request, reply) => {
     const configs = await app.prisma.aiProviderConfig.findMany({
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true, name: true, model: true, baseUrl: true,
+        isDefault: true, remarks: true, type: true,
+        maxTokens: true, temperature: true, contextLength: true,
+        createdAt: true, updatedAt: true
+      }
     })
     return { success: true, data: configs }
   })
 
-  // GET /api/ai-providers/default — 获取当前默认配置
+  // GET /api/ai-providers/default — 获取当前默认配置（apiKey 排除）
   app.get('/api/ai-providers/default', async (request, reply) => {
     const config = await app.prisma.aiProviderConfig.findFirst({
-      where: { isDefault: true }
+      where: { isDefault: true },
+      select: {
+        id: true, name: true, model: true, baseUrl: true,
+        isDefault: true, remarks: true, type: true,
+        maxTokens: true, temperature: true, contextLength: true,
+        createdAt: true, updatedAt: true
+      }
     })
     if (!config) {
       return reply.status(404).send({ success: false, error: 'No default AI provider configured' })
