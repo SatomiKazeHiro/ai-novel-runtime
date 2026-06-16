@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
+import { truncateByParagraph } from '@novel-runtime/prompt-runtime'
 import { cleanJsonBlock, safeJsonParse } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
@@ -145,7 +146,7 @@ ${existingArcsText}
 
 章节大纲：${outline || '无大纲'}
 章节内容如下：
-${content.slice(0, 8000)}`
+${truncateByParagraph(content, 8000)}`
 
   app.log.info(`[CombinedExtractor] Calling AI for chapter ${chapterId}`)
 

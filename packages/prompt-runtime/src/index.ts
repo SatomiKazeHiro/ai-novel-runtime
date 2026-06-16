@@ -144,3 +144,30 @@ export class PromptPipeline {
   }
 }
 
+/**
+ * 按段落截断文本。预算按字符计（用户传 budget 即可）。
+ * - 段落分隔：\n\n
+ * - 累加段落直到接近 budget
+ * - 最后一段若超 budget，按字符硬截断
+ */
+export function truncateByParagraph(text: string, budget: number): string {
+  if (text.length <= budget) return text
+  const paragraphs = text.split(/\n\n+/)
+  const kept: string[] = []
+  let used = 0
+  for (const p of paragraphs) {
+    // 每个段落的成本 = 段落本身 + 分隔符（首段除外）
+    const cost = kept.length === 0 ? p.length : p.length + 2
+    if (used + cost > budget) {
+      // 当前段落放不下；若是第一段，按字符硬截断以填满预算
+      if (kept.length === 0) {
+        return p.slice(0, budget)
+      }
+      break
+    }
+    kept.push(p)
+    used += cost
+  }
+  return kept.join('\n\n')
+}
+
