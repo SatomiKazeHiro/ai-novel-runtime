@@ -1066,6 +1066,10 @@ function statusTagType(status?: string) {
             return "warning";
         case "generating":
             return "warning";
+        case "scored":
+            return "warning";
+        case "rejected":
+            return "error";
         case "draft":
             return "default";
         default:

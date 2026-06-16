@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
 import { truncateByParagraph } from '@novel-runtime/prompt-runtime'
-import { cleanJsonBlock, safeJsonParse } from '@novel-runtime/shared'
+import { cleanJsonBlock, safeJsonParse, type PendingArchiveData } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
 import { type MemoryExtractionResult, extractMemoryFromChapter, prepareMemoryWrites, type ArchiveMemoryData } from './memory-extractor.js'
@@ -16,18 +16,11 @@ export interface CombinedExtractionData {
   plotArcs: PlotArcAnalysis | null
 }
 
-export interface PendingArchiveData {
-  memories: ArchiveMemoryData
-  graph: {
-    mergedGraph: GraphSnapshot
-    chapterGraph: GraphSnapshot
-  }
-  plotArcs: PlotArcWrite[]
-  meta: {
-    extractedAt: string
-    chapterNumber: number
-  }
-}
+// Re-export the shared `PendingArchiveData` so existing imports
+// (`from '../services/combined-extractor.js'`) keep working unchanged.
+// The shared type is the single source of truth for the shape parked in
+// `Chapter.pendingArchiveData`; both server and web must agree on it.
+export type { PendingArchiveData }
 
 /**
  * 合并提取：记忆 + 图谱 + 剧情弧线，一次 API 调用完成

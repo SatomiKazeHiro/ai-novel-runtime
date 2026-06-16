@@ -162,25 +162,12 @@ import {
   NInput, NInputNumber, NButton, NEmpty, NDivider, NFormItem, NText, NDynamicTags,
   NSelect, NSlider
 } from 'naive-ui'
+import type { PendingArchiveData } from '@novel-runtime/shared'
 import Graph from './Graph.vue'
 
-export interface PendingArchiveData {
-  memories: {
-    memories: any[]
-    characterStates: any[]
-    timelineEvents: any[]
-    summary: string | null
-  }
-  graph: {
-    mergedGraph: { nodes: any[], edges: any[] }
-    chapterGraph: { nodes: any[], edges: any[] }
-  }
-  plotArcs: any[]
-  meta: {
-    extractedAt: string
-    chapterNumber: number
-  }
-}
+// PendingArchiveData is now imported from @novel-runtime/shared — the
+// single source of truth shared with the server. Adding fields is
+// compile-checked across both apps.
 
 const props = defineProps<{
   chapter: any
@@ -208,11 +195,13 @@ function normalizePendingData(data: any): PendingArchiveData {
     graph: {
       mergedGraph: {
         nodes: Array.isArray(safe.graph?.mergedGraph?.nodes) ? safe.graph.mergedGraph.nodes : [],
-        edges: Array.isArray(safe.graph?.mergedGraph?.edges) ? safe.graph.mergedGraph.edges : []
+        edges: Array.isArray(safe.graph?.mergedGraph?.edges) ? safe.graph.mergedGraph.edges : [],
+        timestamp: safe.graph?.mergedGraph?.timestamp || new Date().toISOString()
       },
       chapterGraph: {
         nodes: Array.isArray(safe.graph?.chapterGraph?.nodes) ? safe.graph.chapterGraph.nodes : [],
-        edges: Array.isArray(safe.graph?.chapterGraph?.edges) ? safe.graph.chapterGraph.edges : []
+        edges: Array.isArray(safe.graph?.chapterGraph?.edges) ? safe.graph.chapterGraph.edges : [],
+        timestamp: safe.graph?.chapterGraph?.timestamp || new Date().toISOString()
       }
     },
     plotArcs: Array.isArray(safe.plotArcs) ? safe.plotArcs : [],
@@ -377,7 +366,11 @@ function removePlotArc(idx: number) {
 }
 
 function onGraphUpdate(data: { nodes: any[], edges: any[] }) {
-  localData.value.graph.chapterGraph = data
+  localData.value.graph.chapterGraph = {
+    nodes: data.nodes,
+    edges: data.edges,
+    timestamp: new Date().toISOString()
+  }
 
   const base = baselineChapterGraph.value
   const merged = localData.value.graph.mergedGraph
@@ -447,7 +440,8 @@ function onGraphUpdate(data: { nodes: any[], edges: any[] }) {
 
   localData.value.graph.mergedGraph = {
     nodes: Array.from(mergedNodeMap.values()),
-    edges: remainingEdges.map(e => e.value)
+    edges: remainingEdges.map(e => e.value),
+    timestamp: new Date().toISOString()
   }
 }
 

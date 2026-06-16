@@ -2,9 +2,11 @@
 
 export const ChapterStatus = {
   DRAFT: 'draft',
+  GENERATING: 'generating',
   GENERATED: 'generated',
   SCORED: 'scored',
   SELECTED: 'selected',
+  REVIEWING: 'reviewing',
   ARCHIVED: 'archived',
   REJECTED: 'rejected'
 } as const
@@ -223,3 +225,5 @@ export function scaleBudget(contextLength: number): BudgetConfig {
     output: Math.floor(DEFAULT_PIPELINE_BUDGET.output * ratio)
   }
 }
+
+export * from './archive.js'
