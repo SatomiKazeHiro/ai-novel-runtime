@@ -5,6 +5,67 @@ beforeEach(() => {
   vi.resetAllMocks()
 })
 
+/**
+ * Build a fake Fastify app that records all registered route handlers in
+ * `routes` keyed as `<METHOD> <path>`. Mirrors only the surface that
+ * route handlers in this project actually touch (prisma, log, HTTP verb
+ * registers) — no plugins, no decorators, no Fastify internals.
+ *
+ * Returns `{ app, routes }` so the caller can pass `app` to the route
+ * registrar (e.g. `await chapterRoutes(app)`) and then drive `routes`
+ * directly via `callHandler` below.
+ */
+export function createMockApp(prisma: any, log: any = { info: vi.fn(), error: vi.fn(), warn: vi.fn() }) {
+  const routes: Record<string, any> = {}
+  const app: any = {
+    prisma,
+    log,
+    get: (path: string, handler: any) => { routes[`GET ${path}`] = handler },
+    post: (path: string, handler: any) => { routes[`POST ${path}`] = handler },
+    put: (path: string, handler: any) => { routes[`PUT ${path}`] = handler },
+    delete: (path: string, handler: any) => { routes[`DELETE ${path}`] = handler }
+  }
+  return { app: app as any, routes }
+}
+
+/**
+ * Drive a recorded handler with a mock request + reply. Captures both
+ * forms the codebase uses:
+ *   - bare `return { success: true, ... }`  → handler's return value
+ *   - `return reply.send({ ... })`         → reply.send.mock.calls
+ *
+ * Returns `{ status, body }` so tests can assert on either form without
+ * caring which pattern the route uses.
+ */
+export async function callHandler(
+  routes: Record<string, any>,
+  method: string,
+  path: string,
+  body?: any,
+  params?: any,
+  query?: any
+) {
+  const handler = routes[`${method} ${path}`]
+  if (!handler) {
+    throw new Error(`No handler registered for ${method} ${path}`)
+  }
+  const reply: any = {
+    status: vi.fn().mockReturnThis(),
+    send: vi.fn().mockReturnThis()
+  }
+  const request: any = {
+    body: body || {},
+    params: params || {},
+    query: query || {}
+  }
+  const ret = await handler(request, reply)
+  const sent = reply.send.mock.calls[0]?.[0]
+  return {
+    status: reply.status.mock.calls[0]?.[0],
+    body: sent !== undefined ? sent : ret
+  }
+}
+
 // Shared mock factory for Prisma client
 export function createMockPrisma(overrides: Record<string, any> = {}) {
   return {

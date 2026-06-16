@@ -534,7 +534,7 @@ export async function chapterRoutes(app: FastifyInstance) {
       await tx.chapter.update({ where: { id: chapterId }, data: { status: 'selected', content: draft.content || undefined } })
     })
 
-    return reply.send({ success: true })
+    return { success: true }
   })
 
   // POST /api/chapters/:chapterId/prepare-archive

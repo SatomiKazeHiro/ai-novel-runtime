@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createMockApp, callHandler } from '../setup.js'
 
 describe('chapters select route — chapterId isolation', () => {
   let mockPrisma: any
-  let handler: any
+  let routes: Record<string, any>
 
   beforeEach(async () => {
     mockPrisma = {
@@ -19,17 +20,9 @@ describe('chapters select route — chapterId isolation', () => {
       $transaction: vi.fn(async (fn) => fn(mockPrisma))
     }
     const { chapterRoutes } = await import('../../routes/chapters.js')
-    const routes: Record<string, any> = {}
-    const app: any = {
-      prisma: mockPrisma,
-      log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
-      get: (path: string, h: any) => { routes[`GET ${path}`] = h },
-      post: (path: string, h: any) => { routes[`POST ${path}`] = h },
-      put: (path: string, h: any) => { routes[`PUT ${path}`] = h },
-      delete: (path: string, h: any) => { routes[`DELETE ${path}`] = h }
-    }
-    await chapterRoutes(app)
-    handler = routes['POST /api/chapters/:chapterId/select']
+    const built = createMockApp(mockPrisma)
+    await chapterRoutes(built.app)
+    routes = built.routes
   })
 
   it('returns 404 when draft belongs to a different chapter', async () => {
@@ -41,10 +34,12 @@ describe('chapters select route — chapterId isolation', () => {
     // returns null because draft_1 belongs to chapterA, not chapterB.
     mockPrisma.draft.findUnique.mockResolvedValue(null)
 
-    const reply: any = { status: vi.fn().mockReturnThis(), send: vi.fn().mockReturnThis() }
-    await handler(
-      { params: { chapterId: 'chapterB' }, body: { draftId: 'draft_1' } } as any,
-      reply
+    const result = await callHandler(
+      routes,
+      'POST',
+      '/api/chapters/:chapterId/select',
+      { draftId: 'draft_1' },
+      { chapterId: 'chapterB' }
     )
 
     // Verify the lookup was scoped by chapterId
@@ -59,8 +54,8 @@ describe('chapters select route — chapterId isolation', () => {
       })
     )
 
-    expect(reply.status).toHaveBeenCalledWith(404)
-    expect(reply.send).toHaveBeenCalledWith(
+    expect(result.status).toBe(404)
+    expect(result.body).toEqual(
       expect.objectContaining({ success: false, error: 'Draft not found' })
     )
     expect(mockPrisma.$transaction).not.toHaveBeenCalled()
@@ -77,15 +72,16 @@ describe('chapters select route — chapterId isolation', () => {
     mockPrisma.draft.update.mockResolvedValue({ id: 'draft_1', status: 'selected' })
     mockPrisma.chapter.update.mockResolvedValue({ id: 'chapterA', status: 'selected' })
 
-    const reply: any = { status: vi.fn().mockReturnThis(), send: vi.fn().mockReturnThis() }
-    await handler(
-      { params: { chapterId: 'chapterA' }, body: { draftId: 'draft_1' } } as any,
-      reply
+    const result = await callHandler(
+      routes,
+      'POST',
+      '/api/chapters/:chapterId/select',
+      { draftId: 'draft_1' },
+      { chapterId: 'chapterA' }
     )
 
     expect(mockPrisma.$transaction).toHaveBeenCalled()
-    // Route returns { success: true } as a bare return — capture both forms
-    const returned = reply.send.mock.calls[0]?.[0] ?? undefined
-    expect(returned).toEqual({ success: true })
+    // Route uses bare return — callHandler captures the handler's return value.
+    expect(result.body).toEqual({ success: true })
   })
 })

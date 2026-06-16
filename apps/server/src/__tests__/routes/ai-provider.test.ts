@@ -1,18 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { aiProviderRoutes } from '../../routes/ai-provider.js'
-
-// Helper: build a fake Fastify app with our mock prisma
-function buildApp(prisma: any) {
-  const routes: Record<string, any> = {}
-  const app: any = {
-    prisma,
-    get: (path: string, handler: any) => { routes[`GET ${path}`] = handler },
-    post: (path: string, handler: any) => { routes[`POST ${path}`] = handler },
-    put: (path: string, handler: any) => { routes[`PUT ${path}`] = handler },
-    delete: (path: string, handler: any) => { routes[`DELETE ${path}`] = handler }
-  }
-  return { app: app as any, routes }
-}
+import { createMockApp, callHandler } from '../setup.js'
 
 // Honor Prisma's `select` projection so the mock mirrors real Prisma behavior.
 // Without this, a mock that always returns the same row would mask the bug
@@ -26,21 +14,9 @@ function project(row: any, select: Record<string, boolean> | undefined) {
   return out
 }
 
-async function callHandler(routes: any, method: string, path: string) {
-  const handler = routes[`${method} ${path}`]
-  const reply: any = {
-    status: vi.fn().mockReturnThis(),
-    send: vi.fn().mockReturnThis()
-  }
-  const request: any = { body: {}, params: {}, query: {} }
-  const ret = await handler(request, reply)
-  const sent = reply.send.mock.calls[0]?.[0]
-  return { body: sent !== undefined ? sent : ret }
-}
-
 describe('ai-provider routes — apiKey stripping', () => {
   let prisma: any
-  let routes: any
+  let routes: Record<string, any>
   const rowList = [
     { id: '1', name: 'DeepSeek', model: 'deepseek-chat', baseUrl: null, isDefault: true, remarks: null, type: 'deepseek', maxTokens: 4096, temperature: 0.7, contextLength: 64000, apiKey: 'sk-secret', createdAt: new Date(), updatedAt: new Date() },
     { id: '2', name: 'OpenAI', model: 'gpt-4', baseUrl: null, isDefault: false, remarks: null, type: 'openai', maxTokens: 4096, temperature: 0.7, contextLength: 64000, apiKey: 'sk-another', createdAt: new Date(), updatedAt: new Date() }
@@ -60,7 +36,7 @@ describe('ai-provider routes — apiKey stripping', () => {
         findUnique: vi.fn()
       }
     }
-    const built = buildApp(prisma)
+    const built = createMockApp(prisma)
     await aiProviderRoutes(built.app)
     routes = built.routes
   })
