@@ -452,26 +452,7 @@ function onGraphUpdate(data: { nodes: any[], edges: any[] }) {
 }
 
 function buildData(): PendingArchiveData {
-  const data: PendingArchiveData = JSON.parse(JSON.stringify(localData.value))
-  // 标记所有在审查界面中被确认的记忆为用户已编辑，避免优化器覆盖
-  for (const mem of data.memories.memories) {
-    const tags = parseTags(mem.tags)
-    if (!tags.includes('user-edited')) {
-      tags.push('user-edited')
-      mem.tags = JSON.stringify(tags)
-    }
-  }
-  return data
-}
-
-function parseTags(tags?: string): string[] {
-  if (!tags) return []
-  try {
-    const parsed = JSON.parse(tags)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
+  return JSON.parse(JSON.stringify(localData.value))
 }
 
 function handleSave() {
