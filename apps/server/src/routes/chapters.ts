@@ -521,9 +521,10 @@ export async function chapterRoutes(app: FastifyInstance) {
       })
     }
 
+    // Cross-chapter isolation: draftId must belong to current chapterId.
+    // Use the compound unique key (id_chapterId) so the lookup is atomic.
     const draft = await app.prisma.draft.findUnique({
-      where: { id: body.draftId },
-      include: { chapter: true }
+      where: { id_chapterId: { id: body.draftId, chapterId } }
     })
     if (!draft) return reply.status(404).send({ success: false, error: 'Draft not found' })
 
@@ -533,7 +534,7 @@ export async function chapterRoutes(app: FastifyInstance) {
       await tx.chapter.update({ where: { id: chapterId }, data: { status: 'selected', content: draft.content || undefined } })
     })
 
-    return { success: true }
+    return reply.send({ success: true })
   })
 
   // POST /api/chapters/:chapterId/prepare-archive

@@ -239,6 +239,10 @@ model Draft {
 
   story           Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
   chapter         Chapter  @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  // Compound unique key for cross-chapter isolation: lets callers atomically
+  // fetch a draft only when (id, chapterId) both match. P0 security fix.
+  @@unique([id, chapterId])
 }
 
 // Runtime Profile（Shared Runtime Base：Identity + Settings + Behavior + Jailbreak）
