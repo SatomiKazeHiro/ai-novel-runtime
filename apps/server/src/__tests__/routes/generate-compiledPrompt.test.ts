@@ -30,6 +30,10 @@ describe('generate route — compiledPrompt validation', () => {
         findMany: vi.fn().mockResolvedValue([])
       }
     })
+    // Q#10: generate route now does an atomic updateMany lock. Default to
+    // "lock acquired" so the existing zod-validation tests still reach the
+    // compiledPrompt check (instead of failing earlier on the lock).
+    mockPrisma.chapter.updateMany.mockResolvedValue({ count: 1 })
     const { chapterRoutes } = await import('../../routes/chapters.js')
     const built = createMockApp(mockPrisma)
     await chapterRoutes(built.app)

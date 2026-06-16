@@ -359,26 +359,26 @@ export async function chapterRoutes(app: FastifyInstance) {
     })
     if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
 
-    // 只允许 draft 或 generated 状态生成候选；generated 表示用户想重新生成
-    if (chapter.status === 'generating') {
+    // 只允许 draft 状态生成候选（Q#10 决策：generated 重新生成暂不支持）
+    if (chapter.status !== 'draft') {
       return reply.status(400).send({
         success: false,
-        error: '章节正在生成中，请等待当前生成完成后再试'
-      })
-    }
-    if (chapter.status !== 'draft' && chapter.status !== 'generated') {
-      return reply.status(400).send({
-        success: false,
-        error: `章节当前状态为 ${chapter.status}，只允许 draft 或 generated 状态生成候选`
+        error: `章节当前状态为 ${chapter.status}，只允许 draft 状态生成候选`
       })
     }
 
-    // 如果已有候选，用户重新生成时先清空旧候选
-    if (chapter.status === 'generated') {
-      const deleted = await prisma.draft.deleteMany({ where: { chapterId } })
-      await prisma.chapter.update({ where: { id: chapterId }, data: { status: 'draft' } })
-      app.log.info(`[Generate] Cleared ${deleted.count} old drafts for chapter ${chapterId} before regenerating`)
+    // 状态机独占锁：原子性 updateMany（防止双击并发产生 2 批 draft）
+    const lockResult = await prisma.chapter.updateMany({
+      where: { id: chapterId, status: 'draft' },
+      data: { status: 'generating' }
+    })
+    if (lockResult.count === 0) {
+      return reply.status(409).send({
+        success: false,
+        error: '章节正在生成中或状态不允许，请刷新后重试'
+      })
     }
+    // 后续代码已假设 chapter.status === 'generating'，无需重新读取
 
     const story = chapter.story
 
