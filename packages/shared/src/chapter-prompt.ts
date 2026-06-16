@@ -5,8 +5,9 @@ import { z } from 'zod'
  * 与 packages/ai-provider 的 CompiledPrompt 保持一致，前后端共享一份 schema。
  */
 export const CompiledPromptSchema = z.object({
-  systemMessage: z.string().min(1),
-  userMessage: z.string().min(1),
+  // trim().min(1) 拒绝纯空白（"   " / "\n"），避免空 prompt 浪费一次 AI 调用
+  systemMessage: z.string().trim().min(1),
+  userMessage: z.string().trim().min(1),
   meta: z.object({
     systemTokens: z.number().nonnegative(),
     userTokens: z.number().nonnegative(),

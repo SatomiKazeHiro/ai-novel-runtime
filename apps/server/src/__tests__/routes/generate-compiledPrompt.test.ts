@@ -69,6 +69,36 @@ describe('generate route — compiledPrompt validation', () => {
     )
   })
 
+  it('returns 400 when systemMessage is whitespace-only', async () => {
+    mockPrisma.chapter.findUnique.mockResolvedValue({
+      id: 'c1',
+      storyId: 's1',
+      status: 'draft',
+      content: '',
+      outline: 'outline',
+      title: 'Title',
+      sceneLocation: '',
+      sceneMood: '',
+      sceneGoal: '',
+      number: 1,
+      isSideStory: false,
+      story: { id: 's1', title: 'Story', description: '' }
+    })
+
+    const result = await callHandler(
+      routes,
+      'POST',
+      '/api/chapters/:chapterId/generate',
+      { compiledPrompt: { systemMessage: '   \n  ', userMessage: 'usr' } },
+      { chapterId: 'c1' }
+    )
+
+    expect(result.status).toBe(400)
+    expect(result.body).toEqual(
+      expect.objectContaining({ success: false })
+    )
+  })
+
   it('returns 400 when compiledPrompt has wrong types', async () => {
     mockPrisma.chapter.findUnique.mockResolvedValue({
       id: 'c1',
