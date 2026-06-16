@@ -9,9 +9,9 @@
 
 ## [Data loss]
 
-### `buildData` 一刀切打 `user-edited` → 全局记忆优化失效
+### `buildData` 给所有 memory 打 `user-edited` tag → 违反"归档后沉寂"原则
 - **File:line:** `apps/web/src/views/ReviewingPanel.vue:454-465`
-- **Symptom:** 用户走过 reviewing 流程的章节，`memory-optimizer` 把整章记忆当 user-edited，整章跳过 AI 融合。新章节的 global 记忆永远不包含这些被"审查过"的内容。
+- **Symptom:** 用户走过 reviewing 流程的章节，`buildData` 给**所有** memory 加 `user-edited` tag（line 458-463）。`memory-optimizer` 据此把整章记忆视为 user-edited → 整章跳过 AI 融合 → 新章节的 global 记忆永远不包含这些"审查过"的内容。
 - **Repro:**
   1. 任意章节完成 draft → generated → selected → prepare-archive → 进入 reviewing
   2. 在 ReviewingPanel 点"保存调整"（即使不修改内容，只点按钮）
@@ -19,8 +19,9 @@
   4. 用户点"确认归档" → `chapters.ts:700` 调 `optimizeMemories`
   5. `memory-optimizer.ts:60-64` `userEditedMemories` 覆盖整章 → `autoExtractedMemories` 为空 → `rawText = '暂无本章原始记忆'`
   6. AI 收到的 prompt 里没有本章原始记忆，全局融合实质空跑
-- **Root cause hypothesis:** `buildData` 设计假设"用户在 ReviewingPanel 看过/碰过 = user-edited"，但用户即使**不修改**任何 memory 也走 `buildData`。区分"用户实际编辑过"和"用户看过"需要 baseline 对比（deep clone baseline + diff），`ReviewingPanel.vue:224` 有 `baselineChapterGraph`（graph 用的）但 memory 列表没有 baseline。
-- **Blast radius:** 所有走过 reviewing 流程的章节（也就是 v1.0 之后的所有章节）。跨章积累。global 记忆层无法反映实际剧情进展，下一章 prompt 拿不到正确的"上一章发生了什么"。
+- **Root cause hypothesis:** **原 Agent 误解了用户原意**。用户的设计意图是"归档后数据应该沉寂，给下一章作为参考"（即所有 memory 平等进入 AI 融合），但原 Agent 自行决定加 `user-edited` tag 试图"保护用户改过的内容"——这与"沉寂"原则冲突。`buildData` 本身也缺 baseline 对比能力（line 224 `baselineChapterGraph` 只覆盖 graph 不覆盖 memory 列表），无法区分"用户实际改过"和"用户看过"，所以一刀切给所有 memory 加 tag。
+- **Blast radius:** 所有走过 reviewing 流程的章节。跨章积累。global 记忆层无法反映实际剧情进展，下一章 prompt 拿不到正确的"上一章发生了什么"。
+- **用户决策（2026-06-16）：** 彻底移除 `user-edited` 标记注入。删除 `ReviewingPanel.vue:458-463` 的 tag 循环；`memory-optimizer.ts:60-64` 的 `userEditedMemories` 分支保留但不触发。
 
 ### 章节内容截断到 8000 字，AI 看不到后半部分
 - **File:line:** `apps/server/src/services/combined-extractor.ts:148`
@@ -102,3 +103,35 @@
 ---
 
 *生成工具：见 `docs/superpowers/specs/2026-06-16-codebase-analysis-design.md`。共 7 条 P0（2 数据丢失 / 3 崩溃 / 2 安全）。修复顺序建议：安全类先（2 条）→ 崩溃类（3 条）→ 数据丢失类（2 条）。*
+
+---
+
+## 用户决策记录（2026-06-16）
+
+> 用户对 `QUESTIONS.md` 10 条的回复汇总。P0 列表条目已在文末标"用户决策"；本表收录**所有 10 条**决策（含非 P0 的 schema/行为漂移类），作为后续修复 / 解耦阶段的输入。
+> 顺序：与 `QUESTIONS.md` 一致（确定性低 → 高）。
+
+| # | 议题 | 用户决策 | 后续方向 |
+|---|------|----------|----------|
+| 1 | `ChapterStatus` shared const 缺 `generating` + `reviewing`；前端 `statusTagType` 缺 `scored` + `rejected` | 未明确表态；按整体接受态度处理 | 把 `generating` + `reviewing` 加到 `packages/shared/src/index.ts:3-10`；`apps/web/src/views/Chapters.vue:1057` `statusTagType` 同步补 `scored` + `rejected`；删除 `as any` / 硬编码字符串 |
+| 2 | `Memory.importance` schema 1-10，prompt 强制 4-7 | AI 保守（4-7），用户可手动调到 1-10 | 保留 combined-extractor prompt 现状；前端 `ReviewingPanel.vue:22` `:min="1" :max="10"` 不变；接受 AI 偏中高分布的事实，不强行统一 |
+| 3 | `assertStatusTransition` helper 死代码（定义后无调用） | 从优化/可维护角度取舍 | 二选一：① 删除 helper（`chapters.ts:29-37`）和 `VALID_STATUS_TRANSITIONS` 表；② 改造为路由层统一接入（`chapters.ts:388, 517, 551, 630` 全部改用 helper）。倾向 ① 直至需要集中校验时再回填 |
+| 4 | `buildData` 给所有 memory 加 `user-edited` tag | **彻底移除 `user-edited` 标记** | 见 P0 #1 文末"用户决策"段。`memory-optimizer.ts:60-64` 的 `userEditedMemories` 分支保留但不触发，留作未来"精准标记"扩展的接入点 |
+| 5 | 前端 `JSON.parse(res.data.data)` 二次解析（`useChapterEditor.ts:150`） | 统一就统一 | 后端统一返回对象（已经是）；前端 `useChapterEditor.ts:150` 改为 `res.data.data`；DB 字段读取路径（`useChapterEditor.ts:74-81`、`chapters.ts:646`）保留 `safeJsonParse`，因为 DB `String?` 列存的是 JSON 文本 |
+| 6 | `PendingArchiveData` 前后端各定义一份 | 共享一份 | 把 interface 移到 `packages/shared/src/index.ts`（或新建 `packages/shared/src/archive.ts`）；前后端 import 同一份；加 `as const` 字段 |
+| 7 | `prepare-archive` 路由无 try/catch | 处理避免 UI 断片 | 加 try/catch 包裹 `prepareArchiveData`（`chapters.ts:585`）；catch 内把 `chapter.status` 改回 `selected`（撤销 line 605 的状态转换），返回明确错误信息；前端 `useChapterEditor.ts:158` catch 显示具体失败原因 |
+| 8 | `select` 路由不校验 `draft.chapterId === chapterId` | 严格优化 | `chapters.ts:524-527` 改 `where: { id: body.draftId, chapterId }`；事务内二次校验 `draft.chapterId === chapterId`；不匹配返回 404（不暴露 draft 是否存在） |
+| 9 | `generate` 路由接受 raw `compiledPrompt` 无 zod | 找稳健/易读/易扩展的方案 | 引入 zod：① `apps/web/src/api/chapters.ts` 出口用 `CompiledPromptSchema.parse()` 校验；② 后端 `chapters.ts:432` 入参 `CompiledPromptSchema.parse(body.compiledPrompt)`，失败返回 400 + 字段级错误。schema 定义在 `packages/shared/src/chapter-prompt.ts` |
+| 10 | `generate` 路由并发无保护（`status === 'draft'` 时双击会创建 2 批 draft） | 优化避免脏数据 | 用 chapter 行状态机独占锁：`generate` 路由 `update: { where: { id: chapterId, status: 'draft' }, data: { status: 'generating' } }` 受影响行数 0 → 返回 409 Conflict；不加 schema 字段（用户选"状态机独占锁"）|
+
+---
+
+### 修复顺序建议（按决策更新）
+
+1. **安全**：`ai-provider.ts` apiKey 泄漏（P0）→ `select` 路由 chapterId 校验（Q#8，附 P0 修复方向）
+2. **崩溃**：`useChapterEditor.ts:150` JSON.parse（Q#5）→ `routes/graph.ts:18` JSON.parse（P0）→ `prepare-archive` try/catch（Q#7，P0 修复方向）
+3. **数据丢失**：`buildData` user-edited 移除（Q#4 + P0 #1 根因重定义）→ `combined-extractor.ts:148` 8000 字截断（用 `packages/prompt-runtime` 的 `scaleBudget` + `truncate` 替代 `slice`）
+4. **架构一致性**：Q#1 schema/UI enum 同步、Q#3 死代码取舍、Q#6 interface 共享、Q#9 zod 引入、Q#10 乐观锁
+5. **行为漂移（接受）**：Q#2 importance 4-7 vs 1-10，保留现状不强制统一
+
+> 解耦阶段（修复完成后）再处理：`token-counting` 三套实现合并、模块边界、类型/服务分层。详见 `KNOWN-ISSUES.md` 与 `docs/LOGIC.md` 第 5 节"隐性约定"。
