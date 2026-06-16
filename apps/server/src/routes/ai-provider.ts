@@ -1,17 +1,23 @@
 import type { FastifyInstance } from 'fastify'
 import { createProvider } from '@novel-runtime/ai-provider'
 
+// Reusable projection that excludes the secret apiKey.
+// All 5 ai-provider routes (GET list, GET default, POST create, PUT update,
+// POST set-default) use this so apiKey never leaks in HTTP responses.
+// P0 #6 / Task 12.
+const AI_PROVIDER_SAFE_SELECT = {
+  id: true, name: true, model: true, baseUrl: true,
+  isDefault: true, remarks: true, type: true,
+  maxTokens: true, temperature: true, contextLength: true,
+  createdAt: true, updatedAt: true
+} as const
+
 export async function aiProviderRoutes(app: FastifyInstance) {
   // GET /api/ai-providers — 列表（apiKey 排除以防泄漏）
   app.get('/api/ai-providers', async (request, reply) => {
     const configs = await app.prisma.aiProviderConfig.findMany({
       orderBy: { createdAt: 'desc' },
-      select: {
-        id: true, name: true, model: true, baseUrl: true,
-        isDefault: true, remarks: true, type: true,
-        maxTokens: true, temperature: true, contextLength: true,
-        createdAt: true, updatedAt: true
-      }
+      select: AI_PROVIDER_SAFE_SELECT
     })
     return { success: true, data: configs }
   })
@@ -20,12 +26,7 @@ export async function aiProviderRoutes(app: FastifyInstance) {
   app.get('/api/ai-providers/default', async (request, reply) => {
     const config = await app.prisma.aiProviderConfig.findFirst({
       where: { isDefault: true },
-      select: {
-        id: true, name: true, model: true, baseUrl: true,
-        isDefault: true, remarks: true, type: true,
-        maxTokens: true, temperature: true, contextLength: true,
-        createdAt: true, updatedAt: true
-      }
+      select: AI_PROVIDER_SAFE_SELECT
     })
     if (!config) {
       return reply.status(404).send({ success: false, error: 'No default AI provider configured' })
@@ -56,13 +57,18 @@ export async function aiProviderRoutes(app: FastifyInstance) {
       })
     }
 
-    const config = await app.prisma.aiProviderConfig.create({ data })
+    const config = await app.prisma.aiProviderConfig.create({
+      data,
+      select: AI_PROVIDER_SAFE_SELECT
+    })
     return { success: true, data: config }
   })
 
   // PUT /api/ai-providers/:id — 更新
   app.put('/api/ai-providers/:id', async (request, reply) => {
     const { id } = request.params as any
+    // findUnique reads full row so we can check `type === 'system'` for the 403;
+    // the response below is filtered via AI_PROVIDER_SAFE_SELECT.
     const existing = await app.prisma.aiProviderConfig.findUnique({ where: { id } })
     if (!existing) return reply.status(404).send({ success: false, error: 'Config not found' })
     if (existing.type === 'system') {
@@ -90,7 +96,11 @@ export async function aiProviderRoutes(app: FastifyInstance) {
       })
     }
 
-    const config = await app.prisma.aiProviderConfig.update({ where: { id }, data })
+    const config = await app.prisma.aiProviderConfig.update({
+      where: { id },
+      data,
+      select: AI_PROVIDER_SAFE_SELECT
+    })
     return { success: true, data: config }
   })
 
@@ -115,7 +125,8 @@ export async function aiProviderRoutes(app: FastifyInstance) {
     })
     const config = await app.prisma.aiProviderConfig.update({
       where: { id },
-      data: { isDefault: true }
+      data: { isDefault: true },
+      select: AI_PROVIDER_SAFE_SELECT
     })
     return { success: true, data: config }
   })
