@@ -508,6 +508,18 @@ export async function chapterRoutes(app: FastifyInstance) {
     })
     if (!draft) return reply.status(404).send({ success: false, error: 'Draft not found' })
 
+    // 状态机独占锁：原子性 updateMany（防止双击 select 产生重复 chapter update）
+    const lockResult = await app.prisma.chapter.updateMany({
+      where: { id: chapterId, status: { in: ['generated', 'scored'] } },
+      data: { status: 'selected' }
+    })
+    if (lockResult.count === 0) {
+      return reply.status(409).send({
+        success: false,
+        error: '章节正在被其他操作处理中或状态不允许，请刷新后重试'
+      })
+    }
+
     await app.prisma.$transaction(async (tx) => {
       await tx.draft.updateMany({ where: { chapterId }, data: { status: 'rejected' } })
       await tx.draft.update({ where: { id: body.draftId }, data: { status: 'selected' } })
@@ -560,6 +572,20 @@ export async function chapterRoutes(app: FastifyInstance) {
       return reply.status(400).send({
         success: false,
         error: `归档失败：正文长度（${contentText.length}）不能小于大纲长度（${outlineText.length}）`
+      })
+    }
+
+    // 状态机独占锁：原子性 updateMany（防止双击 prepare-archive 触发 2× AI 调用）
+    // 必须在 prepareArchiveData 之前获取，并立即把 status 从 'selected' 翻到 'reviewing'。
+    // 失败回滚由下方 catch 块把 status 改回 'selected' 处理（Task 4 设计）。
+    const lockResult = await prisma.chapter.updateMany({
+      where: { id: chapterId, status: 'selected' },
+      data: { status: 'reviewing' }
+    })
+    if (lockResult.count === 0) {
+      return reply.status(409).send({
+        success: false,
+        error: '章节正在准备归档中或状态不允许，请刷新后重试'
       })
     }
 
@@ -647,6 +673,20 @@ export async function chapterRoutes(app: FastifyInstance) {
       return reply.status(400).send({
         success: false,
         error: '归档失败：没有找到预归档数据，请先调用 prepare-archive'
+      })
+    }
+
+    // 状态机独占锁：原子性 updateMany（防止双击 archive 产生重复
+    // Memory/Timeline/PlotArc/Graph 写入）。锁在事务外，事务本身仍保持原子性。
+    // 锁把 status 翻到 'archived'，后续事务内的 status='archived' 写入为 no-op。
+    const lockResult = await prisma.chapter.updateMany({
+      where: { id: chapterId, status: 'reviewing' },
+      data: { status: 'archived' }
+    })
+    if (lockResult.count === 0) {
+      return reply.status(409).send({
+        success: false,
+        error: '章节正在归档中或状态不允许，请刷新后重试'
       })
     }
 

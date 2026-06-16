@@ -21,7 +21,11 @@ describe('prepare-archive route — error rollback', () => {
     mockPrisma = {
       chapter: {
         findUnique: vi.fn(),
-        update: vi.fn()
+        update: vi.fn(),
+        // Task 14: prepare-archive now acquires an atomic updateMany status
+        // lock before calling prepareArchiveData. Default to success so the
+        // rollback test reaches the prepareArchiveData call.
+        updateMany: vi.fn().mockResolvedValue({ count: 1 })
       }
     }
     const { chapterRoutes } = await import('../../routes/chapters.js')

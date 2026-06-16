@@ -10,7 +10,10 @@ describe('chapters select route — chapterId isolation', () => {
       chapter: {
         findUnique: vi.fn(),
         update: vi.fn(),
-        updateMany: vi.fn()
+        // Task 14: select route now acquires an atomic updateMany status
+        // lock before the transaction. Default to success so this test
+        // reaches the original transaction assertions.
+        updateMany: vi.fn().mockResolvedValue({ count: 1 })
       },
       draft: {
         findUnique: vi.fn(),
