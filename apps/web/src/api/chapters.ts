@@ -19,6 +19,15 @@ export interface ChapterUpdate {
   pendingArchiveData?: string
 }
 
+export interface GenerateRequest {
+  compiledPrompt?: {
+    systemMessage: string
+    userMessage: string
+    meta?: { systemTokens: number; userTokens: number; totalTokens: number }
+  }
+  [key: string]: any
+}
+
 export const chaptersApi = {
   list: (storyId: string) => api.get(`/api/stories/${storyId}/chapters`),
   get: (chapterId: string) => api.get(`/api/chapters/${chapterId}`),
@@ -26,7 +35,7 @@ export const chaptersApi = {
   update: (chapterId: string, data: ChapterUpdate) => api.put(`/api/chapters/${chapterId}`, data),
   remove: (chapterId: string) => api.delete(`/api/chapters/${chapterId}`),
   preview: (chapterId: string, data: any) => api.post(`/api/chapters/${chapterId}/preview`, data),
-  generate: (chapterId: string, data: any) => api.post(`/api/chapters/${chapterId}/generate`, data, { timeout: 0 }),
+  generate: (chapterId: string, data: GenerateRequest) => api.post(`/api/chapters/${chapterId}/generate`, data, { timeout: 0 }),
   selectDraft: (chapterId: string, draftId: string) => api.post(`/api/chapters/${chapterId}/select`, { draftId }),
   prepareArchive: (chapterId: string) => api.post(`/api/chapters/${chapterId}/prepare-archive`, {}, { timeout: 0 }),
   archive: (chapterId: string) => api.post(`/api/chapters/${chapterId}/archive`, {}, { timeout: 0 }),

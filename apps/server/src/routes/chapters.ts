@@ -9,7 +9,7 @@ import { prepareMemoryWrites, commitMemoryWrites } from '../services/memory-extr
 import { PromptPipeline } from '@novel-runtime/prompt-runtime'
 import { MemoryManager } from '@novel-runtime/memory-engine'
 import { RuntimePromptCompiler, estimateTokens } from '@novel-runtime/ai-provider'
-import { formatCharacterSnapshot, generateFallbackContent, DEFAULT_PIPELINE_BUDGET, scaleBudget, safeJsonParse } from '@novel-runtime/shared'
+import { formatCharacterSnapshot, generateFallbackContent, DEFAULT_PIPELINE_BUDGET, scaleBudget, safeJsonParse, CompiledPromptSchema } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { callAIWithLog } from '../services/ai-call-logger.js'
 
@@ -410,12 +410,20 @@ export async function chapterRoutes(app: FastifyInstance) {
     let layers: any[] = []
     const customCompiled = body.compiledPrompt
 
-    if (customCompiled && customCompiled.systemMessage && customCompiled.userMessage) {
-      const systemTokens = estimateTokens(customCompiled.systemMessage)
-      const userTokens = estimateTokens(customCompiled.userMessage)
+    if (customCompiled) {
+      const parsed = CompiledPromptSchema.safeParse(customCompiled)
+      if (!parsed.success) {
+        return reply.status(400).send({
+          success: false,
+          error: 'compiledPrompt 格式错误',
+          details: parsed.error.flatten()
+        })
+      }
+      const systemTokens = estimateTokens(parsed.data.systemMessage)
+      const userTokens = estimateTokens(parsed.data.userMessage)
       compiled = {
-        systemMessage: customCompiled.systemMessage,
-        userMessage: customCompiled.userMessage,
+        systemMessage: parsed.data.systemMessage,
+        userMessage: parsed.data.userMessage,
         meta: { systemTokens, userTokens, totalTokens: systemTokens + userTokens }
       }
     } else {

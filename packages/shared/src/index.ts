@@ -227,3 +227,4 @@ export function scaleBudget(contextLength: number): BudgetConfig {
 }
 
 export * from './archive.js'
+export * from './chapter-prompt.js'
