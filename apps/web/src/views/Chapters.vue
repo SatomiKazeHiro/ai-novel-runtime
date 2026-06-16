@@ -175,6 +175,12 @@
                             :readonly="isReadonly"
                         />
                     </n-form-item>
+                    <n-text
+                        v-if="editor.editForm.outline"
+                        style="padding-left: 80px; --n-text-color: rgb(118, 124, 130)"
+                    >
+                            总字数：{{ editor.editForm.outline.length }}字
+                    </n-text>
 
                     <n-divider />
 

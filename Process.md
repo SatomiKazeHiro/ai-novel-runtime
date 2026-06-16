@@ -208,7 +208,7 @@
 
 #### 后端动作——阶段 3：事务写入（所有数据库操作一次性提交）
 
-前两阶段都是纯 AI 调用，不写数据库。现在进入**真实事务**：
+前两阶段都是纯 AI 调用，不写数据库。现在进入**真实事务**，由 `apps/server/src/routes/chapters.ts` 的归档路由统一控制。
 
 ```
 prisma.$transaction(async (tx) => {
@@ -223,11 +223,34 @@ prisma.$transaction(async (tx) => {
 })
 ```
 
+**记忆写入的内部实现**：
+
+`memory-extractor.ts` 把记忆写入拆成两步，确保事务边界清晰：
+
+1. **`prepareMemoryWrites(storyId, chapterId, result, fromChapterNumber)`** —— 纯数据准备，不碰数据库。把 AI 提取结果转成三类待写入数据：
+   - `memories`：章节事件、情绪、伏笔、关系变化、场景、角色状态变化
+   - `characterStates`：角色状态快照（此时 `characterId` 字段存的是**角色名字**，不是数据库 ID）
+   - `timelineEvents`：时间线事件
+   - `summary`：章节摘要
+
+2. **`commitMemoryWrites(tx, chapterId, storyId, data, existingCharacterMap)`** —— 在事务中真正写入：
+   - 直接批量写入 `Memory`
+   - 在事务内根据 `storyId + name` 把角色名解析成真实 `character.id`，再写入 `CharacterBranchState`
+   - 写 `CharacterBranchState` 时会先读该角色最新状态，做浅合并（`{ ...currentStatus, ...newStatus }`），而不是覆盖
+   - 写 `TimelineEvent` 时如果同一天已存在，会把新事件追加到旧事件数组里
+
+**图谱写入**：
+
+`graph-organizer.ts` 返回的 `mergedGraph` 和 `chapterGraph` 在事务中分别写入：
+- `GraphNode` / `GraphEdge`：全局工作表，按节点/边 ID 去重
+- `Chapter.graphSnapshot`：存 `mergedGraph`（累计全局图谱）
+- `Chapter.graphDelta`：存 `chapterGraph`（本章纯净视图）
+
 **保证**：
 - 事务内任何一步失败 → 全部回滚，数据零变更
 - 事务成功 → 所有数据一致提交，章节正式归档
 
-> 之前这里是"伪事务"——AI 提取时边提取边写数据库，后续失败会导致脏数据。现在改为"先提取、后事务写入"，彻底解决了这个问题。
+> 之前这里是"伪事务"——AI 提取时边提取边写数据库，后续失败会导致脏数据。现在改为"先提取、后事务写入"，并且记忆写入进一步拆成 `prepare` + `commit`，彻底解决了这个问题。
 
 #### 后端动作——阶段 4：记忆优化（1 次 AI 调用，可选，失败不阻塞）
 
