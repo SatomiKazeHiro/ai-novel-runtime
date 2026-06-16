@@ -146,8 +146,9 @@ export function useChapterEditor(storyId: () => string | undefined) {
       const res = await chaptersApi.prepareArchive(currentChapter.value.id)
       if (res.data.success) {
         currentChapter.value.status = 'reviewing'
+        // Backend returns parsed object directly; no JSON.parse needed
         currentChapter.value.pendingArchiveData = res.data.data
-        try { pendingArchiveData.value = JSON.parse(res.data.data) } catch { pendingArchiveData.value = null }
+        pendingArchiveData.value = res.data.data
         message.success('已进入归档审查，请确认后归档')
         return { success: true }
       } else {

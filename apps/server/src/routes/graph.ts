@@ -15,7 +15,11 @@ export async function graphRoutes(app: FastifyInstance) {
     if (!lastArchived || !lastArchived.graphSnapshot) {
       return { success: true, data: { nodes: [], edges: [] } }
     }
-    const snapshot = JSON.parse(lastArchived.graphSnapshot)
+    const snapshot = safeJsonParse<{ nodes: any[]; edges: any[] } | null>(lastArchived.graphSnapshot, null)
+    if (!snapshot) {
+      // Corrupted DB field — fall back to empty graph instead of 500.
+      return { success: true, data: { nodes: [], edges: [] } }
+    }
     const gs = new GraphService()
     gs.import({
       nodes: (snapshot.nodes || []).map((n: any) => ({ id: `${n.type}:${n.key}`, type: n.type, key: n.key, label: n.label, ...n.data })),
