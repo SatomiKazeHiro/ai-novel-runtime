@@ -583,15 +583,32 @@ export async function chapterRoutes(app: FastifyInstance) {
       })
     }
 
-    const pending = await prepareArchiveData(
-      app,
-      chapterId,
-      chapter.storyId,
-      contentText,
-      chapter.outline,
-      chapter.number,
-      chapter.parentChapterId
-    )
+    let pending: PendingArchiveData | null = null
+    try {
+      pending = await prepareArchiveData(
+        app,
+        chapterId,
+        chapter.storyId,
+        contentText,
+        chapter.outline,
+        chapter.number,
+        chapter.parentChapterId
+      )
+    } catch (err: any) {
+      // Rollback: revert chapter.status to 'selected' (defensive — the
+      // current code puts the status update after this block, so this
+      // guards future reordering where the flip might move ahead of
+      // the AI call).
+      await prisma.chapter.update({
+        where: { id: chapterId },
+        data: { status: 'selected' }
+      }).catch(() => { /* swallow rollback failure */ })
+      app.log.error(`[Prepare-Archive] Failed for chapter ${chapterId}: ${err.message}`)
+      return reply.status(500).send({
+        success: false,
+        error: `准备归档失败：AI 提取出错（${err.message}）。请检查 AI 配置后重试。`
+      })
+    }
 
     if (!pending) {
       return reply.status(500).send({
