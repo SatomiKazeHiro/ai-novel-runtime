@@ -56,7 +56,10 @@ export async function optimizeMemories(
     return 0
   }
 
-  // 区分用户手动编辑的记忆与自动提取的记忆
+  // user-edited 区分入口（保留但暂不触发）
+  // 决策 2026-06-16：归档后数据应"沉寂"平等进入 AI 融合，
+  // 因此 ReviewingPanel.buildData 不再注入 user-edited 标签。
+  // 此分支保留作未来"精准标记用户实际改过的记忆"扩展的接入点。
   const userEditedMemories = rawMemories.filter(m => {
     const tags = safeJsonParse<string[]>(m.tags, [])
     return tags.includes('user-edited')
