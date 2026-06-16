@@ -19,6 +19,8 @@ export function useChapterEditor(storyId: () => string | undefined) {
   const editForm = ref({ outline: '', content: '', sceneLocation: '', sceneMood: '', sceneGoal: '' })
   const plotArcs = ref<any[]>([])
   const graphDelta = ref<any>(null)
+  const pendingArchiveData = ref<any>(null)
+  const savingContent = ref(false)
 
   async function loadProfiles() {
     try {
@@ -66,6 +68,17 @@ export function useChapterEditor(storyId: () => string | undefined) {
     if (row.status === 'archived' && row.graphDelta) {
       try { graphDelta.value = JSON.parse(row.graphDelta) } catch { graphDelta.value = null }
     }
+
+    // 加载待归档数据
+    pendingArchiveData.value = null
+    if (row.status === 'reviewing' && row.pendingArchiveData) {
+      try {
+        pendingArchiveData.value = JSON.parse(row.pendingArchiveData)
+      } catch (e) {
+        console.error('[openEdit] failed to parse pendingArchiveData', e, row.pendingArchiveData)
+        pendingArchiveData.value = null
+      }
+    }
   }
 
   function backToTree() {
@@ -74,6 +87,7 @@ export function useChapterEditor(storyId: () => string | undefined) {
     selectedChapterId.value = ''
     plotArcs.value = []
     graphDelta.value = null
+    pendingArchiveData.value = null
   }
 
   async function saveConfig() {
@@ -99,23 +113,94 @@ export function useChapterEditor(storyId: () => string | undefined) {
   }
 
   async function saveContent() {
-    if (!currentChapter.value) return
-    await chaptersApi.update(currentChapter.value.id, { content: editForm.value.content })
-    currentChapter.value.content = editForm.value.content
-    message.success('正文已保存')
+    if (!currentChapter.value) return { success: false }
+    savingContent.value = true
+    try {
+      console.log('[saveContent] saving chapter', currentChapter.value.id)
+      const res = await chaptersApi.update(currentChapter.value.id, { content: editForm.value.content })
+      console.log('[saveContent] response', res.status, res.data)
+      if (res.data.success) {
+        currentChapter.value.content = editForm.value.content
+        message.success('正文已保存', { duration: 3000 })
+        return { success: true }
+      } else {
+        message.error(res.data.error || '保存失败')
+        return { success: false }
+      }
+    } catch (e: any) {
+      console.error('[saveContent] error', e)
+      message.error(e.response?.data?.error || '保存失败')
+      return { success: false }
+    } finally {
+      savingContent.value = false
+    }
   }
 
-  async function archiveChapter(content: string) {
+  async function prepareArchive() {
     if (!currentChapter.value) return { success: false }
-    if (!content?.trim()) {
-      message.warning('正文为空，无法归档')
+    if (currentChapter.value.status !== 'selected') {
+      message.warning('只有 selected 状态可以准备归档')
       return { success: false }
     }
     try {
-      await chaptersApi.update(currentChapter.value.id, { content })
-      await chaptersApi.archive(currentChapter.value.id)
-      message.success('已归档')
-      return { success: true }
+      const res = await chaptersApi.prepareArchive(currentChapter.value.id)
+      if (res.data.success) {
+        currentChapter.value.status = 'reviewing'
+        currentChapter.value.pendingArchiveData = res.data.data
+        try { pendingArchiveData.value = JSON.parse(res.data.data) } catch { pendingArchiveData.value = null }
+        message.success('已进入归档审查，请确认后归档')
+        return { success: true }
+      } else {
+        message.error(res.data.error || '准备归档失败')
+        return { success: false }
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.error || '准备归档失败')
+      return { success: false }
+    }
+  }
+
+  async function savePendingArchiveData(data: any) {
+    if (!currentChapter.value) return { success: false }
+    if (currentChapter.value.status !== 'reviewing') {
+      message.warning('只有 reviewing 状态可以保存归档数据')
+      return { success: false }
+    }
+    try {
+      const json = JSON.stringify(data)
+      const res = await chaptersApi.update(currentChapter.value.id, { pendingArchiveData: json })
+      if (res.data.success) {
+        currentChapter.value.pendingArchiveData = json
+        pendingArchiveData.value = data
+        message.success('归档数据已保存')
+        return { success: true }
+      } else {
+        message.error(res.data.error || '保存归档数据失败')
+        return { success: false }
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.error || '保存归档数据失败')
+      return { success: false }
+    }
+  }
+
+  async function archiveChapter() {
+    if (!currentChapter.value) return { success: false }
+    if (currentChapter.value.status !== 'reviewing') {
+      message.warning('只有 reviewing 状态可以确认归档')
+      return { success: false }
+    }
+    try {
+      const res = await chaptersApi.archive(currentChapter.value.id)
+      if (res.data.success) {
+        currentChapter.value.status = 'archived'
+        currentChapter.value.pendingArchiveData = null
+        message.success('已归档')
+        return { success: true }
+      } else {
+        message.error(res.data.error || '归档失败')
+        return { success: false }
+      }
     } catch (e: any) {
       message.error(e.response?.data?.error || '归档失败')
       return { success: false }
@@ -134,12 +219,16 @@ export function useChapterEditor(storyId: () => string | undefined) {
     editForm,
     plotArcs,
     graphDelta,
+    pendingArchiveData,
+    savingContent,
     loadProfiles,
     loadModels,
     openEdit,
     backToTree,
     saveConfig,
     saveContent,
+    savePendingArchiveData,
+    prepareArchive,
     archiveChapter
   })
 }

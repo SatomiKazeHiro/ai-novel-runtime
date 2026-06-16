@@ -3,13 +3,15 @@
     <n-space justify="space-between" align="center" style="margin-bottom: 16px">
       <n-h1>知识图谱</n-h1>
       <n-space>
+        <n-button v-if="isDraftMode" :disabled="!selectedNode" @click="openEditNode">编辑节点</n-button>
+        <n-button v-if="isDraftMode" :disabled="!selectedNode && !selectedEdge" type="error" @click="handleDelete">删除选中</n-button>
         <n-button @click="resetLayout">重新布局</n-button>
         <n-button type="primary" @click="showNodeModal = true">添加节点</n-button>
       </n-space>
     </n-space>
 
-    <!-- 剧情发展轴 -->
-    <n-card size="small" style="margin-bottom: 16px">
+    <!-- 剧情发展轴（非 draft 模式显示） -->
+    <n-card v-if="!isDraftMode" size="small" style="margin-bottom: 16px">
       <n-space vertical size="small">
         <n-text depth="3" style="font-size: 12px">剧情发展轴 — 选择章节查看该章归档时的图谱状态</n-text>
         <n-scrollbar x-scrollable>
@@ -96,6 +98,27 @@
       </template>
     </n-modal>
 
+    <!-- 编辑节点弹窗 -->
+    <n-modal v-model:show="showEditNodeModal" title="编辑节点" preset="card" style="width: 500px">
+      <n-form :model="editNodeForm" label-placement="left" label-width="80">
+        <n-form-item label="类型" required>
+          <n-select v-model:value="editNodeForm.type" :options="nodeTypeOptions" />
+        </n-form-item>
+        <n-form-item label="标识" required>
+          <n-input v-model:value="editNodeForm.key" placeholder="唯一标识，如 linfan" />
+        </n-form-item>
+        <n-form-item label="名称" required>
+          <n-input v-model:value="editNodeForm.label" placeholder="显示名称" />
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showEditNodeModal = false">取消</n-button>
+          <n-button type="primary" @click="handleUpdateNode">保存</n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
     <!-- 添加关系弹窗 -->
     <n-modal v-model:show="showEdgeModal" title="添加关系" preset="card" style="width: 500px">
       <n-form :model="edgeForm" label-placement="left" label-width="80">
@@ -136,6 +159,20 @@ const showNodeModal = ref(false)
 const showEdgeModal = ref(false)
 const selectedNode = ref<any>(null)
 
+const props = defineProps<{
+  initialGraphData?: { nodes: any[], edges: any[] } | null
+  draftMode?: boolean
+  storyId?: string
+}>()
+
+const emit = defineEmits<{
+  'update:graphData': [data: { nodes: any[], edges: any[] }]
+}>()
+
+// 外部控制模式：有 initialGraphData 时，不调用 API 加载
+const isDraftMode = computed(() => props.draftMode || !!props.initialGraphData)
+const effectiveStoryId = computed(() => props.storyId || (route.params.storyId as string) || '')
+
 const chapters = ref<any[]>([])
 const selectedChapterId = ref<string>('')
 const viewMode = ref<'snapshot' | 'delta'>('snapshot')
@@ -144,11 +181,17 @@ const viewMode = ref<'snapshot' | 'delta'>('snapshot')
 const currentSnapshot = ref<any>(null)
 const currentDelta = ref<any>(null)
 
+// draft 模式下的本地编辑数据
+const draftGraphData = ref<{ nodes: any[], edges: any[] } | null>(null)
+
 // 上一章的 snapshot 缓存（用于 diff）
 const prevSnapshot = ref<any>(null)
 
 const nodeForm = ref({ type: 'character', key: '', label: '' })
 const edgeForm = ref({ targetId: '', relation: '' })
+const showEditNodeModal = ref(false)
+const editNodeForm = ref({ id: '', type: 'character', key: '', label: '' })
+const selectedEdge = ref<any>(null)
 
 const nodeTypeOptions = [
   { label: '角色', value: 'character' },
@@ -177,6 +220,9 @@ const targetNodeOptions = computed(() => {
 
 // 根据视图模式决定展示的数据
 const displayGraphData = computed(() => {
+  if (isDraftMode.value) {
+    return draftGraphData.value
+  }
   if (viewMode.value === 'delta') {
     return currentDelta.value
   }
@@ -185,7 +231,7 @@ const displayGraphData = computed(() => {
 
 // Diff 统计
 const diffStats = computed(() => {
-  if (!currentSnapshot.value || !prevSnapshot.value) {
+  if (isDraftMode.value || !currentSnapshot.value || !prevSnapshot.value) {
     return { addedNodes: 0, addedEdges: 0 }
   }
   const prevNodeSet = new Set((prevSnapshot.value.nodes || []).map((n: any) => `${n.type}:${n.key}`))
@@ -210,7 +256,7 @@ function computeNewIds(): { newNodes: Set<string>; newEdges: Set<string> } {
   const newNodes = new Set<string>()
   const newEdges = new Set<string>()
 
-  if (!currentSnapshot.value || !prevSnapshot.value) {
+  if (isDraftMode.value || !currentSnapshot.value || !prevSnapshot.value) {
     return { newNodes, newEdges }
   }
 
@@ -237,7 +283,7 @@ function initCytoscape() {
   if (cy) { cy.destroy(); cy = null }
   if (displayGraphData.value.nodes.length === 0) return
 
-  const { newNodes, newEdges } = viewMode.value === 'snapshot' ? computeNewIds() : { newNodes: new Set<string>(), newEdges: new Set<string>() }
+  const { newNodes, newEdges } = !isDraftMode.value && viewMode.value === 'snapshot' ? computeNewIds() : { newNodes: new Set<string>(), newEdges: new Set<string>() }
 
   // 收集所有有效节点 ID，过滤掉源或目标不存在的边（避免 AI 生成的 delta 数据不一致导致报错）
   const validNodeIds = new Set<string>(
@@ -340,14 +386,34 @@ function initCytoscape() {
       edgeForm.value = { targetId: node.id(), relation: '' }
       showEdgeModal.value = true
     } else {
-      selectedNode.value = { id: node.id(), label: node.data('label'), key: node.data('key') }
+      selectedNode.value = {
+        id: node.id(),
+        label: node.data('label'),
+        key: node.data('key'),
+        type: node.data('type')
+      }
+      selectedEdge.value = null
       cy!.$(`#${node.id()}`).select()
     }
+  })
+
+  cy.on('tap', 'edge', (evt) => {
+    const edge = evt.target
+    selectedEdge.value = {
+      id: edge.id(),
+      source: edge.data('source'),
+      target: edge.data('target'),
+      relation: edge.data('label')
+    }
+    selectedNode.value = null
+    cy!.$(':selected').unselect()
+    cy!.$(`#${edge.id()}`).select()
   })
 
   cy.on('tap', (evt) => {
     if (evt.target === cy) {
       selectedNode.value = null
+      selectedEdge.value = null
       cy!.$(':selected').unselect()
     }
   })
@@ -375,8 +441,8 @@ function resetLayout() {
 }
 
 async function loadChapters() {
-  if (!route.params.storyId) return
-  const res = await chaptersApi.list(route.params.storyId as string)
+  if (isDraftMode.value || !effectiveStoryId.value) return
+  const res = await chaptersApi.list(effectiveStoryId.value)
   const list = res.data.data || []
   // 按 number 排序，主线在前，番外按父章节分组
   list.sort((a: any, b: any) => a.number - b.number)
@@ -435,6 +501,29 @@ function normalizeGraph(rawNodes: any[], rawEdges: any[]) {
   })
 
   return { nodes, edges }
+}
+
+function loadDraftGraph(raw?: { nodes: any[], edges: any[] } | null) {
+  if (!raw) {
+    draftGraphData.value = { nodes: [], edges: [] }
+    return
+  }
+  const normalized = normalizeGraph(raw.nodes, raw.edges)
+  draftGraphData.value = {
+    nodes: normalized.nodes.map((n: any) => ({
+      id: `${n.type}:${n.key}`,
+      type: n.type,
+      key: n.key,
+      label: n.label,
+      ...n.data
+    })),
+    edges: normalized.edges.map((e: any) => ({
+      source: `${e.fromType}:${e.fromKey}`,
+      target: `${e.toType}:${e.toKey}`,
+      relation: e.relation,
+      ...e
+    }))
+  }
 }
 
 async function loadChapterGraph(chapterId: string) {
@@ -505,8 +594,28 @@ async function loadPrevSnapshot(currentChapterId: string) {
 }
 
 async function handleCreateNode() {
-  if (!route.params.storyId) return
-  await graphApi.createNode(route.params.storyId as string, { ...nodeForm.value })
+  if (isDraftMode.value) {
+    const newNode = {
+      id: `${nodeForm.value.type}:${nodeForm.value.key}`,
+      type: nodeForm.value.type,
+      key: nodeForm.value.key,
+      label: nodeForm.value.label,
+      importance: 5
+    }
+    draftGraphData.value = {
+      nodes: [...(draftGraphData.value?.nodes || []), newNode],
+      edges: draftGraphData.value?.edges || []
+    }
+    showNodeModal.value = false
+    nodeForm.value = { type: 'character', key: '', label: '' }
+    emit('update:graphData', draftGraphData.value)
+    await nextTick()
+    initCytoscape()
+    return
+  }
+
+  if (!effectiveStoryId.value) return
+  await graphApi.createNode(effectiveStoryId.value, { ...nodeForm.value })
   showNodeModal.value = false
   nodeForm.value = { type: 'character', key: '', label: '' }
   // 刷新当前视图
@@ -518,13 +627,40 @@ async function handleCreateNode() {
 function cancelEdge() {
   showEdgeModal.value = false
   selectedNode.value = null
+  selectedEdge.value = null
   edgeForm.value = { targetId: '', relation: '' }
   if (cy) cy.$(':selected').unselect()
 }
 
 async function handleCreateEdge() {
-  if (!route.params.storyId || !selectedNode.value || !edgeForm.value.targetId || !edgeForm.value.relation) return
-  await graphApi.createEdge(route.params.storyId as string, {
+  if (!selectedNode.value || !edgeForm.value.targetId || !edgeForm.value.relation) return
+
+  if (isDraftMode.value) {
+    const target = draftGraphData.value?.nodes.find((n: any) => `${n.type}:${n.key}` === edgeForm.value.targetId)
+    if (!target) return
+    const newEdge = {
+      source: selectedNode.value.id,
+      target: edgeForm.value.targetId,
+      fromType: selectedNode.value.type,
+      fromKey: selectedNode.value.key,
+      toType: target.type,
+      toKey: target.key,
+      relation: edgeForm.value.relation,
+      weight: 1
+    }
+    draftGraphData.value = {
+      nodes: draftGraphData.value?.nodes || [],
+      edges: [...(draftGraphData.value?.edges || []), newEdge]
+    }
+    cancelEdge()
+    emit('update:graphData', draftGraphData.value)
+    await nextTick()
+    initCytoscape()
+    return
+  }
+
+  if (!effectiveStoryId.value) return
+  await graphApi.createEdge(effectiveStoryId.value, {
     fromId: selectedNode.value.id,
     toId: edgeForm.value.targetId,
     relation: edgeForm.value.relation,
@@ -536,18 +672,102 @@ async function handleCreateEdge() {
   }
 }
 
+function openEditNode() {
+  if (!selectedNode.value || !isDraftMode.value) return
+  editNodeForm.value = {
+    id: selectedNode.value.id,
+    type: selectedNode.value.type,
+    key: selectedNode.value.key,
+    label: selectedNode.value.label
+  }
+  showEditNodeModal.value = true
+}
+
+async function handleUpdateNode() {
+  if (!isDraftMode.value || !draftGraphData.value) return
+  const oldId = editNodeForm.value.id
+  const newId = `${editNodeForm.value.type}:${editNodeForm.value.key}`
+
+  draftGraphData.value = {
+    nodes: draftGraphData.value.nodes.map((n: any) => {
+      if (`${n.type}:${n.key}` !== oldId) return n
+      return {
+        ...n,
+        id: newId,
+        type: editNodeForm.value.type,
+        key: editNodeForm.value.key,
+        label: editNodeForm.value.label
+      }
+    }),
+    edges: draftGraphData.value.edges.map((e: any) => {
+      const isSource = e.source === oldId
+      const isTarget = e.target === oldId
+      if (!isSource && !isTarget) return e
+      const updated: any = { ...e }
+      if (isSource) {
+        updated.source = newId
+        updated.fromType = editNodeForm.value.type
+        updated.fromKey = editNodeForm.value.key
+      }
+      if (isTarget) {
+        updated.target = newId
+        updated.toType = editNodeForm.value.type
+        updated.toKey = editNodeForm.value.key
+      }
+      return updated
+    })
+  }
+
+  showEditNodeModal.value = false
+  selectedNode.value = null
+  emit('update:graphData', draftGraphData.value)
+  await nextTick()
+  initCytoscape()
+}
+
+async function handleDelete() {
+  if (!isDraftMode.value || !draftGraphData.value) return
+  const nodeId = selectedNode.value?.id
+  const edgeId = selectedEdge.value?.id
+
+  if (nodeId) {
+    draftGraphData.value = {
+      nodes: draftGraphData.value.nodes.filter((n: any) => `${n.type}:${n.key}` !== nodeId),
+      edges: draftGraphData.value.edges.filter((e: any) => e.source !== nodeId && e.target !== nodeId)
+    }
+    selectedNode.value = null
+  } else if (edgeId) {
+    draftGraphData.value = {
+      ...draftGraphData.value,
+      edges: draftGraphData.value.edges.filter((e: any) => `${e.source}-${e.relation}-${e.target}` !== edgeId)
+    }
+    selectedEdge.value = null
+  } else {
+    return
+  }
+
+  emit('update:graphData', draftGraphData.value)
+  await nextTick()
+  initCytoscape()
+}
+
+watch(() => props.initialGraphData, (val) => {
+  loadDraftGraph(val)
+  nextTick(() => initCytoscape())
+}, { immediate: true, deep: true })
+
 watch(() => route.params.storyId, () => {
   loadChapters()
 })
 
 watch(viewMode, () => {
-  if (selectedChapterId.value) {
-    nextTick(() => initCytoscape())
-  }
+  nextTick(() => initCytoscape())
 })
 
 onMounted(() => {
-  if (route.params.storyId) {
+  if (isDraftMode.value) {
+    nextTick(() => initCytoscape())
+  } else if (route.params.storyId) {
     loadChapters()
   }
 })

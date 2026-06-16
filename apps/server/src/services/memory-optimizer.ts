@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { randomBytes } from 'crypto'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
-import { cleanJsonBlock } from '@novel-runtime/shared'
+import { cleanJsonBlock, safeJsonParse } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
 
@@ -56,20 +56,32 @@ export async function optimizeMemories(
     return 0
   }
 
+  // 区分用户手动编辑的记忆与自动提取的记忆
+  const userEditedMemories = rawMemories.filter(m => {
+    const tags = safeJsonParse<string[]>(m.tags, [])
+    return tags.includes('user-edited')
+  })
+  const autoExtractedMemories = rawMemories.filter(m => !userEditedMemories.includes(m))
+
   // 3. 查询主角名单
   const protagonists = await prisma.character.findMany({
     where: { storyId, protagonist: true },
     select: { name: true }
   })
 
-  // 4. 构建 Prompt
+  // 4. 构建 Prompt（只把自动提取的记忆交给 AI 融合）
   const globalText = latestGlobal.length > 0
     ? latestGlobal.map(m => `- [${m.originUid}] (重要度${m.importance}) ${m.content}`).join('\n')
     : '暂无全局记忆'
 
-  const rawText = rawMemories.length > 0
-    ? rawMemories.map(m => `- (重要度${m.importance}) ${m.content}`).join('\n')
+  const rawText = autoExtractedMemories.length > 0
+    ? autoExtractedMemories.map(m => `- (重要度${m.importance}) ${m.content}`).join('\n')
     : '暂无本章原始记忆'
+
+  // 如果有用户编辑的记忆，在 prompt 中说明它们已被锁定并会单独保留
+  const lockedText = userEditedMemories.length > 0
+    ? `\n\n【用户已锁定的记忆】（这些记忆会在优化后原样保留，不需要 AI 重新生成）\n${userEditedMemories.map(m => `- (重要度${m.importance}) ${m.content}`).join('\n')}`
+    : ''
 
   const prompt = `你是小说记忆优化助手。请基于【当前全局记忆】和【本章原始记忆】，生成新的全局记忆。
 
@@ -79,7 +91,7 @@ export async function optimizeMemories(
 ${globalText}
 
 【本章原始记忆】
-${rawText}
+${rawText}${lockedText}
 
 【优化原则】
 1. 状态快照：描述必须是"当前状态"，不是过程流水账
@@ -90,6 +102,7 @@ ${rawText}
 4. 移除过时：已经解决/完成且不再影响后续剧情的事件，可以不输出
 5. 保留核心：关键设定、角色状态必须保留
 6. 适当精简：单条不要太长，保留核心内容即可
+7. 尊重锁定：用户已锁定的记忆不要修改或与其矛盾，优化结果应与之兼容
 
 【输出格式】
 严格JSON，不要markdown：
@@ -150,8 +163,24 @@ ${rawText}
       })
     }
 
-    app.log.info(`[MemoryOptimizer] Generated ${memories.length} global memories for chapter ${fromChapterNumber}`)
-    return memories.length
+    // 6. 用户手动编辑过的记忆原样保留为全局记忆，避免被 AI 改写
+    for (const mem of userEditedMemories) {
+      await prisma.memory.create({
+        data: {
+          storyId,
+          chapterId,
+          fromChapterNumber,
+          originUid: mem.originUid || generateOriginUid(fromChapterNumber),
+          layer: 'global',
+          content: mem.content,
+          tags: JSON.stringify(['user-edited', 'global']),
+          importance: mem.importance
+        }
+      })
+    }
+
+    app.log.info(`[MemoryOptimizer] Generated ${memories.length} global memories for chapter ${fromChapterNumber}, preserved ${userEditedMemories.length} user-edited memories`)
+    return memories.length + userEditedMemories.length
   } catch (err: any) {
     app.log.error(`[MemoryOptimizer] Failed: ${err.message}`)
     // 失败不阻塞归档，由调用方决定是否继续

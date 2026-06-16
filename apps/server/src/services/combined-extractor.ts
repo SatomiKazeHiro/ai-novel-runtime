@@ -1,16 +1,31 @@
 import type { FastifyInstance } from 'fastify'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
-import { cleanJsonBlock } from '@novel-runtime/shared'
+import { cleanJsonBlock, safeJsonParse } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
-import { type MemoryExtractionResult, extractMemoryFromChapter } from './memory-extractor.js'
+import { type MemoryExtractionResult, extractMemoryFromChapter, prepareMemoryWrites, type ArchiveMemoryData } from './memory-extractor.js'
 import { type GraphExtractionResult } from './graph-extractor.js'
-import { type PlotArcAnalysis, extractPlotArcs } from './plot-extractor.js'
+import { type PlotArcAnalysis, extractPlotArcs, preparePlotArcWrites, type PlotArcWrite } from './plot-extractor.js'
+import { organizeGraph } from './graph-organizer.js'
+import { type GraphSnapshot } from './graph-snapshot.js'
 
 export interface CombinedExtractionData {
   memories: MemoryExtractionResult | null
   graph: GraphExtractionResult
   plotArcs: PlotArcAnalysis | null
+}
+
+export interface PendingArchiveData {
+  memories: ArchiveMemoryData
+  graph: {
+    mergedGraph: GraphSnapshot
+    chapterGraph: GraphSnapshot
+  }
+  plotArcs: PlotArcWrite[]
+  meta: {
+    extractedAt: string
+    chapterNumber: number
+  }
 }
 
 /**
@@ -170,6 +185,75 @@ ${content.slice(0, 8000)}`
   } catch (err: any) {
     app.log.error(`[CombinedExtractor] Failed: ${err.message}`)
     return null
+  }
+}
+
+/**
+ * 准备归档数据：提取 + 整理，但不写入数据库
+ * 返回的数据可直接序列化存储在 Chapter.pendingArchiveData 中
+ */
+export async function prepareArchiveData(
+  app: FastifyInstance,
+  chapterId: string,
+  storyId: string,
+  content: string,
+  outline: string | null,
+  fromChapterNumber: number,
+  parentChapterId: string | null
+): Promise<PendingArchiveData | null> {
+  const prisma = app.prisma
+
+  // 1. 纯提取
+  const extraction = await extractAll(app, chapterId, storyId, content, outline || undefined, fromChapterNumber)
+  if (!extraction || !extraction.memories) {
+    return null
+  }
+
+  // 2. 查找上一章全局图谱 snapshot
+  let previousSnapshot: GraphSnapshot | null = null
+  if (parentChapterId) {
+    const parent = await prisma.chapter.findUnique({
+      where: { id: parentChapterId },
+      select: { graphSnapshot: true }
+    })
+    if (parent?.graphSnapshot) {
+      previousSnapshot = safeJsonParse(parent.graphSnapshot, null)
+    }
+  }
+  if (!previousSnapshot) {
+    const lastArchived = await prisma.chapter.findFirst({
+      where: { storyId, status: 'archived', id: { not: chapterId } },
+      orderBy: { number: 'desc' },
+      select: { graphSnapshot: true }
+    })
+    if (lastArchived?.graphSnapshot) {
+      previousSnapshot = safeJsonParse(lastArchived.graphSnapshot, null)
+    }
+  }
+
+  // 3. 整理图谱
+  const graphRaw = extraction.graph || { nodes: [], edges: [] }
+  const graphOrganized = await organizeGraph(app, storyId, chapterId, previousSnapshot, graphRaw)
+
+  // 4. 准备记忆写入数据
+  const memoryData = prepareMemoryWrites(storyId, chapterId, extraction.memories, fromChapterNumber)
+
+  // 5. 准备剧情弧线写入数据
+  const plotArcWrites = extraction.plotArcs
+    ? await preparePlotArcWrites(prisma, storyId, extraction.plotArcs.arcs)
+    : []
+
+  return {
+    memories: memoryData,
+    graph: {
+      mergedGraph: graphOrganized.mergedGraph,
+      chapterGraph: graphOrganized.chapterGraph
+    },
+    plotArcs: plotArcWrites,
+    meta: {
+      extractedAt: new Date().toISOString(),
+      chapterNumber: fromChapterNumber
+    }
   }
 }
 

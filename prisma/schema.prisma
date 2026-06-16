@@ -38,6 +38,17 @@ model Story {
   workerBindings StoryWorkerBinding[]
 }
 
+enum ChapterStatus {
+  draft
+  generating
+  generated
+  scored
+  selected
+  reviewing
+  archived
+  rejected
+}
+
 // 章节
 model Chapter {
   id                String   @id @default(uuid())
@@ -52,7 +63,7 @@ model Chapter {
   outline           String?
   content           String?
   summary           String?
-  status            String   @default("draft") // draft, generating, generated, scored, selected, archived, rejected
+  status            ChapterStatus @default(draft)
   sceneLocation     String?
   sceneMood         String?
   sceneGoal         String?
@@ -67,6 +78,9 @@ model Chapter {
   // 图谱相关
   graphDelta        String?  // JSON: 相对于上一章的图谱变化
   graphSnapshot     String?  // JSON: 到当前章节的完整图谱快照
+
+  // 归档审查：AI 预提取后、用户确认前的中间数据
+  pendingArchiveData String?
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt

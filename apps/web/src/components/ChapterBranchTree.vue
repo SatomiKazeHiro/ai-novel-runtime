@@ -348,6 +348,7 @@ function statusTagType(status?: string) {
   switch (status) {
     case 'archived': return 'success'
     case 'selected': return 'info'
+    case 'reviewing': return 'warning'
     case 'generated': return 'warning'
     case 'generating': return 'warning'
     case 'draft': return 'default'
@@ -364,7 +365,7 @@ function canDevelop(node: FlatNode) {
 }
 
 function canEdit(node: FlatNode) {
-  return ['draft', 'generated', 'selected'].includes(node.status)
+  return ['draft', 'generated', 'selected', 'reviewing'].includes(node.status)
 }
 
 function canView(node: FlatNode) {

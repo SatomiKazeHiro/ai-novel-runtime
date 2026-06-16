@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { generateQueue } from '../queue/index.js'
-import { extractAll } from '../services/combined-extractor.js'
+import { extractAll, prepareArchiveData, type PendingArchiveData } from '../services/combined-extractor.js'
 import { optimizeMemories } from '../services/memory-optimizer.js'
 import { getActivePlotArcs, preparePlotArcWrites, commitPlotArcWrites } from '../services/plot-extractor.js'
 import { saveGraphSnapshotAndDelta, type GraphSnapshot } from '../services/graph-snapshot.js'
@@ -14,6 +14,38 @@ import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { callAIWithLog } from '../services/ai-call-logger.js'
 
 export async function chapterRoutes(app: FastifyInstance) {
+  // 状态转换校验：集中维护哪些状态可以执行哪些操作
+  const VALID_STATUS_TRANSITIONS: Record<string, string[]> = {
+    draft: ['generating'],
+    generating: ['generated'],
+    generated: ['selected', 'scored'],
+    scored: ['selected'],
+    selected: ['reviewing'],
+    reviewing: ['archived'],
+    archived: [],
+    rejected: []
+  }
+
+  function assertStatusTransition(
+    chapter: { id: string; status: string; number: number },
+    targetStatus: string
+  ) {
+    const allowed = VALID_STATUS_TRANSITIONS[chapter.status] || []
+    if (!allowed.includes(targetStatus)) {
+      throw new Error(`章节 ${chapter.number} 当前状态为 ${chapter.status}，不允许转换为 ${targetStatus}`)
+    }
+  }
+
+  function assertStatusIn(
+    chapter: { id: string; status: string; number: number },
+    allowedStatuses: string[],
+    operation: string
+  ) {
+    if (!allowedStatuses.includes(chapter.status)) {
+      throw new Error(`章节 ${chapter.number} 当前状态为 ${chapter.status}，不允许执行 ${operation}`)
+    }
+  }
+
   // GET /api/stories/:storyId/chapters
   app.get('/api/stories/:storyId/chapters', async (request, reply) => {
     const { storyId } = request.params as any
@@ -108,17 +140,44 @@ export async function chapterRoutes(app: FastifyInstance) {
   app.put('/api/chapters/:chapterId', async (request, reply) => {
     const { chapterId } = request.params as any
     const body = request.body as any
+
+    const chapter = await app.prisma.chapter.findUnique({ where: { id: chapterId } })
+    if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
+
+    // archived 章节只读，不允许任何修改
+    if (chapter.status === 'archived') {
+      return reply.status(400).send({ success: false, error: '已归档章节不可修改' })
+    }
+
+    // 禁止直接通过 PUT 修改 status，状态转换必须通过专门接口
+    if (body.status !== undefined) {
+      return reply.status(400).send({ success: false, error: '不允许直接修改 status 字段' })
+    }
+
     const data: any = {}
     if (body.title !== undefined) data.title = body.title
     if (body.outline !== undefined) data.outline = body.outline
     if (body.content !== undefined) data.content = body.content
-    if (body.status !== undefined) data.status = body.status
     if (body.sceneLocation !== undefined) data.sceneLocation = body.sceneLocation
     if (body.sceneMood !== undefined) data.sceneMood = body.sceneMood
     if (body.sceneGoal !== undefined) data.sceneGoal = body.sceneGoal
     if (body.aiProviderConfigId !== undefined) data.aiProviderConfigId = body.aiProviderConfigId || null
-    const chapter = await app.prisma.chapter.update({ where: { id: chapterId }, data })
-    return { success: true, data: chapter }
+
+    // reviewing 状态只允许调整 content 和 pendingArchiveData
+    if (chapter.status === 'reviewing') {
+      const allowedKeys = ['content', 'pendingArchiveData']
+      const receivedKeys = Object.keys(data)
+      const invalidKeys = receivedKeys.filter(k => !allowedKeys.includes(k))
+      if (invalidKeys.length > 0) {
+        return reply.status(400).send({
+          success: false,
+          error: `reviewing 状态不允许修改以下字段：${invalidKeys.join(', ')}`
+        })
+      }
+    }
+
+    const updated = await app.prisma.chapter.update({ where: { id: chapterId }, data })
+    return { success: true, data: updated }
   })
 
   // DELETE /api/chapters/:chapterId
@@ -319,6 +378,27 @@ export async function chapterRoutes(app: FastifyInstance) {
     })
     if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
 
+    // 只允许 draft 或 generated 状态生成候选；generated 表示用户想重新生成
+    if (chapter.status === 'generating') {
+      return reply.status(400).send({
+        success: false,
+        error: '章节正在生成中，请等待当前生成完成后再试'
+      })
+    }
+    if (chapter.status !== 'draft' && chapter.status !== 'generated') {
+      return reply.status(400).send({
+        success: false,
+        error: `章节当前状态为 ${chapter.status}，只允许 draft 或 generated 状态生成候选`
+      })
+    }
+
+    // 如果已有候选，用户重新生成时先清空旧候选
+    if (chapter.status === 'generated') {
+      const deleted = await prisma.draft.deleteMany({ where: { chapterId } })
+      await prisma.chapter.update({ where: { id: chapterId }, data: { status: 'draft' } })
+      app.log.info(`[Generate] Cleared ${deleted.count} old drafts for chapter ${chapterId} before regenerating`)
+    }
+
     const story = chapter.story
 
     const charactersWithBranchState = await getCharactersWithLatestState(prisma, storyId)
@@ -430,6 +510,17 @@ export async function chapterRoutes(app: FastifyInstance) {
     const { chapterId } = request.params as any
     const body = request.body as any
 
+    const chapter = await app.prisma.chapter.findUnique({ where: { id: chapterId } })
+    if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
+
+    // 只允许 generated 状态选择候选
+    if (chapter.status !== 'generated') {
+      return reply.status(400).send({
+        success: false,
+        error: `章节当前状态为 ${chapter.status}，只允许 generated 状态选择候选`
+      })
+    }
+
     const draft = await app.prisma.draft.findUnique({
       where: { id: body.draftId },
       include: { chapter: true }
@@ -443,6 +534,80 @@ export async function chapterRoutes(app: FastifyInstance) {
     })
 
     return { success: true }
+  })
+
+  // POST /api/chapters/:chapterId/prepare-archive
+  app.post('/api/chapters/:chapterId/prepare-archive', async (request, reply) => {
+    const { chapterId } = request.params as any
+    const prisma = app.prisma
+
+    const chapter = await prisma.chapter.findUnique({
+      where: { id: chapterId },
+      include: { story: true }
+    })
+    if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
+
+    // 只允许 selected 状态进入 reviewing
+    if (chapter.status !== 'selected') {
+      return reply.status(400).send({
+        success: false,
+        error: `章节当前状态为 ${chapter.status}，只允许 selected 状态准备归档`
+      })
+    }
+
+    // 番外不触发提取，直接归档
+    if (chapter.isSideStory) {
+      await prisma.chapter.update({ where: { id: chapterId }, data: { status: 'archived' } })
+      return { success: true, data: { sideStory: true, status: 'archived' } }
+    }
+
+    // 主线无正文：直接归档
+    if (!chapter.content) {
+      await prisma.chapter.update({ where: { id: chapterId }, data: { status: 'archived' } })
+      return { success: true, data: { noContent: true, status: 'archived' } }
+    }
+
+    const outlineText = chapter.outline || ''
+    const contentText = chapter.content || ''
+    if (!outlineText.trim()) {
+      return reply.status(400).send({ success: false, error: '归档失败：大纲不能为空' })
+    }
+    if (!contentText.trim()) {
+      return reply.status(400).send({ success: false, error: '归档失败：正文不能为空' })
+    }
+    if (contentText.length < outlineText.length) {
+      return reply.status(400).send({
+        success: false,
+        error: `归档失败：正文长度（${contentText.length}）不能小于大纲长度（${outlineText.length}）`
+      })
+    }
+
+    const pending = await prepareArchiveData(
+      app,
+      chapterId,
+      chapter.storyId,
+      contentText,
+      chapter.outline,
+      chapter.number,
+      chapter.parentChapterId
+    )
+
+    if (!pending) {
+      return reply.status(500).send({
+        success: false,
+        error: '准备归档失败：AI 提取返回为空，请检查 AI 配置后重试'
+      })
+    }
+
+    await prisma.chapter.update({
+      where: { id: chapterId },
+      data: {
+        status: 'reviewing',
+        pendingArchiveData: JSON.stringify(pending)
+      }
+    })
+
+    return { success: true, data: pending }
   })
 
   // POST /api/chapters/:chapterId/archive
@@ -461,112 +626,52 @@ export async function chapterRoutes(app: FastifyInstance) {
       return { success: true, data: { alreadyArchived: true } }
     }
 
-    // 番外不触发任何提取，直接归档
-    if (chapter.isSideStory) {
-      await prisma.chapter.update({ where: { id: chapterId }, data: { status: 'archived' } })
-      app.log.info(`[Archive] Side story ${chapterId} archived without extraction`)
-      return { success: true, data: { sideStory: true } }
-    }
-
-    // 主线无正文：直接归档（无内容可提取）
-    if (!chapter.content) {
-      await prisma.chapter.update({ where: { id: chapterId }, data: { status: 'archived' } })
-      return { success: true, data: { noContent: true } }
-    }
-
-    // 主线有正文：四阶段归档（提取 → 整理 → 事务写入 → 优化）
-
-    // 前置校验
-    const outlineText = chapter.outline || ''
-    const contentText = chapter.content || ''
-    if (!outlineText.trim()) {
-      return reply.status(400).send({ success: false, error: '归档失败：大纲不能为空' })
-    }
-    if (!contentText.trim()) {
-      return reply.status(400).send({ success: false, error: '归档失败：正文不能为空' })
-    }
-    if (contentText.length < outlineText.length) {
-      return reply.status(400).send({ success: false, error: `归档失败：正文长度（${contentText.length}）不能小于大纲长度（${outlineText.length}）` })
-    }
-
-    // 阶段 1：纯提取（AI 调用，不写数据库）
-    let extraction = null
-    try {
-      extraction = await extractAll(app, chapterId, chapter.storyId, contentText, outlineText || undefined, chapter.number)
-      app.log.info(`[Archive] Combined extraction completed for chapter ${chapterId}`)
-    } catch (err: any) {
-      app.log.error(`[Archive] Combined extraction failed: ${err.message}`)
-      return reply.status(500).send({
+    // 只允许 reviewing 状态确认归档
+    if (chapter.status !== 'reviewing') {
+      return reply.status(400).send({
         success: false,
-        error: `归档失败：内容提取出错（${err.message}）。章节状态未变更，请检查 AI 配置后重试。`
+        error: `章节当前状态为 ${chapter.status}，只允许 reviewing 状态确认归档`
       })
     }
-    if (!extraction || !extraction.memories) {
-      return reply.status(500).send({
+
+    // 番外或无正文：prepare-archive 阶段已处理，这里兜底
+    if (chapter.isSideStory || !chapter.content) {
+      await prisma.chapter.update({
+        where: { id: chapterId },
+        data: { status: 'archived', pendingArchiveData: null }
+      })
+      return { success: true, data: { skipped: true } }
+    }
+
+    const pending = safeJsonParse(chapter.pendingArchiveData, null) as PendingArchiveData | null
+
+    if (!pending) {
+      return reply.status(400).send({
         success: false,
-        error: `归档失败：内容提取返回空。章节状态未变更，请检查 AI 配置后重试。`
+        error: '归档失败：没有找到预归档数据，请先调用 prepare-archive'
       })
     }
 
-    // graph organizer：合并上一章全局 + 本章提取
-    let previousSnapshot: GraphSnapshot | null = null
-    if (chapter.parentChapterId) {
-      const parent = await prisma.chapter.findUnique({
-        where: { id: chapter.parentChapterId },
-        select: { graphSnapshot: true }
-      })
-      if (parent?.graphSnapshot) {
-        previousSnapshot = safeJsonParse(parent.graphSnapshot, null)
-      }
-    }
-    if (!previousSnapshot) {
-      const lastArchived = await prisma.chapter.findFirst({
-        where: { storyId: chapter.storyId, status: 'archived', id: { not: chapterId } },
-        orderBy: { number: 'desc' },
-        select: { graphSnapshot: true }
-      })
-      if (lastArchived?.graphSnapshot) {
-        previousSnapshot = safeJsonParse(lastArchived.graphSnapshot, null)
-      }
-    }
-
-    const graphRaw = extraction.graph || { nodes: [], edges: [] }
-    let graphOrganized: Awaited<ReturnType<typeof organizeGraph>>
-    try {
-      graphOrganized = await organizeGraph(app, chapter.storyId, chapterId, previousSnapshot, graphRaw)
-    } catch (err: any) {
-      app.log.error(`[Archive] Graph organize failed: ${err.message}`)
-      return reply.status(500).send({
-        success: false,
-        error: `归档失败：知识图谱整理出错（${err.message}）。章节状态未变更，请检查 AI 配置后重试。`
-      })
-    }
-
-    // 阶段 3：事务写入（所有数据库操作一次性提交）
+    // 事务写入
     let graphSaved: { snapshot: GraphSnapshot; delta: GraphSnapshot } | null = null
     try {
-      const memoryData = prepareMemoryWrites(chapter.storyId, chapterId, extraction.memories, chapter.number)
-      const plotArcWrites = extraction.plotArcs
-        ? await preparePlotArcWrites(prisma, chapter.storyId, extraction.plotArcs.arcs)
-        : []
-
       graphSaved = await prisma.$transaction(async (tx) => {
         // 1. 写入记忆、角色状态、时间线
-        await commitMemoryWrites(tx, chapterId, chapter.storyId, memoryData)
+        await commitMemoryWrites(tx, chapterId, chapter.storyId, pending.memories)
 
         // 2. 更新章节摘要
-        if (memoryData.summary) {
+        if (pending.memories.summary) {
           await tx.chapter.update({
             where: { id: chapterId },
-            data: { summary: memoryData.summary }
+            data: { summary: pending.memories.summary }
           })
         }
 
         // 3. 写入剧情弧线
-        await commitPlotArcWrites(tx, plotArcWrites)
+        await commitPlotArcWrites(tx, pending.plotArcs)
 
         // 4. 写入图谱快照
-        const saved = await saveGraphSnapshotAndDelta(tx, chapterId, chapter.storyId, graphOrganized)
+        const saved = await saveGraphSnapshotAndDelta(tx, chapterId, chapter.storyId, pending.graph)
         if (!saved) {
           throw new Error('知识图谱保存失败')
         }
@@ -574,7 +679,7 @@ export async function chapterRoutes(app: FastifyInstance) {
         // 5. 正式归档
         await tx.chapter.update({
           where: { id: chapterId },
-          data: { status: 'archived' }
+          data: { status: 'archived', pendingArchiveData: null }
         })
 
         return saved
@@ -600,7 +705,7 @@ export async function chapterRoutes(app: FastifyInstance) {
 
     return {
       success: true,
-      data: { extraction, optimizedCount, graph: graphSaved }
+      data: { optimizedCount, graph: graphSaved }
     }
   })
 
@@ -616,9 +721,9 @@ export async function chapterRoutes(app: FastifyInstance) {
     })
     if (!parentChapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
 
-    // 校验：只能从 archived 或 selected 的章节发展
-    if (!['archived', 'selected'].includes(parentChapter.status)) {
-      return reply.status(400).send({ success: false, error: '只能从已归档或已选中的章节发展' })
+    // 校验：只能从已归档的章节发展
+    if (parentChapter.status !== 'archived') {
+      return reply.status(400).send({ success: false, error: '只能从已归档的章节发展' })
     }
 
     const isSideStory = body.isSideStory === true

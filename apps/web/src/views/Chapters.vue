@@ -471,8 +471,8 @@
                         />
                         <n-space align="center" justify="space-between" style="margin-top: 12px">
                             <n-space>
-                                <n-button type="primary" size="small" @click="editor.saveContent">保存正文</n-button>
-                                <n-button size="small" @click="handleArchive" :loading="archiving">归档</n-button>
+                                <n-button v-if="editor.currentChapter?.status !== 'archived'" type="primary" size="small" @click="editor.saveContent" :loading="editor.savingContent" :disabled="editor.savingContent">保存正文</n-button>
+                                <n-button v-if="editor.currentChapter?.status === 'selected'" size="small" @click="handlePrepareArchive" :loading="archiving">准备归档</n-button>
                             </n-space>
                             <n-text depth="3" style="font-size: 13px">
                                 {{ (editor.editForm.content || "").length.toLocaleString() }} 字
@@ -480,6 +480,30 @@
                         </n-space>
                     </n-grid-item>
                 </n-grid>
+            </n-card>
+
+            <!-- Step 3.5: 归档审查 -->
+            <reviewing-panel
+                v-if="editor.currentChapter?.status === 'reviewing' && editor.pendingArchiveData"
+                ref="reviewingPanelRef"
+                :chapter="editor.currentChapter"
+                :pending-archive-data="editor.pendingArchiveData"
+                @save="handleSavePendingArchiveData"
+                @confirm="handleConfirmArchive"
+                @cancel="handleCancelReviewing"
+            />
+
+            <!-- reviewing 但无待归档数据：提示异常 -->
+            <n-card
+                v-else-if="editor.currentChapter?.status === 'reviewing'"
+                title="归档审查"
+                style="margin-bottom: 24px">
+                <n-space vertical>
+                    <n-alert type="error" :show-icon="false">
+                        未能加载归档审查数据。可能是准备归档时提取失败，或数据解析异常。
+                    </n-alert>
+                    <n-button type="error" size="small" @click="handleCancelReviewing">取消审查（删除本章）</n-button>
+                </n-space>
             </n-card>
 
             <!-- Step 3 只读：正文展示 -->
@@ -762,7 +786,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useDebounceFn } from "@vueuse/core";
 import {
@@ -794,10 +818,14 @@ import {
     NCollapse,
     NCollapseItem,
     NCheckbox,
+    NAlert,
     useDialog,
+    useMessage,
 } from "naive-ui";
 import { ArrowBackOutline } from "@vicons/ionicons5";
 import ChapterBranchTree from "../components/ChapterBranchTree.vue";
+import ReviewingPanel from "./ReviewingPanel.vue";
+import { chaptersApi } from "../api/chapters";
 import { useChapterTree } from "../composables/useChapterTree";
 import { useChapterEditor } from "../composables/useChapterEditor";
 import { useDraftManager } from "../composables/useDraftManager";
@@ -817,8 +845,10 @@ const debouncedSaveConfig = useDebounceFn(editor.saveConfig, 500);
 
 // 归档状态（放在页面层因为涉及跳转）
 const archiving = ref(false);
-const isReadonly = ref(false);
+const isReadonly = computed(() => editor.currentChapter?.status === 'archived');
 const dialog = useDialog();
+const message = useMessage();
+const reviewingPanelRef = ref<InstanceType<typeof ReviewingPanel> | null>(null);
 
 // ========== 生命周期 ==========
 onMounted(() => {
@@ -838,7 +868,6 @@ watch(
 
 // ========== 页面级协调函数 ==========
 async function handleOpenEdit(row: any) {
-    isReadonly.value = false;
     await editor.openEdit(row);
     await drafts.loadDrafts(row.id);
     prompt.loadFromChapter(row, drafts.drafts);
@@ -849,14 +878,12 @@ async function handleOpenEdit(row: any) {
 }
 
 async function handleOpenView(row: any) {
-    isReadonly.value = true;
     await editor.openEdit(row);
     // 只读模式不加载 drafts，不生成 prompt
     prompt.reset();
 }
 
 async function handleBackToTree() {
-    isReadonly.value = false;
     drafts.stopPolling();
     prompt.reset();
     await editor.backToTree();
@@ -907,8 +934,16 @@ async function handleGenerateCustom() {
     drafts.showCustomModal = false;
 }
 
-function handleAdoptDraft(draft: any) {
-    if (!draft.content) return;
+async function handleAdoptDraft(draft: any) {
+    if (!draft.content || !editor.currentChapter) return;
+    const doAdopt = async () => {
+        const content = await drafts.selectDraft(editor.currentChapter!.id, draft.id);
+        if (content !== null) {
+            editor.editForm.content = content;
+            editor.currentChapter!.content = content;
+            editor.currentChapter!.status = 'selected';
+        }
+    };
     const currentContent = editor.editForm.content || '';
     if (currentContent.trim() && currentContent !== draft.content) {
         dialog.warning({
@@ -917,16 +952,14 @@ function handleAdoptDraft(draft: any) {
             positiveText: '覆盖',
             negativeText: '取消',
             positiveButtonProps: { type: 'primary' },
-            onPositiveClick: () => {
-                editor.editForm.content = draft.content;
-            }
+            onPositiveClick: doAdopt
         });
     } else {
-        editor.editForm.content = draft.content;
+        await doAdopt();
     }
 }
 
-function handleArchive() {
+function handlePrepareArchive() {
     if (!editor.currentChapter) return;
     const outline = editor.editForm.outline || '';
     const content = editor.editForm.content || '';
@@ -942,25 +975,62 @@ function handleArchive() {
         dialog.error({ title: '无法归档', content: `正文长度（${content.length}）不能小于大纲长度（${outline.length}）` });
         return;
     }
-    dialog.warning({
-        title: '确认归档',
-        content: '归档后将触发 AI 提取记忆、知识图谱等操作。确定要归档吗？',
-        positiveText: '归档',
+    const d = dialog.warning({
+        title: '准备归档',
+        content: '即将进入归档审查，AI 会提取记忆、图谱、剧情弧线等信息供你确认。',
+        positiveText: '开始审查',
         negativeText: '取消',
         positiveButtonProps: { type: 'primary' },
-        onPositiveClick: async () => {
+        onPositiveClick: () => {
+            d.destroy();
             archiving.value = true;
-            // try {
-            //     const result = await editor.archiveChapter(editor.editForm.content);
-            //     if (result.success) await handleBackToTree();
-            // } finally {
-            //     archiving.value = false;
-            // }
-            editor.archiveChapter(editor.editForm.content).then(result => {
-                if (result.success) handleBackToTree();
-            }).finally(() => {
-                archiving.value = false;
-            })
+            (async () => {
+                try {
+                    // 先保存正文，确保 reviewing 阶段的内容是最新的
+                    await editor.saveContent();
+                    const result = await editor.prepareArchive();
+                    if (!result.success) {
+                        message.error('进入归档审查失败');
+                    }
+                } catch (e: any) {
+                    console.error('[handlePrepareArchive]', e);
+                    message.error(e.message || '进入归档审查失败');
+                } finally {
+                    archiving.value = false;
+                }
+            })();
+        }
+    });
+}
+
+async function handleSavePendingArchiveData(data: any) {
+    await editor.savePendingArchiveData(data);
+}
+
+async function handleConfirmArchive(data: any) {
+    reviewingPanelRef.value?.startConfirm();
+    try {
+        const saveResult = await editor.savePendingArchiveData(data);
+        if (!saveResult.success) return;
+        const result = await editor.archiveChapter();
+        if (result.success) await handleBackToTree();
+    } finally {
+        reviewingPanelRef.value?.stopConfirm();
+    }
+}
+
+function handleCancelReviewing() {
+    // 取消审查：删除当前 reviewing 章节
+    if (!editor.currentChapter) return;
+    dialog.warning({
+        title: '取消审查',
+        content: '取消后将删除当前 reviewing 章节，是否继续？',
+        positiveText: '删除',
+        negativeText: '保留',
+        positiveButtonProps: { type: 'error' },
+        onPositiveClick: async () => {
+            await chaptersApi.remove(editor.currentChapter!.id);
+            await handleBackToTree();
         }
     });
 }
@@ -990,6 +1060,8 @@ function statusTagType(status?: string) {
             return "success";
         case "selected":
             return "info";
+        case "reviewing":
+            return "warning";
         case "generated":
             return "warning";
         case "generating":
