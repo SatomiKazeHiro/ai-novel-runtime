@@ -69,6 +69,13 @@
 - **为什么重要：** 这是开发态的合理选择，但**部署到非本机环境前必须先加认证层**。如果直接暴露到公网，任意人能调生成、归档、删库。
 - **避雷指引：** 不要在没有显式鉴权的情况下加新的"管理类"接口（删除、重置、批量更新）。任何 `DELETE`/`PUT` 路由默认应拒绝外部访问，直到补好认证。
 
+### 5. 遗留 extractor 仍使用 `content.slice(0, 8000)` 粗截断
+- **位置：** `apps/server/src/services/memory-extractor.ts:124`（`extractMemoryFromChapter`）、`apps/server/src/services/graph-extractor.ts:71`（`extractGraphFromChapter`）。
+- **现状：** 这两个函数 prompt 模板里都有 `${content.slice(0, 8000)}`，与 P0 #2 修复前的 `combined-extractor.ts:148` 完全同模式。`combined-extractor.ts` 的活跃路径（`extractAll`）已用 `truncateByParagraph` 替换（commit `482cca9`），但这两个 legacy 函数仍存在同样截断风险。
+- **调用关系：** `extractMemoryFromChapter` 仅被 `combined-extractor.ts:7` import 并在 `:262` re-export，**当前不被任何路由调用**；`extractGraphFromChapter` **完全无人 import**。属于死代码。
+- **为什么重要：** P0 #2 修复只覆盖了 `extractAll`（combined path）。如果未来有人重新启用 standalone extractors（比如想做"只刷新 graph 不重跑 memory"的功能），数据丢失的 bug 会原样复现——因为问题不在调用方，而在 prompt 模板的截断方式。
+- **避雷指引：** 启用任何 standalone extractor 前先在文件内替换 `${content.slice(0, 8000)}` 为 `${truncateByParagraph(content, 8000)}` 并补 import；或者直接删除 dead code（如果项目已决定不再走 standalone 路径）。
+
 ### S2. CORS 配置为 `origin: true`
 - **位置：** `apps/server/src/app.ts`。
 - **现状：** Fastify CORS 允许任何来源。
