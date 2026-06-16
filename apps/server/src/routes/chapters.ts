@@ -14,27 +14,8 @@ import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { callAIWithLog } from '../services/ai-call-logger.js'
 
 export async function chapterRoutes(app: FastifyInstance) {
-  // 状态转换校验：集中维护哪些状态可以执行哪些操作
-  const VALID_STATUS_TRANSITIONS: Record<string, string[]> = {
-    draft: ['generating'],
-    generating: ['generated'],
-    generated: ['selected', 'scored'],
-    scored: ['selected'],
-    selected: ['reviewing'],
-    reviewing: ['archived'],
-    archived: [],
-    rejected: []
-  }
-
-  function assertStatusTransition(
-    chapter: { id: string; status: string; number: number },
-    targetStatus: string
-  ) {
-    const allowed = VALID_STATUS_TRANSITIONS[chapter.status] || []
-    if (!allowed.includes(targetStatus)) {
-      throw new Error(`章节 ${chapter.number} 当前状态为 ${chapter.status}，不允许转换为 ${targetStatus}`)
-    }
-  }
+  // 状态转换校验已下线（Q#3 决策 2026-06-16：helper 死代码，删除直至需要集中校验时再回填）。
+  // 当前每个路由用 `chapter.status === 'xxx'` 内联校验。
 
   function assertStatusIn(
     chapter: { id: string; status: string; number: number },
