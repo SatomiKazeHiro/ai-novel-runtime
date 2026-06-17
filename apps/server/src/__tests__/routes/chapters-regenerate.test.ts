@@ -150,3 +150,80 @@ describe('generate route — allowed status list (Task #66)', () => {
     addSpy.mockRestore()
   })
 })
+
+describe('select route — lock extended for selected state (Task #66)', () => {
+  let mockPrisma: any
+  let routes: Record<string, any>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockPrisma = {
+      chapter: {
+        findUnique: vi.fn(),
+        update: vi.fn(),
+        updateMany: vi.fn()
+      },
+      draft: {
+        findUnique: vi.fn(),
+        update: vi.fn(),
+        updateMany: vi.fn()
+      },
+      $transaction: vi.fn(async (fn: any) => fn(mockPrisma))
+    }
+    const { chapterRoutes } = await import('../../routes/chapters.js')
+    const built = createMockApp(mockPrisma)
+    await chapterRoutes(built.app)
+    routes = built.routes
+  })
+
+  it('accepts selected status (Task #66 new capability)', async () => {
+    // User in selected state wants to switch to a different candidate
+    // (e.g. one from a fresh re-generation batch).
+    mockPrisma.chapter.findUnique.mockResolvedValue({
+      id: 'c1', status: 'selected', content: 'old selected content'
+    })
+    mockPrisma.draft.findUnique.mockResolvedValue({
+      id: 'd_new', chapterId: 'c1', content: 'new content', chapter: { id: 'c1' }
+    })
+    mockPrisma.chapter.updateMany.mockResolvedValue({ count: 1 })
+    mockPrisma.draft.updateMany.mockResolvedValue({ count: 1 })
+    mockPrisma.draft.update.mockResolvedValue({ id: 'd_new', status: 'selected' })
+    mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'selected' })
+
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/select',
+      { draftId: 'd_new' }, { chapterId: 'c1' }
+    )
+
+    expect(result.status).not.toBe(400)
+    expect(result.status).not.toBe(409)
+    expect(mockPrisma.$transaction).toHaveBeenCalled()
+  })
+
+  it('rejects archived status with 400', async () => {
+    mockPrisma.chapter.findUnique.mockResolvedValue({
+      id: 'c1', status: 'archived'
+    })
+
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/select',
+      { draftId: 'd1' }, { chapterId: 'c1' }
+    )
+
+    expect(result.status).toBe(400)
+    expect(result.body.error).toMatch(/只允许 generated \/ scored \/ selected/)
+  })
+
+  it('rejects draft status with 400', async () => {
+    mockPrisma.chapter.findUnique.mockResolvedValue({
+      id: 'c1', status: 'draft'
+    })
+
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/select',
+      { draftId: 'd1' }, { chapterId: 'c1' }
+    )
+
+    expect(result.status).toBe(400)
+  })
+})

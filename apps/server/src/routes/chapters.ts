@@ -509,11 +509,16 @@ export async function chapterRoutes(app: FastifyInstance) {
     const chapter = await app.prisma.chapter.findUnique({ where: { id: chapterId } })
     if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
 
-    // 只允许 generated 状态选择候选
-    if (chapter.status !== 'generated') {
+    // 允许 generated / scored / selected 三态切换候选
+    // - generated / scored: 首次/评分后选择
+    // - selected: 已选了一个,看到新生成的更好的候选想切换
+    // 切换路径下,UI 的 handleAdoptDraft 已有"确认覆盖"对话框兜底
+    if (chapter.status !== 'generated' &&
+        chapter.status !== 'scored' &&
+        chapter.status !== 'selected') {
       return reply.status(400).send({
         success: false,
-        error: `章节当前状态为 ${chapter.status}，只允许 generated 状态选择候选`
+        error: `章节当前状态为 ${chapter.status}，只允许 generated / scored / selected 状态选择候选`
       })
     }
 
@@ -526,7 +531,7 @@ export async function chapterRoutes(app: FastifyInstance) {
 
     // 状态机独占锁：原子性 updateMany（防止双击 select 产生重复 chapter update）
     const lockResult = await app.prisma.chapter.updateMany({
-      where: { id: chapterId, status: { in: ['generated', 'scored'] } },
+      where: { id: chapterId, status: { in: ['generated', 'scored', 'selected'] } },
       data: { status: 'selected' }
     })
     if (lockResult.count === 0) {
