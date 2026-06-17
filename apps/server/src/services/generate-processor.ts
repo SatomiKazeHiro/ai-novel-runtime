@@ -16,7 +16,7 @@ export function createGenerateProcessor(app: FastifyInstance) {
       chapterTitle, chapterOutline, preLockStatus
     } = job.data
     //                                  ↑ 新增:抢锁前章节状态,决定 status 恢复目标
-    app.log.info(`[Generate] Processing ${draftIds.length} drafts for chapter ${chapterId} (preLockStatus=${preLockStatus})`)
+    app.log.info(`[Generate] Processing ${draftIds.length} drafts for chapter ${chapterId} (preLockStatus=${preLockStatus ?? 'draft'})`)
 
     const prisma = app.prisma
     let successCount = 0
