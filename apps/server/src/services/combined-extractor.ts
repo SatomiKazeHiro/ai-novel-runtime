@@ -144,8 +144,17 @@ importance 评分标准：
 === 任务2：实体与关系提取 ===
 提取 importance >= 6 的核心实体和它们之间的关系：
 - nodes: [{ type: "character"|"faction"|"event"|"item", key: "唯一标识（英文小写）", label: "显示名称", importance: 1-10, data: {...} }]
-- edges: [{ fromKey, fromType, toKey, toType, relation }]
+- edges: [{ fromKey, fromType, toKey, toType, relation, importance: 1-10 }]
   relation 应该是一个简洁的核心词或短语（2-6字为佳），直接表达两实体间的核心联系，不要带状语、从句或补充说明
+
+=== 节点质量约束（重要）===
+只提取能推动剧情发展的实体：
+- 角色：仅当本章发生了状态变化（修为/位置/身份/阵营/关系）或剧情转折点
+- 势力：仅当本章发生存亡/合并/对抗/结盟等变化
+- 物品：仅当本章有归属变更、能力觉醒、用于关键事件
+- 事件：仅当本章明确发生或被揭示
+禁止提取：路人甲乙丙、纯环境描述、一次性对话提及、无后续影响的设定
+
 已有实体（不要重复提取，但可补充新属性）：${Array.from(existingKeys).join(', ') || '无'}${previousEntitiesBlock}
 
 === 任务3：剧情弧线分析 ===
