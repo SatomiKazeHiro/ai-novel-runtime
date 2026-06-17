@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import { ChapterStatus } from '@prisma/client'
 import { generateQueue } from '../queue/index.js'
 import { extractAll, prepareArchiveData, type PendingArchiveData } from '../services/combined-extractor.js'
 import { optimizeMemories } from '../services/memory-optimizer.js'
@@ -350,17 +351,26 @@ export async function chapterRoutes(app: FastifyInstance) {
     })
     if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
 
-    // 只允许 draft 状态生成候选（Q#10 决策：generated 重新生成暂不支持）
-    if (chapter.status !== 'draft') {
+    // 允许 draft / generated / selected 三态生成候选
+    // - draft: 首次生成
+    // - generated: 已有候选不满意,再生成新的(追加)
+    // - selected: 已选了一个,想多看几个对比(追加,Chapter.content 不动)
+    // (Q#10 当时拒绝 generated 是因为"删旧+重建"无原子性,本改造改为纯加法,
+    // 旧候选全部保留,不存在脏窗口问题)
+    const GENERATE_ALLOWED_STATUSES = ['draft', 'generated', 'selected'] as const
+    if (!GENERATE_ALLOWED_STATUSES.includes(chapter.status as any)) {
       return reply.status(400).send({
         success: false,
-        error: `章节当前状态为 ${chapter.status}，只允许 draft 状态生成候选`
+        error: `章节当前状态为 ${chapter.status}，只允许 draft / generated / selected 状态生成候选`
       })
     }
 
     // 状态机独占锁：原子性 updateMany（防止双击并发产生 2 批 draft）
     const lockResult = await prisma.chapter.updateMany({
-      where: { id: chapterId, status: 'draft' },
+      where: {
+        id: chapterId,
+        status: { in: [...GENERATE_ALLOWED_STATUSES] as ChapterStatus[] }
+      },
       data: { status: 'generating' }
     })
     if (lockResult.count === 0) {
