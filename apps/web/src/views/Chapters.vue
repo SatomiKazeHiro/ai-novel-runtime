@@ -502,7 +502,21 @@
                     <n-alert type="error" :show-icon="false">
                         未能加载归档审查数据。可能是准备归档时提取失败，或数据解析异常。
                     </n-alert>
-                    <n-button type="error" size="small" @click="handleCancelReviewing">取消审查（删除本章）</n-button>
+                    <!--
+                        重新准备归档：后端允许从 reviewing 重试 prepare-archive
+                        （会清掉旧 pendingArchiveData 并用新 payload 覆盖）。
+                        用 warning 色而不是 primary/error，避免和"取消审查
+                        （删除本章）"混淆——后者不可逆。
+                    -->
+                    <n-space>
+                        <n-button
+                            type="warning"
+                            size="small"
+                            :loading="repreparingArchive"
+                            @click="handleReprepareArchive"
+                        >重新准备归档</n-button>
+                        <n-button type="error" size="small" @click="handleCancelReviewing">取消审查（删除本章）</n-button>
+                    </n-space>
                 </n-space>
             </n-card>
 
@@ -845,6 +859,8 @@ const debouncedSaveConfig = useDebounceFn(editor.saveConfig, 500);
 
 // 归档状态（放在页面层因为涉及跳转）
 const archiving = ref(false);
+// 重新准备归档的 loading 状态（reviewing → reviewing 重试路径）
+const repreparingArchive = ref(false);
 const isReadonly = computed(() => editor.currentChapter?.status === 'archived');
 const dialog = useDialog();
 const message = useMessage();
@@ -1016,6 +1032,21 @@ async function handleConfirmArchive(data: any) {
         if (result.success) await handleBackToTree();
     } finally {
         reviewingPanelRef.value?.stopConfirm();
+    }
+}
+
+async function handleReprepareArchive() {
+    // reviewing + pendingArchiveData=null 时的恢复路径：调用同一个
+    // prepare-archive 端点（后端允许从 reviewing 重试），成功后
+    // pendingArchiveData 被新 payload 填上，ReviewingPanel 自动渲染。
+    // 失败时保持在 reviewing 状态 + 损坏的 pendingArchiveData，用户
+    // 可以再点重试或选择"取消审查（删除本章）"。
+    if (repreparingArchive.value) return;
+    repreparingArchive.value = true;
+    try {
+        await editor.prepareArchive();
+    } finally {
+        repreparingArchive.value = false;
     }
 }
 

@@ -540,13 +540,17 @@ export async function chapterRoutes(app: FastifyInstance) {
     })
     if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
 
-    // 只允许 selected 状态进入 reviewing
-    if (chapter.status !== 'selected') {
+    // 允许 selected 和 reviewing 两种状态进入 prepare-archive：
+    // - selected：正常首次准备
+    // - reviewing：上一次提取失败导致 pendingArchiveData=null/损坏，需要重试
+    //   （不重新丢章节、不让用户走"取消审查=删除"恢复路径）
+    if (chapter.status !== 'selected' && chapter.status !== 'reviewing') {
       return reply.status(400).send({
         success: false,
-        error: `章节当前状态为 ${chapter.status}，只允许 selected 状态准备归档`
+        error: `章节当前状态为 ${chapter.status}，只允许 selected 或 reviewing 状态准备归档`
       })
     }
+    const preLockStatus = chapter.status
 
     // 番外不触发提取，直接归档
     if (chapter.isSideStory) {
@@ -576,11 +580,12 @@ export async function chapterRoutes(app: FastifyInstance) {
     }
 
     // 状态机独占锁：原子性 updateMany（防止双击 prepare-archive 触发 2× AI 调用）
-    // 必须在 prepareArchiveData 之前获取，并立即把 status 从 'selected' 翻到 'reviewing'。
-    // 失败回滚由下方 catch 块把 status 改回 'selected' 处理（Task 4 设计）。
+    // 必须先于 prepareArchiveData 获取。允许 status 是 selected（首次）或
+    // reviewing（重试）—— 后者从 reviewing 进入会把 status 翻成 reviewing
+    // （自身），并清掉旧的 pendingArchiveData 让新 payload 接管。
     const lockResult = await prisma.chapter.updateMany({
-      where: { id: chapterId, status: 'selected' },
-      data: { status: 'reviewing' }
+      where: { id: chapterId, status: { in: ['selected', 'reviewing'] } },
+      data: { status: 'reviewing', pendingArchiveData: null }
     })
     if (lockResult.count === 0) {
       return reply.status(409).send({
@@ -601,13 +606,12 @@ export async function chapterRoutes(app: FastifyInstance) {
         chapter.parentChapterId
       )
     } catch (err: any) {
-      // Rollback: revert chapter.status to 'selected' (defensive — the
-      // current code puts the status update after this block, so this
-      // guards future reordering where the flip might move ahead of
-      // the AI call).
+      // Rollback: 回到 preLockStatus 而不是硬编码 'selected'。
+      // 如果用户从 selected 进入 → 失败 → 回 selected（保持原行为）；
+      // 如果从 reviewing 重试 → 失败 → 回 reviewing（保留 retry 入口）。
       await prisma.chapter.update({
         where: { id: chapterId },
-        data: { status: 'selected' }
+        data: { status: preLockStatus }
       }).catch(() => { /* swallow rollback failure */ })
       app.log.error(`[Prepare-Archive] Failed for chapter ${chapterId}: ${err.message}`)
       return reply.status(500).send({
