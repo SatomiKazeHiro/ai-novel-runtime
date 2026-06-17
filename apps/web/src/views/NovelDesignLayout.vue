@@ -1,5 +1,5 @@
 <template>
-  <n-layout style="height: 100vh; display: flex; flex-direction: column;">
+  <n-layout class="novel-design-layout" style="height: 100vh">
     <NavBar />
     <n-layout has-sider style="flex: 1; overflow: hidden;">
       <n-layout-sider
@@ -20,8 +20,8 @@
           @update:value="handleMenuSelect"
         />
       </n-layout-sider>
-      <n-layout-content style="padding: 24px; overflow-y: auto">
-        <router-view />
+      <n-layout-content style="overflow-y: auto">
+        <router-view style="padding: 24px" />
       </n-layout-content>
     </n-layout>
   </n-layout>
@@ -93,3 +93,10 @@ function handleMenuSelect(key: string) {
   if (path) router.push(path)
 }
 </script>
+
+<style>
+.novel-design-layout > .n-layout-scroll-container {
+    display: flex;
+    flex-direction: column;
+}
+</style>
