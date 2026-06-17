@@ -134,3 +134,109 @@ export async function rebuildGraphFromSnapshot(
     }
   }
 }
+
+export interface ExpandOptions {
+  maxDepth: number
+  maxTokens: number
+  maxEntities?: number
+  tokenEstimator?: (node: GraphNodeSnapshot) => number
+}
+
+export interface NeighborhoodResult {
+  nodes: GraphNodeSnapshot[]
+  edges: GraphEdgeSnapshot[]
+  truncated: boolean
+  truncateReason?: 'token_budget' | 'max_entities' | 'max_depth'
+  estimatedTokens: number
+}
+
+const defaultTokenEstimator = (n: GraphNodeSnapshot): number => {
+  // Rough heuristic: ~4 chars per token (English-leaning). Matches the project's
+  // shared/estimateTokens convention; suitable for prompt-side planning only.
+  return Math.ceil((n.label.length + JSON.stringify(n.data || {}).length) / 4)
+}
+
+export function expandNeighborhood(
+  snapshot: GraphSnapshot,
+  matchedKeys: string[],
+  options: ExpandOptions
+): NeighborhoodResult {
+  const { maxDepth, maxTokens, maxEntities, tokenEstimator = defaultTokenEstimator } = options
+
+  const allNodesByKey = new Map<string, GraphNodeSnapshot>()
+  for (const n of snapshot.nodes) {
+    allNodesByKey.set(`${n.type}:${n.key}`, n)
+  }
+
+  // Pre-build adjacency: nodeKey -> list of otherNodeKey
+  const adj = new Map<string, string[]>()
+  for (const e of snapshot.edges) {
+    const from = `${e.fromType}:${e.fromKey}`
+    const to = `${e.toType}:${e.toKey}`
+    if (!adj.has(from)) adj.set(from, [])
+    if (!adj.has(to)) adj.set(to, [])
+    adj.get(from)!.push(to)
+    adj.get(to)!.push(from)
+  }
+
+  // BFS, tracking depth per node
+  const visited = new Map<string, number>() // key -> depth
+  const queue: Array<{ key: string; depth: number }> = []
+  for (const k of matchedKeys) {
+    if (allNodesByKey.has(k) && !visited.has(k)) {
+      visited.set(k, 0)
+      queue.push({ key: k, depth: 0 })
+    }
+  }
+
+  const includedNodes: GraphNodeSnapshot[] = []
+  let estimatedTokens = 0
+  let truncated = false
+  let truncateReason: 'token_budget' | 'max_entities' | 'max_depth' | undefined
+
+  while (queue.length > 0) {
+    const { key, depth } = queue.shift()!
+    const node = allNodesByKey.get(key)!
+    const cost = tokenEstimator(node)
+
+    // entity-count cap
+    if (maxEntities !== undefined && includedNodes.length + 1 > maxEntities) {
+      truncated = true
+      truncateReason = 'max_entities'
+      break
+    }
+    // budget cap — check BEFORE adding so we don't include a node we can't afford
+    if (estimatedTokens + cost > maxTokens) {
+      truncated = true
+      truncateReason = 'token_budget'
+      break
+    }
+
+    includedNodes.push(node)
+    estimatedTokens += cost
+
+    if (depth >= maxDepth) continue
+    const neighbors = adj.get(key) || []
+    for (const nb of neighbors) {
+      if (!visited.has(nb)) {
+        visited.set(nb, depth + 1)
+        queue.push({ key: nb, depth: depth + 1 })
+      }
+    }
+  }
+
+  // Edge pruning: keep edges whose BOTH endpoints are in the included set
+  const includedKeys = new Set(includedNodes.map(n => `${n.type}:${n.key}`))
+  const includedEdges = snapshot.edges.filter(e =>
+    includedKeys.has(`${e.fromType}:${e.fromKey}`) &&
+    includedKeys.has(`${e.toType}:${e.toKey}`)
+  )
+
+  return {
+    nodes: includedNodes,
+    edges: includedEdges,
+    truncated,
+    truncateReason,
+    estimatedTokens
+  }
+}
