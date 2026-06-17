@@ -32,7 +32,8 @@ export async function extractAll(
   storyId: string,
   content: string,
   outline?: string,
-  fromChapterNumber?: number
+  fromChapterNumber?: number,
+  previousSnapshot?: GraphSnapshot | null
 ): Promise<CombinedExtractionData | null> {
   const prisma = app.prisma
   const chNum = fromChapterNumber ?? 0
@@ -74,6 +75,22 @@ export async function extractAll(
   app.log.info(
     `[CombinedExtractor] Context injection: ${existingArcs.length} arcs, ${characterNodes.length} characters, ${recentOtherNodes.length} recent nodes`
   )
+
+  // Inject N-1 entity inventory so the AI reuses existing type:key values
+  // instead of inventing new ones. Cap at 500 to defend against extremely
+  // large graphs; trim by descending importance when capped.
+  let previousEntitiesBlock = ''
+  if (previousSnapshot && previousSnapshot.nodes.length > 0) {
+    const sorted = [...previousSnapshot.nodes]
+      .sort((a, b) => {
+        const ai = (a.data?.importance as number) || 0
+        const bi = (b.data?.importance as number) || 0
+        return bi - ai
+      })
+    const trimmed = sorted.slice(0, 500)
+    const lines = trimmed.map(n => `- ${n.type}:${n.key} (${n.label})`)
+    previousEntitiesBlock = `\n\n=== N-1 全局图谱中的实体清单（用于 key 复用） ===\n本故事 N-1 章后的图谱共有 ${previousSnapshot.nodes.length} 个实体，请严格复用以下 type:key，禁止再造新 key：\n${lines.join('\n')}\n注意：N-1 没有出现的实体才允许创建新 key。新 key 必须用英文小写、下划线分隔。`
+  }
 
   const extractPrompt = `请分析以下小说章节，同时完成【记忆提取】、【实体关系提取】和【剧情弧线分析】三个任务。返回严格 JSON 格式，不要 markdown 代码块，不要解释文字。
 
@@ -126,7 +143,7 @@ importance 评分标准：
 - nodes: [{ type: "character"|"faction"|"event"|"item", key: "唯一标识（英文小写）", label: "显示名称", importance: 1-10, data: {...} }]
 - edges: [{ fromKey, fromType, toKey, toType, relation }]
   relation 应该是一个简洁的核心词或短语（2-6字为佳），直接表达两实体间的核心联系，不要带状语、从句或补充说明
-已有实体（不要重复提取，但可补充新属性）：${Array.from(existingKeys).join(', ') || '无'}
+已有实体（不要重复提取，但可补充新属性）：${Array.from(existingKeys).join(', ') || '无'}${previousEntitiesBlock}
 
 === 任务3：剧情弧线分析 ===
 分析已有弧线的推进，标注未解悬念：
@@ -260,13 +277,9 @@ export async function prepareArchiveData(
 ): Promise<PendingArchiveData | null> {
   const prisma = app.prisma
 
-  // 1. 纯提取
-  const extraction = await extractAll(app, chapterId, storyId, content, outline || undefined, fromChapterNumber)
-  if (!extraction || !extraction.memories) {
-    return null
-  }
-
-  // 2. 查找上一章全局图谱 snapshot
+  // 0. 查找上一章全局图谱 snapshot（必须在 extractAll 之前准备好，
+  //    这样 combined_extract 就能注入 N-1 实体清单帮 AI 复用 type:key。
+  //    同一份 previousSnapshot 后面 graph-organize 也会用（避免重查）。）
   let previousSnapshot: GraphSnapshot | null = null
   if (parentChapterId) {
     const parent = await prisma.chapter.findUnique({
@@ -286,6 +299,15 @@ export async function prepareArchiveData(
     if (lastArchived?.graphSnapshot) {
       previousSnapshot = safeJsonParse(lastArchived.graphSnapshot, null)
     }
+  }
+
+  // 1. 纯提取（传 N-1 图谱快照，combined_extract 注入 N-1 实体清单帮 AI 复用 key）
+  //    同一份 previousSnapshot 后面 graph-organize 也会用（避免重查）
+  const extraction = await extractAll(
+    app, chapterId, storyId, content, outline || undefined, fromChapterNumber, previousSnapshot
+  )
+  if (!extraction || !extraction.memories) {
+    return null
   }
 
   // 3. 整理图谱
