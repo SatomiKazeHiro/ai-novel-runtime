@@ -10,6 +10,7 @@ import { expandNeighborhood, type GraphSnapshot } from './graph-snapshot.js'
 const SAFETY_MARGIN_TOKENS = 2000
 const MAX_NEIGHBORHOOD_ENTITIES = 200
 const NEIGHBORHOOD_MAX_DEPTH = 2
+const NEIGHBORHOOD_BUDGET_HEADROOM = 0.9  // warn at 90% budget usage
 
 export async function organizeGraph(
   app: FastifyInstance,
@@ -64,18 +65,19 @@ export async function organizeGraph(
   )
 
   if (neighborhood.truncated) {
-    // Any truncation is a signal the operator should know about — either the
-    // graph was budget-clipped (and possibly empty) or hit the entity cap.
-    // Fire the TODO unconditionally; the message includes usage ratio details
-    // so high-usage vs zero-usage are both diagnosable.
+    // Per design spec §4.5: warn at ≥90% budget usage, so normal (well-fit)
+    // truncations don't spam TODO logs on every archive call. High-usage
+    // truncations are a real signal that contextLength may need bumping.
     const usageRatio = neighborhood.estimatedTokens / Math.max(1, graphBudget)
-    app.log.warn(
-      `[TODO][GraphOrganizer] Neighborhood truncated (${neighborhood.truncateReason}), ` +
-      `used ${neighborhood.estimatedTokens}/${graphBudget} tokens ` +
-      `(${(usageRatio * 100).toFixed(0)}%), ` +
-      `${neighborhood.nodes.length} nodes included. ` +
-      `Consider increasing contextLength in ModelManager.`
-    )
+    if (usageRatio >= NEIGHBORHOOD_BUDGET_HEADROOM) {
+      app.log.warn(
+        `[TODO][GraphOrganizer] Neighborhood truncated (${neighborhood.truncateReason}), ` +
+        `used ${neighborhood.estimatedTokens}/${graphBudget} tokens ` +
+        `(${(usageRatio * 100).toFixed(0)}%), ` +
+        `${neighborhood.nodes.length} nodes included. ` +
+        `Consider increasing contextLength in ModelManager.`
+      )
+    }
   }
 
   // Second compile pass with the trimmed neighborhood as the "previous" graph.

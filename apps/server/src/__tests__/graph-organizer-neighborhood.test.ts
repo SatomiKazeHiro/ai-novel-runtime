@@ -89,17 +89,31 @@ describe('organizeGraph — key matching and prompt', () => {
   })
 
   it('logs TODO warn when neighborhood was truncated by budget', async () => {
-    // Force truncation: huge snapshot, tiny context, so budget cap kicks in
+    // Force truncation via the token_budget cap and size the budget so that
+    // usageRatio >= NEIGHBORHOOD_BUDGET_HEADROOM (0.9) — the spec's trigger.
+    //
+    // Setup:
+    //   - 200 nodes connected as a star centered on n0 so 1-hop BFS from n0
+    //     reaches all 200 of them, hits the token_budget cap, yielding
+    //     estimatedTokens ≈ 10000+ (each node ~54 tokens)
+    //   - contextLength: 45000 → graphBudget ≈ 45000 - nonGraphTokens(~16445)
+    //     - 16384 - 2000 ≈ 10171, so usageRatio ≈ 100%, well above 0.9
     const hugePrev: GraphSnapshot = {
       nodes: Array.from({ length: 200 }, (_, i) => ({
         type: 'character' as const, key: `n${i}`, label: `L${i}`, data: { blob: 'x'.repeat(200) }
       })),
-      edges: [],
+      // Star centered on n0: n0 connects to every other node so 1-hop BFS
+      // from n0 reaches all 199 neighbors; the budget cap truncates mid-add.
+      edges: Array.from({ length: 199 }, (_, i) => ({
+        fromType: 'character' as const, fromKey: 'n0',
+        toType: 'character' as const, toKey: `n${i + 1}`,
+        relation: 'knows', weight: 1
+      })),
       timestamp: ''
     }
     mockResolveProvider.mockResolvedValue({
       provider: { generateWithRuntime: vi.fn(), lastUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } },
-      config: { id: 'cfg-1', name: 'd', model: 'd', contextLength: 2000, maxTokens: 16384, temperature: 0.3 }
+      config: { id: 'cfg-1', name: 'd', model: 'd', contextLength: 45000, maxTokens: 16384, temperature: 0.3 }
     })
     const extracted: GraphExtractionResult = {
       nodes: [{ type: 'character', key: 'n0', label: 'L0', importance: 8, data: {} }],
