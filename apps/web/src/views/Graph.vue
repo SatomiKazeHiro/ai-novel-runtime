@@ -143,7 +143,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, computed, nextTick } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NH1, NSpace, NButton, NSelect, NCard, NTag, NText, NModal, NForm, NFormItem, NInput, NEmpty,
@@ -250,7 +250,22 @@ const diffStats = computed(() => {
   return { addedNodes, addedEdges }
 })
 
+// [TODO][2026-06-18 解耦] 这个文件同时承担"展示"和"可编辑"两种语义:
+//   - display (只读) → 先用在大知识图谱页 Graph.vue 整页
+//   - editable      → 先用在 ReviewingPanel.vue:138 (本章图谱) 和 Chapters.vue:561 (Step 4)
+// 当前 fix (2026-06-17) 只修 hover null 崩溃,不解耦。拆时要保留:
+//   - cytoscape 实例生命周期 (onBeforeUnmount + removeAllListeners)
+//   - node/edge 数据格式 (type:key 拼接)
+//   - layout 算法 (cose)
 let cy: cytoscape.Core | null = null
+
+function destroyCytoscape() {
+  if (cy) {
+    cy.removeAllListeners()   // 先摘所有事件,防止 destroy 后 mouseover 还在 in-flight
+    cy.destroy()
+    cy = null
+  }
+}
 
 function computeNewIds(): { newNodes: Set<string>; newEdges: Set<string> } {
   const newNodes = new Set<string>()
@@ -280,7 +295,7 @@ function computeNewIds(): { newNodes: Set<string>; newEdges: Set<string> } {
 
 function initCytoscape() {
   if (!cyContainer.value || !displayGraphData.value) return
-  if (cy) { cy.destroy(); cy = null }
+  destroyCytoscape()  // 复用 unmount 路径,保证 destroy 行为一致
   if (displayGraphData.value.nodes.length === 0) return
 
   const { newNodes, newEdges } = !isDraftMode.value && viewMode.value === 'snapshot' ? computeNewIds() : { newNodes: new Set<string>(), newEdges: new Set<string>() }
@@ -770,5 +785,9 @@ onMounted(() => {
   } else if (route.params.storyId) {
     loadChapters()
   }
+})
+
+onBeforeUnmount(() => {
+  destroyCytoscape()
 })
 </script>
