@@ -146,7 +146,7 @@ export interface NeighborhoodResult {
   nodes: GraphNodeSnapshot[]
   edges: GraphEdgeSnapshot[]
   truncated: boolean
-  truncateReason?: 'token_budget' | 'max_entities' | 'max_depth'
+  truncateReason?: 'token_budget' | 'max_entities'
   estimatedTokens: number
 }
 
@@ -162,6 +162,12 @@ export function expandNeighborhood(
   options: ExpandOptions
 ): NeighborhoodResult {
   const { maxDepth, maxTokens, maxEntities, tokenEstimator = defaultTokenEstimator } = options
+
+  if (!Number.isFinite(options.maxTokens) || options.maxTokens < 0) {
+    throw new RangeError(
+      `expandNeighborhood: maxTokens must be a non-negative finite number, got ${options.maxTokens}`
+    )
+  }
 
   const allNodesByKey = new Map<string, GraphNodeSnapshot>()
   for (const n of snapshot.nodes) {
@@ -192,7 +198,7 @@ export function expandNeighborhood(
   const includedNodes: GraphNodeSnapshot[] = []
   let estimatedTokens = 0
   let truncated = false
-  let truncateReason: 'token_budget' | 'max_entities' | 'max_depth' | undefined
+  let truncateReason: 'token_budget' | 'max_entities' | undefined
 
   while (queue.length > 0) {
     const { key, depth } = queue.shift()!

@@ -108,6 +108,29 @@ describe('expandNeighborhood — budget enforcement', () => {
     expect(r.nodes.length).toBeLessThanOrEqual(2)
   })
 
+  it('maxEntities: 1 keeps only the matched key and truncates (max_entities)', () => {
+    const r = expandNeighborhood(makeSnapshot(), ['character:a'], {
+      maxDepth: 2, maxTokens: 10_000, maxEntities: 1
+    })
+    expect(r.truncated).toBe(true)
+    expect(r.truncateReason).toBe('max_entities')
+    // Only the matched key itself, no neighbors admitted
+    expect(r.nodes.map(n => `${n.type}:${n.key}`)).toEqual(['character:a'])
+    expect(r.nodes).toHaveLength(1)
+  })
+
+  it('throws RangeError when maxTokens is NaN', () => {
+    expect(() =>
+      expandNeighborhood(makeSnapshot(), ['character:a'], { maxDepth: 1, maxTokens: NaN })
+    ).toThrow(RangeError)
+  })
+
+  it('throws RangeError when maxTokens is negative', () => {
+    expect(() =>
+      expandNeighborhood(makeSnapshot(), ['character:a'], { maxDepth: 1, maxTokens: -1 })
+    ).toThrow(RangeError)
+  })
+
   it('reports estimatedTokens = sum of estimator over all included nodes', () => {
     const sizeOf = (n: any) => JSON.stringify(n).length
     const r = expandNeighborhood(makeSnapshot(), ['character:a'], {
