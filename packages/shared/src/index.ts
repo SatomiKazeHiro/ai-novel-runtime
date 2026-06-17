@@ -111,10 +111,20 @@ export function cleanJsonBlock(raw: string): string {
       .replace(/^```[a-zA-Z]*\s*\n?/, '')
       .replace(/\n?```$/, '')
       .trim()
+      // 同样修复 AI 在值位置写的"裸 &"（见下方注释）
+      .replace(/([:,\[]\s*?)&(\s*?[,\]}])/g, '$1"&"$2')
   }
 
   // 多对 fence / 无 fence → 兼容旧实现语义：全局剥 ```json，尾部剥 ```
-  return trimmed.replace(/```json\s*/g, '').replace(/```\s*$/g, '').trim()
+  const cleaned = trimmed.replace(/```json\s*/g, '').replace(/```\s*$/g, '').trim()
+
+  // 修复 AI 把 "&" 当作"等等"占位符写入值位置的非法 JSON。
+  // 用户真实 bug：AI 返回 {"importance": &, ...}（value 位置出现裸 &），
+  // JSON.parse 直接抛 Unexpected token '&'。这里把值位置的"裸 &"（& 前面
+  // 是 : 或 , 或 [ 加空白，& 后面是 , 或 } 或 ] 加空白）包裹成字符串 "&"，
+  // 让 JSON 仍可解析。字符串内部的 &（如 "Tom & Jerry"）前后是字母/数字，
+  // 不在正则范围内，不会被破坏；合法 HTML entity（&amp; &lt; 等）也保留原样。
+  return cleaned.replace(/([:,\[]\s*?)&(\s*?[,\]}])/g, '$1"&"$2')
 }
 
 /**

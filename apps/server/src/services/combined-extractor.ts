@@ -77,6 +77,12 @@ export async function extractAll(
 
   const extractPrompt = `请分析以下小说章节，同时完成【记忆提取】、【实体关系提取】和【剧情弧线分析】三个任务。返回严格 JSON 格式，不要 markdown 代码块，不要解释文字。
 
+=== 严格 JSON 格式要求（不要违反，否则会解析失败）===
+- 所有字段值必须是合法 JSON 值（数字、字符串、布尔、null、数组、对象）。绝对不要用 "&" 或 "..." 或 "etc" 之类占位符
+- 字符串里的 "&" 必须转义为 "&"（或者直接用"和"代替）
+- 数字字段（importance、progress 等）必须是 0-10 的整数或小数，不要用任何非数字字符
+- 字段值如果不知道，请用 null 或空数组 []，不要用任何替代字符
+
 === 任务1：记忆提取 ===
 提取对剧情有实质推动作用的信息。
 本故事主角：${protagonistNames.join('、') || '无明确主角'}
@@ -143,13 +149,16 @@ ${truncateByParagraph(content, 8000)}`
 
   app.log.info(`[CombinedExtractor] Calling AI for chapter ${chapterId}`)
 
+  // compiled 提到 try 外面声明：retry 块也要复用同一份 prompt，
+  // 必须在 raw 已成功（说明 try 块成功）的代码路径上能访问 compiled。
   let raw: string | null
+  let compiled: ReturnType<RuntimePromptCompiler['compile']> | null = null
   try {
     const base = await loadRuntimeBase(storyId, prisma)
     const task = await loadWorkerTask(storyId, 'memory', prisma)
 
     const compiler = new RuntimePromptCompiler()
-    const compiled = compiler.compile(base, task, extractPrompt)
+    compiled = compiler.compile(base, task, extractPrompt)
 
     // 不传 maxTokens → 由 provider `options?.maxTokens ?? aiConfig.maxTokens`
     // 链回退到用户在 ModelManager 配置的值。合并提取把记忆+图谱+弧线压
@@ -163,13 +172,58 @@ ${truncateByParagraph(content, 8000)}`
     app.log.error(`[CombinedExtractor] AI call failed: ${err.message}`)
     return null
   }
-  if (!raw) return null
+  if (!raw || !compiled) return null
 
   // JSON 解析失败（含 cleanJsonBlock 检测到的不完整 fence）直接抛给上游。
   // 路由 chapters.ts:603 的 catch 会把 err.message 透传到前端，让用户看
   // 到真实错误（"响应被截断，请增大 maxTokens…"）而不是误导的
   // "AI 提取返回为空"。
-  const result = JSON.parse(cleanJsonBlock(raw))
+  //
+  // 兜底：cleanJsonBlock 已经能修"裸 &"（value 位置出现 &）等小问题。
+  // 对于修不了的结构损坏，按用户约束"以稳为主、允许多调几次 AI 兜底"
+  // 重试一次（带不同 callType 让 PromptLog 区分两次调用），抽风是偶发
+  // 性，重试大概率能拿到合法 JSON。第二次仍失败才抛错。
+  let result: any
+  try {
+    result = JSON.parse(cleanJsonBlock(raw))
+  } catch (firstErr: any) {
+    app.log.warn(
+      `[CombinedExtractor] JSON parse failed (${firstErr.message.slice(0, 200)}), retrying AI call once`
+    )
+    let retryRaw: string | null
+    try {
+      // 注意：retry 复用同一份 compiled prompt，不修改 prompt 内容。
+      // LLM 抽风是偶发性（temperature > 0 + 采样），同一 prompt 多次调用
+      // 大概率能得到合法 JSON。真正治本需要在 prompt 里加格式约束（已
+      // 在 extractPrompt 里加"所有字段值必须是合法 JSON"提示），这里只
+      // 是兜底。
+      retryRaw = await callAIWithLog(app, {
+        storyId, chapterId, callType: 'combined_extract_retry',
+        compiled, temperature: 0.1
+      })
+    } catch (retryApiErr: any) {
+      throw new Error(
+        `AI 返回格式错误（第一次: ${firstErr.message.slice(0, 200)}），` +
+        `重试时 AI 调用也失败: ${retryApiErr.message}`
+      )
+    }
+    if (!retryRaw) {
+      throw new Error(
+        `AI 返回格式错误（第一次: ${firstErr.message.slice(0, 200)}），` +
+        `重试时 AI 返回为空`
+      )
+    }
+    try {
+      result = JSON.parse(cleanJsonBlock(retryRaw))
+      app.log.info(`[CombinedExtractor] Retry succeeded`)
+    } catch (retryErr: any) {
+      throw new Error(
+        `AI 返回格式错误，已重试一次仍失败。` +
+        `第一次错误: ${firstErr.message.slice(0, 200)}；` +
+        `重试错误: ${retryErr.message.slice(0, 200)}`
+      )
+    }
+  }
 
   const memories: MemoryExtractionResult = result.memories
   const graph: GraphExtractionResult = result.graph || { nodes: [], edges: [] }

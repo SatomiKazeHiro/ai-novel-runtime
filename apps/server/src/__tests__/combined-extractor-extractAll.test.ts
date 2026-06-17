@@ -145,4 +145,54 @@ describe('extractAll — parse failure propagation (L3)', () => {
     expect(result?.memories?.summary).toBe('')
     expect(result?.graph?.nodes).toEqual([])
   })
+
+  it('retries once with format hint when AI returns unparseable JSON, returns 2nd result on success', async () => {
+    // 用户真实场景：AI 偶发返回严重损坏的 JSON（不是简单的"裸 &"问题，
+    // cleanJsonBlock 修不了整个 token 错位 / 多重结构错误）。按用户约束
+    // "以稳为主、允许多调几次 AI 兜底"，extractAll 应自动 retry 一次。
+    // 第二次返回合法 JSON → 用第二次结果，调用方无感知。
+    mockCallAIWithLog
+      .mockResolvedValueOnce('{"a":1,,,b:2 garbage not json at all ~~~')
+      .mockResolvedValueOnce(
+        '```json\n' + JSON.stringify(validJsonPayload) + '\n```'
+      )
+
+    const prisma = buildPrisma()
+    const app: any = { prisma, log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }
+
+    const result = await extractAll(app, 'c1', 's1', 'content', 'outline', 1)
+    expect(mockCallAIWithLog).toHaveBeenCalledTimes(2)
+    // 第二次调用应带"上次返回格式错误"的提示（让 AI 知道要更严格按 JSON 返回）
+    const secondOptions = mockCallAIWithLog.mock.calls[1][1]
+    expect(secondOptions.callType).toBe('combined_extract_retry')
+    expect(result).not.toBeNull()
+    expect(result?.graph?.nodes).toEqual([])
+  })
+
+  it('throws when BOTH AI responses are unparseable (retry exhausted)', async () => {
+    // 重试兜底仍失败：必须把错误抛给上游（保持 L3 现有"parse 失败应 throw"语义），
+    // 让路由 catch 把真实错误透传到前端，而不是 swallow 后返回误导的 null。
+    mockCallAIWithLog
+      .mockResolvedValueOnce('garbage response 1')
+      .mockResolvedValueOnce('still garbage response 2')
+
+    const prisma = buildPrisma()
+    const app: any = { prisma, log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }
+
+    await expect(extractAll(app, 'c1', 's1', 'content', 'outline', 1))
+      .rejects.toThrow(/已重试|重试.*失败|格式错误/)
+  })
+
+  it('does NOT retry on transient API failure (network error) — returns null as before', async () => {
+    // 网络/Provider 错误走的是 catch 块返回 null（不是 parse 失败），
+    // 不应触发 retry。retry 只针对"AI 返回了内容但内容不可解析"。
+    mockCallAIWithLog.mockRejectedValue(new Error('fetch failed: ECONNREFUSED'))
+
+    const prisma = buildPrisma()
+    const app: any = { prisma, log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }
+
+    const result = await extractAll(app, 'c1', 's1', 'content', 'outline', 1)
+    expect(result).toBeNull()
+    expect(mockCallAIWithLog).toHaveBeenCalledTimes(1)
+  })
 })
