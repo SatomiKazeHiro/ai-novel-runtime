@@ -101,10 +101,15 @@ export class OpenAICompatibleProvider implements AIProvider {
     }
 
     // DeepSeek / 各类 OpenAI 兼容服务偶尔会返回 200 OK 但 body 不是合法
-    // JSON（CDN 截断、空 body、流式响应设置错误等）。response.json() 默认
-    // 抛 "Unexpected end of JSON input" 这类原始错，没带 status/body 信息，
-    // 排查困难。这里 catch 并抛出包含 status + content-type + body 切片的
-    // 诊断错误，让用户能立刻区分是上游服务问题还是网络/CDN 问题。
+    // JSON（CDN 截断、HTML 错误页、流式响应设置错误等）。response.json()
+    // 默认抛 "Unexpected end of JSON input" 这类原始错，没带 status/body
+    // 信息，排查困难。这里 catch 并抛出包含 status + content-type + body
+    // 切片的诊断错误，让用户能立刻区分是上游服务问题还是网络/CDN 问题。
+    //
+    // 还要单独区分"上游返回了空 body"（OpenRouter 偶发的 upstream bug：
+    // 200 + 全空白 body，duration 正常但内容空）和"上游返回了非 JSON 但
+    // 非空 body"（CDN 截断 / HTML 错误页）。前者根因在 upstream，需要
+    // retry 或换模型；后者根因在 CDN/proxy，需要看错误页内容。
     //
     // 先用 clone().text() 把 body 拷一份备用 —— 因为 response.json() 失败
     // 后原 response 的 body 可能处于 locked 状态，clone().text() 才会拿到内容。
@@ -119,6 +124,19 @@ export class OpenAICompatibleProvider implements AIProvider {
       data = JSON.parse(rawBody)
     } catch (jsonErr: any) {
       const contentType = response.headers.get('content-type') || 'unknown'
+      // 情况 A：上游返回 200 但 body 全是空白（trim 后长度 0）。
+      // 典型 OpenRouter upstream bug / CDN 异常 / 模型 timeout。
+      // 错误信息必须明确告诉用户"是空 body，不是我们解析失败"，
+      // 并给出可执行建议（retry / 换模型 / 查 upstream 状态页）。
+      if (rawBody.trim().length === 0) {
+        throw new Error(
+          `${this.config.name} API returned empty response body (status=${response.status}, content-type=${contentType}, bodyLength=${rawBody.length}). ` +
+          `This usually indicates an upstream service bug (OpenRouter routing / CDN issue / model timeout). ` +
+          `Try: 1) retry the request, 2) use a different model, 3) check upstream status page.`
+        )
+      }
+      // 情况 B：非空 body 但不是合法 JSON（CDN 截断 / HTML 错误页 / SSE 误用）。
+      // 保留 body 切片方便用户识别具体错误页内容。
       const bodySlice = rawBody.slice(0, 500)
       throw new Error(
         `${this.config.name} API returned non-JSON response (status=${response.status}, content-type=${contentType}): ${jsonErr.message}. Body (first 500 chars): ${bodySlice}`

@@ -26,20 +26,65 @@ describe('OpenAICompatibleProvider — non-JSON response diagnostics', () => {
     })) as any
   }
 
-  it('throws diagnostic error when 200 response body is empty (DeepSeek CDN truncation)', async () => {
+  it('throws empty-body diagnostic when 200 response body is empty string', async () => {
+    // 上游返回 200 + 空字符串 body（典型 OpenRouter upstream bug / CDN 异常）。
+    // 必须跟"非空 body 但不是 JSON" 区分开，否则用户看到 "Unexpected end of
+    // JSON input. Body: \n         " 这种切片会困惑（明明是空白为什么还贴 body？）。
+    // 新错误信息直接告诉用户是空 body + 建议 retry / 换模型。
     mockFetch(200, 'application/json', '')
 
     const provider = new OpenAICompatibleProvider({
-      name: 'deepseek',
+      name: 'openrouter',
       apiKey: 'sk-test',
-      model: 'deepseek-chat',
-      maxTokens: 4096
+      model: 'deepseek/deepseek-v3.2'
     })
 
-    await expect(provider.generateWithRuntime(
-      { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
-      {}
-    )).rejects.toThrow(/status=200.*content-type.*Unexpected end of JSON input.*Body/)
+    let caught: Error | null = null
+    try {
+      await provider.generateWithRuntime(
+        { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
+        {}
+      )
+    } catch (err: any) {
+      caught = err
+    }
+
+    expect(caught).not.toBeNull()
+    expect(caught!.message).toContain('empty response body')
+    expect(caught!.message).toContain('status=200')
+    expect(caught!.message).toContain('content-type=application/json')
+    // 必须明确建议用户操作，不能只抛诊断信息
+    expect(caught!.message).toMatch(/retry|different model|upstream/i)
+    // 不应包含非空 body 错误的 "Body (first 500 chars):" 前缀
+    expect(caught!.message).not.toContain('Body (first 500 chars):')
+  })
+
+  it('throws empty-body diagnostic when 200 response body is whitespace-only (OpenRouter upstream bug)', async () => {
+    // 用户真实场景：openrouter/deepseek-v3.2 偶发返回 200 + 全空白 body
+    // （仅含 \n 和空格）。这跟"body 完全为空" 在语义上一样（trim 后长度 0），
+    // 都属于 upstream 返回了不可用响应。
+    mockFetch(200, 'application/json', '\n         \n\n         \n\n         \n\n         ')
+
+    const provider = new OpenAICompatibleProvider({
+      name: 'openrouter',
+      apiKey: 'sk-test',
+      model: 'deepseek/deepseek-v3.2'
+    })
+
+    let caught: Error | null = null
+    try {
+      await provider.generateWithRuntime(
+        { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
+        {}
+      )
+    } catch (err: any) {
+      caught = err
+    }
+
+    expect(caught).not.toBeNull()
+    expect(caught!.message).toContain('empty response body')
+    // 应包含原始 body 长度，让用户知道"真的是空白不是误判"
+    expect(caught!.message).toMatch(/bodyLength=\d+/)
   })
 
   it('throws diagnostic error when 200 response body is HTML (Cloudflare error page)', async () => {
