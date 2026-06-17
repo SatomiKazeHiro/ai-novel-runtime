@@ -11,8 +11,12 @@ const memoryManager = new MemoryManager()
 
 export function createGenerateProcessor(app: FastifyInstance) {
   return async (job: any) => {
-    const { draftIds, chapterId, storyId, compiled, temperatures, maxTokens, chapterTitle, chapterOutline } = job.data
-    app.log.info(`[Generate] Processing ${draftIds.length} drafts for chapter ${chapterId}`)
+    const {
+      draftIds, chapterId, storyId, compiled, temperatures, maxTokens,
+      chapterTitle, chapterOutline, preLockStatus
+    } = job.data
+    //                                  ↑ 新增:抢锁前章节状态,决定 status 恢复目标
+    app.log.info(`[Generate] Processing ${draftIds.length} drafts for chapter ${chapterId} (preLockStatus=${preLockStatus})`)
 
     const prisma = app.prisma
     let successCount = 0
@@ -59,15 +63,20 @@ export function createGenerateProcessor(app: FastifyInstance) {
       }
     }
 
-    // 只要有成功完成的，就更新章节状态为 generated
-    if (successCount > 0) {
-      await prisma.chapter.update({
-        where: { id: chapterId },
-        data: { status: 'generated' }
-      })
-    }
+    // 恢复 chapter.status:用抢锁前的状态决定,而不是写死 'generated'
+    //   draft     → generated  (首次生成完成)
+    //   generated → generated  (再生成完成,本身就在)
+    //   selected  → selected   (再生成完成,状态保留,Chapter.content 不动)
+    // 修复旧 bug:全失败时也恢复(旧代码卡在 'generating'),避免章节卡死
+    // 兜底:preLockStatus 缺失(老 queue 残留 job)按 'draft' 处理,行为同旧版本
+    const effectivePreLock = preLockStatus ?? 'draft'
+    const restoreStatus = effectivePreLock === 'draft' ? 'generated' : effectivePreLock
+    await prisma.chapter.update({
+      where: { id: chapterId },
+      data: { status: restoreStatus }
+    })
 
-    app.log.info(`[Generate] Done for chapter ${chapterId}: ${successCount} success, ${failCount} failed`)
+    app.log.info(`[Generate] Done for chapter ${chapterId}: ${successCount} success, ${failCount} failed, restored to ${restoreStatus}`)
 
     return { successCount, failCount, total: draftIds.length }
   }
