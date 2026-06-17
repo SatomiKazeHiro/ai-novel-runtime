@@ -381,6 +381,11 @@ export async function chapterRoutes(app: FastifyInstance) {
     }
     // 后续代码已假设 chapter.status === 'generating'，无需重新读取
 
+    // 抢锁前的 chapter.status,worker 完成后用其恢复 chapter.status
+    // (而不是写死 'generated')。selected 状态重生成后保持 selected,这是
+    // 纯加法语义的关键:Chapter.content / 已选 draft 标记都不动。
+    const preLockStatus = chapter.status
+
     const story = chapter.story
 
     const charactersWithBranchState = await getCharactersWithLatestState(prisma, storyId)
@@ -487,7 +492,8 @@ export async function chapterRoutes(app: FastifyInstance) {
       temperatures: generatingDrafts.map((_, i) => temperatures[i] ?? (0.6 + i * 0.15)),
       maxTokens,
       chapterTitle: chapter.title,
-      chapterOutline: chapter.outline
+      chapterOutline: chapter.outline,
+      preLockStatus   // 透传给 worker,决定 status 恢复目标
     })
 
     app.log.info(`[Generate] Queued ${generatingDrafts.length} drafts for chapter ${chapterId}`)

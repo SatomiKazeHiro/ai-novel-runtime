@@ -119,4 +119,34 @@ describe('generate route — allowed status list (Task #66)', () => {
     )
     expect(mockPrisma.draft.deleteMany).not.toHaveBeenCalled()
   })
+
+  it('captures preLockStatus and passes it to generateQueue.add (Task #66)', async () => {
+    // Mock generateQueue to inspect what payload it receives
+    const { generateQueue } = await import('../../queue/index.js')
+    const addSpy = vi.spyOn(generateQueue, 'add').mockResolvedValue({} as any)
+
+    setupChapter('selected')
+    await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/generate', {}, { chapterId: 'c1' }
+    )
+
+    expect(addSpy).toHaveBeenCalled()
+    const payload: any = addSpy.mock.calls[0][1]
+    expect(payload).toHaveProperty('preLockStatus', 'selected')
+    addSpy.mockRestore()
+  })
+
+  it('passes preLockStatus=draft for first-time generation', async () => {
+    const { generateQueue } = await import('../../queue/index.js')
+    const addSpy = vi.spyOn(generateQueue, 'add').mockResolvedValue({} as any)
+
+    setupChapter('draft')
+    await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/generate', {}, { chapterId: 'c1' }
+    )
+
+    const payload: any = addSpy.mock.calls[0][1]
+    expect(payload.preLockStatus).toBe('draft')
+    addSpy.mockRestore()
+  })
 })
