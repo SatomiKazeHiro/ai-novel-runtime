@@ -85,7 +85,7 @@ chapterGraph 是本章的范围图谱（基于本章新提取独立生成，只�
 
     const raw = await callAIWithLog(app, {
       storyId, chapterId, callType: 'graph_organize',
-      compiled, temperature: 0.2, maxTokens: 8192
+      compiled, temperature: 0.2, maxTokens: 16384
     })
     if (!raw) {
       throw new Error('未配置可用的 AI Provider，请检查模型配置')
