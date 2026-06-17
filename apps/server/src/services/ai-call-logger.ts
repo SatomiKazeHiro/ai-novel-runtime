@@ -72,6 +72,15 @@ export async function callAIWithLog(
   } catch (err: any) {
     const durationMs = Date.now() - startTime
 
+    // 把 provider 抛出的错误信息写进 responseContent（而不是空串），
+    // 让用户在 Prisma Studio / admin 工具里看 PromptLog 时能直接读到
+    // 错误细节，不用去翻 server.log。常见错误包括：
+    // - "Unexpected end of JSON input"（DeepSeek 偶发 200 + 空 body）
+    // - "API error (5xx): ..."（上游服务故障）
+    // - "API returned empty content (finish_reason=length)"（maxTokens 不够）
+    // 截断到 2000 字符避免超大错误 body 撑爆 PromptLog 列表渲染。
+    const errorText = `[PROVIDER ERROR] ${(err?.message || 'unknown error').slice(0, 2000)}`
+
     prisma.promptLog.create({
       data: {
         storyId,
@@ -82,7 +91,7 @@ export async function callAIWithLog(
         model: aiConfig.model,
         systemMessage: compiled.systemMessage,
         userMessage: compiled.userMessage,
-        responseContent: '',
+        responseContent: errorText,
         promptTokens: 0,
         completionTokens: 0,
         totalTokens: 0,

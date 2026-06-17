@@ -100,7 +100,30 @@ export class OpenAICompatibleProvider implements AIProvider {
       throw new Error(`${this.config.name} API error (${response.status}): ${errorText}`)
     }
 
-    const data = await response.json() as any
+    // DeepSeek / 各类 OpenAI 兼容服务偶尔会返回 200 OK 但 body 不是合法
+    // JSON（CDN 截断、空 body、流式响应设置错误等）。response.json() 默认
+    // 抛 "Unexpected end of JSON input" 这类原始错，没带 status/body 信息，
+    // 排查困难。这里 catch 并抛出包含 status + content-type + body 切片的
+    // 诊断错误，让用户能立刻区分是上游服务问题还是网络/CDN 问题。
+    //
+    // 先用 clone().text() 把 body 拷一份备用 —— 因为 response.json() 失败
+    // 后原 response 的 body 可能处于 locked 状态，clone().text() 才会拿到内容。
+    let rawBody = ''
+    try {
+      rawBody = await response.clone().text()
+    } catch {
+      rawBody = ''
+    }
+    let data: any
+    try {
+      data = JSON.parse(rawBody)
+    } catch (jsonErr: any) {
+      const contentType = response.headers.get('content-type') || 'unknown'
+      const bodySlice = rawBody.slice(0, 500)
+      throw new Error(
+        `${this.config.name} API returned non-JSON response (status=${response.status}, content-type=${contentType}): ${jsonErr.message}. Body (first 500 chars): ${bodySlice}`
+      )
+    }
 
     // 某些平台（如 OpenRouter）可能在 HTTP 200 的响应体里返回 error 对象
     if (data.error) {
