@@ -1,34 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createMockApp, callHandler, createMockPrisma } from '../setup.js'
 
-// Mock the runtime loader so the route does not hit the real DB.
-// NOTE: we only stub the module surface here; the per-test beforeEach below
-// re-installs the resolved values because the global setup calls
-// vi.resetAllMocks() which wipes the resolved implementations between tests.
-vi.mock('../../services/runtime-loader.js', () => ({
-  loadRuntimeBase: vi.fn(),
-  loadWorkerTask: vi.fn()
-}))
-
-import * as runtimeLoader from '../../services/runtime-loader.js'
-
 describe('generate route — allowed status list (Task #66)', () => {
   let mockPrisma: any
   let routes: Record<string, any>
 
   beforeEach(async () => {
-    vi.clearAllMocks()
-    // Re-install resolved values after the global vi.resetAllMocks() wiped them.
-    vi.mocked(runtimeLoader.loadRuntimeBase).mockResolvedValue({
-      identity: '',
-      settings: {},
-      behavior: '',
-      jailbreak: ''
-    })
-    vi.mocked(runtimeLoader.loadWorkerTask).mockResolvedValue({
-      workerType: 'generation',
-      taskPrompt: ''
-    })
     mockPrisma = createMockPrisma({
       loreItem: { findMany: vi.fn().mockResolvedValue([]) },
       timelineEvent: { findMany: vi.fn().mockResolvedValue([]) },
@@ -102,6 +79,7 @@ describe('generate route — allowed status list (Task #66)', () => {
       routes, 'POST', '/api/chapters/:chapterId/generate', {}, { chapterId: 'c1' }
     )
     expect(result.status).toBe(400)
+    expect(result.body.error).toMatch(/只允许 draft \/ generated \/ selected/)
   })
 
   it('rejects archived status with 400', async () => {
@@ -110,6 +88,7 @@ describe('generate route — allowed status list (Task #66)', () => {
       routes, 'POST', '/api/chapters/:chapterId/generate', {}, { chapterId: 'c1' }
     )
     expect(result.status).toBe(400)
+    expect(result.body.error).toMatch(/只允许 draft \/ generated \/ selected/)
   })
 
   it('accepts generated status (Task #66 new capability)', async () => {
