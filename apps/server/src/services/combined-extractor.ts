@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify'
-import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
+import { RuntimePromptCompiler, estimateTokens } from '@novel-runtime/ai-provider'
 import { truncateByParagraph } from '@novel-runtime/prompt-runtime'
 import { cleanJsonBlock, safeJsonParse, type PendingArchiveData } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
+import { resolveProvider } from './ai-provider-init.js'
 import { type MemoryExtractionResult, extractMemoryFromChapter, prepareMemoryWrites, type ArchiveMemoryData } from './memory-extractor.js'
 import { type GraphExtractionResult } from './graph-extractor.js'
 import { type PlotArcAnalysis, extractPlotArcs, preparePlotArcWrites, type PlotArcWrite } from './plot-extractor.js'
@@ -18,6 +19,39 @@ export interface CombinedExtractionData {
 
 /** N-1 inventory cap: 防 prompt 爆炸；超出按 importance desc 截断 */
 export const PREV_SNAPSHOT_INVENTORY_CAP = 500
+
+// 章节内容 token 预算（借鉴 graph-organizer 的 SAFETY_MARGIN / BUDGET_HEADROOM 模式）
+// tokenBudget = floor(contextLength × RATIO) − maxTokens − SAFETY
+//   0.6 留给 system + lore + memory + ...; 真实生产数据校准前先保守
+// TODO: 真实生产数据校准 CONTENT_BUDGET_CONTEXT_RATIO
+//       (system + lore 在不同故事下占比差很大, 当前是粗估)
+const CONTENT_BUDGET_CONTEXT_RATIO = 0.6
+const CONTENT_BUDGET_SAFETY_MARGIN_TOKENS = 2000
+// CJK mixed content: ~1.5 chars/token, 取保守值 2.0 留 buffer
+//   (宁可少放内容也不要超 contextLength 把整段 prompt 截断)
+const CONTENT_BUDGET_CHARS_PER_TOKEN = 2.0
+// 实际 token 使用率 ≥ 此值时打 TODO warn（供将来接"告警面板"用, 当前不阻断流程）
+const CONTENT_BUDGET_HEADROOM = 0.9
+// aiConfig 缺失时的兜底（与 .env DEEPSEEK_CONTEXT_LENGTH 默认值一致）
+const CONTENT_BUDGET_FALLBACK_CONTEXT = 64000
+const CONTENT_BUDGET_FALLBACK_MAX_TOKENS = 4096
+
+/**
+ * 纯函数: 给定模型 contextLength 与 maxTokens, 算出章节内容可用 char / token 预算。
+ * 借鉴 graph-organizer 的"先 compile 一次测 nonContentTokens"模式，但这里用 0.6 粗估
+ * 留出 system + lore + memory 空间, 避免双次 compile 的开销。
+ */
+export function computeContentCharBudget(
+  contextLength: number,
+  maxTokens: number
+): { charBudget: number; tokenBudget: number } {
+  const tokenBudget = Math.max(
+    0,
+    Math.floor(contextLength * CONTENT_BUDGET_CONTEXT_RATIO) - maxTokens - CONTENT_BUDGET_SAFETY_MARGIN_TOKENS
+  )
+  const charBudget = Math.floor(tokenBudget * CONTENT_BUDGET_CHARS_PER_TOKEN)
+  return { charBudget, tokenBudget }
+}
 
 // Re-export the shared `PendingArchiveData` so existing imports
 // (`from '../services/combined-extractor.js'`) keep working unchanged.
@@ -78,6 +112,16 @@ export async function extractAll(
   app.log.info(
     `[CombinedExtractor] Context injection: ${existingArcs.length} arcs, ${characterNodes.length} characters, ${recentOtherNodes.length} recent nodes`
   )
+
+  // 解析当前章节 / 故事 / 全局默认的 AI Provider 配置, 用于算 content 预算
+  // (借鉴 graph-organizer.ts:49 的 resolveProvider 模式)
+  const resolvedAi = await resolveProvider(prisma, storyId, chapterId)
+  const aiContextLength = resolvedAi?.config?.contextLength || CONTENT_BUDGET_FALLBACK_CONTEXT
+  const aiMaxTokens = resolvedAi?.config?.maxTokens || CONTENT_BUDGET_FALLBACK_MAX_TOKENS
+  const { charBudget: contentCharBudget, tokenBudget: contentTokenBudget } =
+    computeContentCharBudget(aiContextLength, aiMaxTokens)
+  // 一次性 truncate, 后续 warn 复用同一份结果, 避免双次计算
+  const truncatedContent = truncateByParagraph(content, contentCharBudget)
 
   // Inject N-1 entity inventory so the AI reuses existing type:key values
   // instead of inventing new ones. Cap at 500 to defend against extremely
@@ -174,7 +218,7 @@ ${existingArcsText}
 
 章节大纲：${outline || '无大纲'}
 章节内容如下：
-${truncateByParagraph(content, 8000)}`
+${truncatedContent}`
 
   app.log.info(`[CombinedExtractor] Calling AI for chapter ${chapterId}`)
 
@@ -188,6 +232,23 @@ ${truncateByParagraph(content, 8000)}`
 
     const compiler = new RuntimePromptCompiler()
     compiled = compiler.compile(base, task, extractPrompt)
+
+    // 章节内容若被 truncate → TODO warn（供将来接"告警面板"用, 当前不阻断流程）
+    //   借鉴 graph-organizer.ts:72-80 的 90% headroom 模式
+    //   不在 prompt 模板里写, 是因为 truncateByParagraph 可能在 content 短于
+    //   预算时不截断 — 用实际截断后长度判断更准确
+    if (content.length > contentCharBudget) {
+      const actualContentTokens = estimateTokens(truncatedContent)
+      const usageRatio = actualContentTokens / Math.max(1, contentTokenBudget)
+      if (usageRatio >= CONTENT_BUDGET_HEADROOM) {
+        app.log.warn(
+          `[TODO][CombinedExtractor] Chapter ${chapterId} content exceeds budget: ` +
+          `${truncatedContent.length}/${contentCharBudget} chars ` +
+          `(${actualContentTokens}/${contentTokenBudget} tokens, ${(usageRatio * 100).toFixed(0)}%). ` +
+          `Consider splitting the chapter or raising model contextLength.`
+        )
+      }
+    }
 
     // 不传 maxTokens → 由 provider `options?.maxTokens ?? aiConfig.maxTokens`
     // 链回退到用户在 ModelManager 配置的值。合并提取把记忆+图谱+弧线压

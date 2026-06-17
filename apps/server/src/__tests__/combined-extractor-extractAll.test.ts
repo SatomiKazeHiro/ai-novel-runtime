@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const mockCallAIWithLog = vi.fn()
 const mockLoadRuntimeBase = vi.fn()
 const mockLoadWorkerTask = vi.fn()
+const mockResolveProvider = vi.fn()
 
 vi.mock('../services/ai-call-logger.js', () => ({
   callAIWithLog: (...args: any[]) => mockCallAIWithLog(...args)
@@ -14,6 +15,10 @@ vi.mock('../services/ai-call-logger.js', () => ({
 vi.mock('../services/runtime-loader.js', () => ({
   loadRuntimeBase: (...args: any[]) => mockLoadRuntimeBase(...args),
   loadWorkerTask: (...args: any[]) => mockLoadWorkerTask(...args)
+}))
+// combined-extractor 调 resolveProvider 算章节内容预算, 测试里 mock 掉避免依赖真实 prisma
+vi.mock('../services/ai-provider-init.js', () => ({
+  resolveProvider: (...args: any[]) => mockResolveProvider(...args)
 }))
 
 import { extractAll } from '../services/combined-extractor.js'
@@ -57,6 +62,7 @@ describe('extractAll — AI call configuration (L1)', () => {
     mockLoadWorkerTask.mockResolvedValue({
       workerType: 'memory', taskPrompt: ''
     })
+    mockResolveProvider.mockResolvedValue(null)  // 用 extractAll 兜底 (64K/4K)
     mockCallAIWithLog.mockResolvedValue(
       '```json\n' + JSON.stringify(validJsonPayload) + '\n```'
     )
@@ -92,6 +98,7 @@ describe('extractAll — parse failure propagation (L3)', () => {
     mockLoadWorkerTask.mockResolvedValue({
       workerType: 'memory', taskPrompt: ''
     })
+    mockResolveProvider.mockResolvedValue(null)  // 用 extractAll 兜底 (64K/4K)
   })
 
   it('throws (not returns null) when AI response is truncated markdown', async () => {
