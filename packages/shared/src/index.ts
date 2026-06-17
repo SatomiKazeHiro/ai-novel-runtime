@@ -94,7 +94,27 @@ export function formatCharacterSnapshot(characters: any[]): string {
 }
 
 export function cleanJsonBlock(raw: string): string {
-  return raw.replace(/```json\s*/g, '').replace(/```\s*$/g, '').trim()
+  const trimmed = raw.trim()
+
+  // 不完整 fence 配对 → 响应被截断（例如 AI 输出超 maxTokens 被砍掉尾部）。
+  // 直接抛错让上游透传到前端，比静默吃掉再让 JSON.parse 抛 SyntaxError 强。
+  const fenceCount = (trimmed.match(/```/g) || []).length
+  if (fenceCount > 0 && fenceCount % 2 !== 0) {
+    throw new Error(
+      'AI 响应被 markdown 代码块包裹但未闭合（响应可能被截断）。请尝试在模型配置中增大 maxTokens，或减小章节长度后重试。'
+    )
+  }
+
+  // 单对 fence → 边界剥离（兼容 ```json 和裸 ``` 两种）
+  if (fenceCount === 2) {
+    return trimmed
+      .replace(/^```[a-zA-Z]*\s*\n?/, '')
+      .replace(/\n?```$/, '')
+      .trim()
+  }
+
+  // 多对 fence / 无 fence → 兼容旧实现语义：全局剥 ```json，尾部剥 ```
+  return trimmed.replace(/```json\s*/g, '').replace(/```\s*$/g, '').trim()
 }
 
 /**

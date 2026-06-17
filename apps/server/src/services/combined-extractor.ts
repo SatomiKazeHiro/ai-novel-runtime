@@ -143,6 +143,7 @@ ${truncateByParagraph(content, 8000)}`
 
   app.log.info(`[CombinedExtractor] Calling AI for chapter ${chapterId}`)
 
+  let raw: string | null
   try {
     const base = await loadRuntimeBase(storyId, prisma)
     const task = await loadWorkerTask(storyId, 'memory', prisma)
@@ -150,36 +151,44 @@ ${truncateByParagraph(content, 8000)}`
     const compiler = new RuntimePromptCompiler()
     const compiled = compiler.compile(base, task, extractPrompt)
 
-    const raw = await callAIWithLog(app, {
+    // 不传 maxTokens → 由 provider `options?.maxTokens ?? aiConfig.maxTokens`
+    // 链回退到用户在 ModelManager 配置的值。合并提取把记忆+图谱+弧线压
+    // 在一次调用里，4096 的硬编码预算经常不够，会被 maxTokens 截断导致
+    // markdown fence 不闭合、JSON.parse 失败（旧实现还会吞掉这个错误）。
+    raw = await callAIWithLog(app, {
       storyId, chapterId, callType: 'combined_extract',
-      compiled, temperature: 0.3, maxTokens: 4096
+      compiled, temperature: 0.3
     })
-    if (!raw) return null
-
-    const result = JSON.parse(cleanJsonBlock(raw))
-
-    const memories: MemoryExtractionResult = result.memories
-    const graph: GraphExtractionResult = result.graph || { nodes: [], edges: [] }
-    const plotArcs: PlotArcAnalysis = result.plotArcs
-
-    // 统计
-    const memCount = (memories?.mainEvents?.length || 0) +
-                     (memories?.sideEvents?.length || 0) +
-                     (memories?.emotions?.length || 0) +
-                     (memories?.foreshadowing?.length || 0) +
-                     (memories?.relationshipChanges?.length || 0) +
-                     (memories?.scenes?.length || 0) +
-                     Object.keys(memories?.characterStatusChanges || {}).length
-
-    app.log.info(
-      `[CombinedExtractor] Extracted: ${memCount} memories, ${graph.nodes?.length || 0} nodes, ${graph.edges?.length || 0} edges, ${plotArcs?.arcs?.length || 0} arcs`
-    )
-
-    return { memories, graph, plotArcs }
   } catch (err: any) {
-    app.log.error(`[CombinedExtractor] Failed: ${err.message}`)
+    app.log.error(`[CombinedExtractor] AI call failed: ${err.message}`)
     return null
   }
+  if (!raw) return null
+
+  // JSON 解析失败（含 cleanJsonBlock 检测到的不完整 fence）直接抛给上游。
+  // 路由 chapters.ts:603 的 catch 会把 err.message 透传到前端，让用户看
+  // 到真实错误（"响应被截断，请增大 maxTokens…"）而不是误导的
+  // "AI 提取返回为空"。
+  const result = JSON.parse(cleanJsonBlock(raw))
+
+  const memories: MemoryExtractionResult = result.memories
+  const graph: GraphExtractionResult = result.graph || { nodes: [], edges: [] }
+  const plotArcs: PlotArcAnalysis = result.plotArcs
+
+  // 统计
+  const memCount = (memories?.mainEvents?.length || 0) +
+                   (memories?.sideEvents?.length || 0) +
+                   (memories?.emotions?.length || 0) +
+                   (memories?.foreshadowing?.length || 0) +
+                   (memories?.relationshipChanges?.length || 0) +
+                   (memories?.scenes?.length || 0) +
+                   Object.keys(memories?.characterStatusChanges || {}).length
+
+  app.log.info(
+    `[CombinedExtractor] Extracted: ${memCount} memories, ${graph.nodes?.length || 0} nodes, ${graph.edges?.length || 0} edges, ${plotArcs?.arcs?.length || 0} arcs`
+  )
+
+  return { memories, graph, plotArcs }
 }
 
 /**
