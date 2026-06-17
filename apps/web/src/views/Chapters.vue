@@ -349,13 +349,16 @@
                     <n-grid-item>
                         <n-space align="center" style="margin-bottom: 12px">
                             <n-button
+                                v-if="editor.currentChapter && ['draft', 'generated', 'selected'].includes(editor.currentChapter.status)"
                                 type="primary"
                                 size="small"
                                 @click="handleGenerateDefault"
                                 :loading="drafts.generating"
                                 :disabled="drafts.generating"
                             >
-                                {{ drafts.generating ? "生成中..." : "默认候选 ×3" }}
+                                <template v-if="drafts.generating">生成中...</template>
+                                <template v-else-if="editor.currentChapter.status === 'draft'">默认候选 ×3</template>
+                                <template v-else>再生成 ×3</template>
                             </n-button>
                             <n-button
                                 size="small"
@@ -364,6 +367,20 @@
                                 >自定义 ×1</n-button
                             >
                             <n-text v-if="drafts.generating" depth="3" style="font-size: 12px">AI 创作中...</n-text>
+                        </n-space>
+
+                        <!-- 候选摘要（Task #66） -->
+                        <n-space
+                            v-if="drafts.drafts.length > 0"
+                            align="center"
+                            style="margin-bottom: 8px"
+                        >
+                            <n-text depth="3" style="font-size: 12px">
+                                共 {{ drafts.drafts.length }} 个候选
+                                <template v-if="editor.currentChapter?.status === 'selected'">
+                                    ,已选 1 个(右上角带 ✓)
+                                </template>
+                            </n-text>
                         </n-space>
 
                         <!-- 候选 Tabs -->
@@ -376,7 +393,7 @@
                                 v-for="draft in drafts.drafts"
                                 :key="draft.id"
                                 :name="draft.id"
-                                :tab="draft.version"
+                                :tab="draft.status === 'selected' ? `${draft.version} ✓` : draft.version"
                             >
                                 <n-tabs type="segment" size="small" style="max-height: 360px">
                                     <n-tab-pane name="content" tab="结果">
@@ -926,6 +943,31 @@ async function handleGeneratePrompt() {
 
 async function handleGenerateDefault() {
     if (!editor.currentChapter || !storyId()) return;
+
+    // 仅在 generated/selected 状态弹 token 成本确认对话框
+    // draft 状态是首次生成,直接放行(用户刚点进来,没有"追加"的成本顾虑)
+    if (['generated', 'selected'].includes(editor.currentChapter.status)) {
+        const existingCount = drafts.drafts.length
+        const newCount = 3
+        // 粗估:每候选 ~maxTokens × 1.3 (含 system prompt + 输出冗余)
+        // drafts.customMaxTokens 来自自定义 modal,未设时 fallback 4096
+        const estimatedTokens = newCount * (drafts.customMaxTokens || 4096) * 1.3
+        const ok = await new Promise<boolean>(resolve => {
+            dialog.warning({
+                title: '生成新候选',
+                content: `当前已有 ${existingCount} 个候选,本次再生成 ${newCount} 个会追加到列表(旧候选保留)。\n\n` +
+                         `预估消耗约 ${Math.round(estimatedTokens / 1000)}K tokens(取决于模型 max_tokens)。\n\n` +
+                         `确认开始生成?`,
+                positiveText: '确认生成',
+                negativeText: '取消',
+                onPositiveClick: () => resolve(true),
+                onNegativeClick: () => resolve(false),
+                onClose: () => resolve(false)
+            })
+        })
+        if (!ok) return
+    }
+
     const result = await drafts.generate(
         editor.currentChapter.id,
         storyId()!,
