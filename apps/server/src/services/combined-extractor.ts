@@ -16,6 +16,9 @@ export interface CombinedExtractionData {
   plotArcs: PlotArcAnalysis | null
 }
 
+/** N-1 inventory cap: 防 prompt 爆炸；超出按 importance desc 截断 */
+export const PREV_SNAPSHOT_INVENTORY_CAP = 500
+
 // Re-export the shared `PendingArchiveData` so existing imports
 // (`from '../services/combined-extractor.js'`) keep working unchanged.
 // The shared type is the single source of truth for the shape parked in
@@ -87,7 +90,7 @@ export async function extractAll(
         const bi = (b.data?.importance as number) || 0
         return bi - ai
       })
-    const trimmed = sorted.slice(0, 500)
+    const trimmed = sorted.slice(0, PREV_SNAPSHOT_INVENTORY_CAP)
     const lines = trimmed.map(n => `- ${n.type}:${n.key} (${n.label})`)
     previousEntitiesBlock = `\n\n=== N-1 全局图谱中的实体清单（用于 key 复用） ===\n本故事 N-1 章后的图谱共有 ${previousSnapshot.nodes.length} 个实体，请严格复用以下 type:key，禁止再造新 key：\n${lines.join('\n')}\n注意：N-1 没有出现的实体才允许创建新 key。新 key 必须用英文小写、下划线分隔。`
   }

@@ -13,7 +13,7 @@ vi.mock('../services/runtime-loader.js', () => ({
   loadWorkerTask: (...args: any[]) => mockLoadWorkerTask(...args)
 }))
 
-import { extractAll } from '../services/combined-extractor.js'
+import { extractAll, PREV_SNAPSHOT_INVENTORY_CAP } from '../services/combined-extractor.js'
 
 const emptyPayload = {
   memories: { mainEvents: [], sideEvents: [], emotions: [], foreshadowing: [],
@@ -70,12 +70,25 @@ describe('extractAll — N-1 entity inventory injection', () => {
   })
 
   it('caps N-1 inventory at 500 nodes (defensive: trims by importance desc)', async () => {
-    const nodes = Array.from({ length: 800 }, (_, i) => ({
-      type: 'character' as const,
-      key: `k${i}`,
-      label: `L${i}`,
-      data: { importance: i % 10 } // higher i = higher importance
-    }))
+    // Interleaved: 400 high-importance (crit_*, importance=10) + 400 low-importance
+    // (filler_*, importance=0), total 800.
+    // - With correct descending sort by importance: all 400 crit_* (importance 10)
+    //   survive into the 500 cap, plus 100 filler_* (importance 0) fill the rest
+    //   → 400 crit + 100 filler.
+    // - Without sort (interleaved order preserved): slice(0,500) gives
+    //   crit_0..crit_249 + filler_0..filler_249 → 250 crit + 250 filler, so
+    //   the crit_* count assertion (400) would FAIL.
+    const nodes: GraphSnapshot['nodes'] = []
+    for (let i = 0; i < 400; i++) {
+      nodes.push({
+        type: 'character' as const, key: `crit_${i}`, label: `C${i}`,
+        data: { importance: 10 }
+      })
+      nodes.push({
+        type: 'character' as const, key: `filler_${i}`, label: `F${i}`,
+        data: { importance: 0 }
+      })
+    }
     const prev: GraphSnapshot = { nodes, edges: [], timestamp: '' }
     const prisma = buildPrisma()
     const app: any = { prisma, log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }
@@ -83,9 +96,12 @@ describe('extractAll — N-1 entity inventory injection', () => {
     await extractAll(app, 'c1', 's1', 'content', 'outline', 1, prev)
 
     const userMessage: string = mockCallAIWithLog.mock.calls[0][1].compiled.userMessage
-    // 800 → 500; the 300 lowest-importance nodes (k0..k299 with importance 0..9) are dropped.
-    // The 500 highest-importance (k300..k799) survive.
-    const occurrences = (userMessage.match(/character:k\d+/g) || []).length
-    expect(occurrences).toBe(500)
+    // All 400 high-importance nodes must survive.
+    expect((userMessage.match(/character:crit_\d+/g) || []).length).toBe(400)
+    // Only 100 low-importance nodes survive (filling the remaining cap slots).
+    expect((userMessage.match(/character:filler_\d+/g) || []).length).toBe(100)
+    // Total is exactly the cap.
+    expect((userMessage.match(/character:\w+_\d+/g) || []).length)
+      .toBe(PREV_SNAPSHOT_INVENTORY_CAP)
   })
 })
