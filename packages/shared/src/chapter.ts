@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CompiledPromptSchema } from './chapter-prompt.js'
 
 /**
  * POST /api/stories/:storyId/chapters 的请求体 schema。
@@ -94,3 +95,28 @@ export const ChapterTreeNodeSchema: z.ZodType<{
 )
 
 export type ChapterTreeNode = z.infer<typeof ChapterTreeNodeSchema>
+
+/**
+ * POST /api/chapters/:chapterId/preview 的请求体 schema。
+ * chapters.ts:262-264 — body 必须有 storyId(用于 prompt 组装)。
+ */
+export const PreviewRequestSchema = z.object({
+  storyId: z.string().trim().min(1)
+})
+
+export type PreviewRequest = z.infer<typeof PreviewRequestSchema>
+
+/**
+ * POST /api/chapters/:chapterId/generate 的请求体 schema。
+ * chapters.ts:336-342 — storyId 必填,其它候选参数 + 编译 prompt 可选。
+ * compiledPrompt 嵌套引用 CompiledPromptSchema(chapter-prompt.ts)。
+ */
+export const GenerateRequestSchema = z.object({
+  storyId: z.string().trim().min(1),
+  candidateCount: z.number().int().positive().optional(),
+  temperatures: z.array(z.number()).optional(),
+  maxTokens: z.number().int().positive().optional(),
+  compiledPrompt: CompiledPromptSchema.optional()
+})
+
+export type GenerateRequest = z.infer<typeof GenerateRequestSchema>

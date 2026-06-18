@@ -3,7 +3,9 @@ import { CompiledPromptSchema } from '../chapter-prompt.js'
 import { CreateChapterRequestSchema, ChapterResponseSchema } from '../chapter.js'
 import {
   UpdateChapterRequestSchema,
-  ChapterTreeNodeSchema
+  ChapterTreeNodeSchema,
+  PreviewRequestSchema,
+  GenerateRequestSchema
 } from '../chapter.js'
 
 describe('CompiledPromptSchema (P2a 验证)', () => {
@@ -106,6 +108,46 @@ describe('ChapterTreeNodeSchema', () => {
           children: []
         }
       ]
+    })
+    expect(result.success).toBe(true)
+  })
+})
+
+describe('PreviewRequestSchema', () => {
+  it('valid { storyId } → parses', () => {
+    const result = PreviewRequestSchema.safeParse({ storyId: 's1' })
+    expect(result.success).toBe(true)
+  })
+
+  it('empty object → fails (storyId required)', () => {
+    const result = PreviewRequestSchema.safeParse({})
+    expect(result.success).toBe(false)
+  })
+})
+
+describe('GenerateRequestSchema', () => {
+  it('minimal { storyId } → parses', () => {
+    const result = GenerateRequestSchema.safeParse({ storyId: 's1' })
+    expect(result.success).toBe(true)
+  })
+
+  it('with optional candidateCount + temperatures + maxTokens → parses', () => {
+    const result = GenerateRequestSchema.safeParse({
+      storyId: 's1',
+      candidateCount: 3,
+      temperatures: [0.6, 0.75, 0.9],
+      maxTokens: 4096
+    })
+    expect(result.success).toBe(true)
+  })
+
+  it('with compiledPrompt → parses (validates nested schema)', () => {
+    const result = GenerateRequestSchema.safeParse({
+      storyId: 's1',
+      compiledPrompt: {
+        systemMessage: 'You are a writer',
+        userMessage: 'Write chapter 1'
+      }
     })
     expect(result.success).toBe(true)
   })
