@@ -87,24 +87,20 @@ import {
 } from 'naive-ui'
 import {
   useCytoscapeLifecycle,
-  normalizeGraph
+  toGraphData,
+  type GraphData
 } from '../../composables/graph/useCytoscapeLifecycle'
 
-interface DraftGraphData {
-  nodes: any[]
-  edges: any[]
-}
-
 const props = defineProps<{
-  initialGraphData?: DraftGraphData | null
+  initialGraphData?: GraphData<any, any> | null
 }>()
 
 const emit = defineEmits<{
-  'update:graphData': [data: DraftGraphData]
+  'update:graphData': [data: GraphData<any, any>]
 }>()
 
 // draft 模式下的本地编辑数据
-const draftGraphData = ref<DraftGraphData>({ nodes: [], edges: [] })
+const draftGraphData = ref<GraphData<any, any>>({ nodes: [], edges: [] })
 const cyContainer = ref<HTMLDivElement>()
 
 const showNodeModal = ref(false)
@@ -131,7 +127,7 @@ const targetNodeOptions = computed(() => {
     .map((n: any) => ({ label: `${n.label} (${n.type})`, value: n.id }))
 })
 
-const displayGraphData = computed<DraftGraphData | null>(() => draftGraphData.value)
+const displayGraphData = computed<GraphData<any, any> | null>(() => draftGraphData.value)
 
 const cytoscape = useCytoscapeLifecycle({
   containerRef: cyContainer,
@@ -155,27 +151,12 @@ const cytoscape = useCytoscapeLifecycle({
   }
 })
 
-function loadDraftGraph(raw?: DraftGraphData | null) {
+function loadDraftGraph(raw?: GraphData<any, any> | null) {
   if (!raw) {
     draftGraphData.value = { nodes: [], edges: [] }
     return
   }
-  const normalized = normalizeGraph(raw.nodes, raw.edges)
-  draftGraphData.value = {
-    nodes: normalized.nodes.map((n: any) => ({
-      id: `${n.type}:${n.key}`,
-      type: n.type,
-      key: n.key,
-      label: n.label,
-      ...n.data
-    })),
-    edges: normalized.edges.map((e: any) => ({
-      source: `${e.fromType}:${e.fromKey}`,
-      target: `${e.toType}:${e.toKey}`,
-      relation: e.relation,
-      ...e
-    }))
-  }
+  draftGraphData.value = toGraphData(raw.nodes, raw.edges)
 }
 
 function resetLayout() {

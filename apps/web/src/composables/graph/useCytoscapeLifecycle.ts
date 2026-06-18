@@ -27,9 +27,9 @@ export interface GraphEdge {
   [k: string]: any
 }
 
-export interface GraphData {
-  nodes: GraphNode[]
-  edges: GraphEdge[]
+export interface GraphData<N = GraphNode, E = GraphEdge> {
+  nodes: N[]
+  edges: E[]
 }
 
 export interface CytoscapeLifecycleOptions {
@@ -92,7 +92,32 @@ export function normalizeGraph(rawNodes: any[], rawEdges: any[]) {
   return { nodes, edges }
 }
 
-// ===== Cytoscape 实例管理 =====
+/**
+ * 把后端返回的 raw 图谱数据转换成组件/cytoscape 用的 GraphData。
+ * - 节点 id 兜底为 `${type}:${key}`
+ * - 边转成 {source, target, relation} 三元组
+ * - 同时保留所有原始字段（data / fromType / fromKey / ...）以兼容下游
+ */
+export function toGraphData(rawNodes: any[], rawEdges: any[]): GraphData {
+  const normalized = normalizeGraph(rawNodes, rawEdges)
+  return {
+    nodes: normalized.nodes.map((n: any) => ({
+      id: `${n.type}:${n.key}`,
+      type: n.type,
+      key: n.key,
+      label: n.label,
+      ...n.data
+    })),
+    edges: normalized.edges.map((e: any) => ({
+      source: `${e.fromType}:${e.fromKey}`,
+      target: `${e.toType}:${e.toKey}`,
+      relation: e.relation,
+      ...e
+    }))
+  }
+}
+
+// ===== Cytoscape 视觉常量 =====
 
 function defaultNodeColor(type: string): string {
   const legend: Record<string, string> = {
@@ -103,6 +128,72 @@ function defaultNodeColor(type: string): string {
   }
   return legend[type] || '#94a3b8'
 }
+
+const COSE_LAYOUT_OPTIONS = {
+  name: 'cose',
+  padding: 20,
+  animate: true,
+  animationDuration: 500,
+  randomize: false,
+  componentSpacing: 60,
+  nodeRepulsion: 400000,
+  edgeElasticity: 100,
+  nestingFactor: 5,
+  gravity: 80,
+  numIter: 1000,
+  initialTemp: 200,
+  coolingFactor: 0.95,
+  minTemp: 1.0
+} as const
+
+function buildCytoscapeStyle(getNodeColor: (type: string) => string): cytoscape.StylesheetJson {
+  return [
+    {
+      selector: 'node',
+      style: {
+        'background-color': (ele: any) => getNodeColor(ele.data('type')),
+        'label': 'data(label)',
+        'width': 40,
+        'height': 40,
+        'font-size': '12px',
+        'color': '#fff',
+        'text-outline-color': '#000',
+        'text-outline-width': 2,
+        'text-valign': 'center',
+        'text-halign': 'center',
+        'border-width': (ele: any) => ele.data('isNew') ? 3 : 0,
+        'border-color': '#22c55e'
+      }
+    },
+    {
+      selector: 'edge',
+      style: {
+        'width': (ele: any) => ele.data('isNew') ? 3 : 2,
+        'line-color': (ele: any) => ele.data('isNew') ? '#22c55e' : '#94a3b8',
+        'target-arrow-color': (ele: any) => ele.data('isNew') ? '#22c55e' : '#94a3b8',
+        'target-arrow-shape': 'triangle',
+        'curve-style': 'bezier',
+        'label': 'data(label)',
+        'font-size': '10px',
+        'color': '#64748b',
+        'text-background-color': '#fff',
+        'text-background-opacity': 0.8,
+        'text-background-padding': '2px',
+        'text-background-shape': 'roundrectangle'
+      }
+    },
+    {
+      selector: ':selected',
+      style: {
+        'border-width': 4,
+        'border-color': '#fbbf24',
+        'border-opacity': 1
+      }
+    }
+  ]
+}
+
+// ===== Cytoscape 实例管理 =====
 
 export function useCytoscapeLifecycle(
   options: CytoscapeLifecycleOptions
@@ -163,66 +254,8 @@ export function useCytoscapeLifecycle(
     cy = cytoscape({
       container: options.containerRef.value,
       elements,
-      style: [
-        {
-          selector: 'node',
-          style: {
-            'background-color': (ele: any) => nodeColorFn(ele.data('type')),
-            'label': 'data(label)',
-            'width': 40,
-            'height': 40,
-            'font-size': '12px',
-            'color': '#fff',
-            'text-outline-color': '#000',
-            'text-outline-width': 2,
-            'text-valign': 'center',
-            'text-halign': 'center',
-            'border-width': (ele: any) => ele.data('isNew') ? 3 : 0,
-            'border-color': '#22c55e'
-          }
-        },
-        {
-          selector: 'edge',
-          style: {
-            'width': (ele: any) => ele.data('isNew') ? 3 : 2,
-            'line-color': (ele: any) => ele.data('isNew') ? '#22c55e' : '#94a3b8',
-            'target-arrow-color': (ele: any) => ele.data('isNew') ? '#22c55e' : '#94a3b8',
-            'target-arrow-shape': 'triangle',
-            'curve-style': 'bezier',
-            'label': 'data(label)',
-            'font-size': '10px',
-            'color': '#64748b',
-            'text-background-color': '#fff',
-            'text-background-opacity': 0.8,
-            'text-background-padding': '2px',
-            'text-background-shape': 'roundrectangle'
-          }
-        },
-        {
-          selector: ':selected',
-          style: {
-            'border-width': 4,
-            'border-color': '#fbbf24',
-            'border-opacity': 1
-          }
-        }
-      ],
-      layout: {
-        name: 'cose',
-        padding: 20,
-        animate: true,
-        animationDuration: 500,
-        randomize: false,
-        componentSpacing: 60,
-        nodeRepulsion: 400000,
-        edgeElasticity: 100,
-        nestingFactor: 5,
-        gravity: 80,
-        numIter: 1000,
-        initialTemp: 200,
-        coolingFactor: 0.95,
-        minTemp: 1.0
-      } as any
+      style: buildCytoscapeStyle(nodeColorFn),
+      layout: COSE_LAYOUT_OPTIONS as any
     })
 
     if (options.onNodeTap) {
@@ -260,22 +293,7 @@ export function useCytoscapeLifecycle(
 
   function resetLayout() {
     if (!cy) return
-    const layout = cy.layout({
-      name: 'cose',
-      padding: 20,
-      animate: true,
-      animationDuration: 500,
-      randomize: true,
-      componentSpacing: 60,
-      nodeRepulsion: 400000,
-      edgeElasticity: 100,
-      nestingFactor: 5,
-      gravity: 80,
-      numIter: 1000,
-      initialTemp: 200,
-      coolingFactor: 0.95,
-      minTemp: 1.0
-    } as any)
+    const layout = cy.layout({ ...COSE_LAYOUT_OPTIONS, randomize: true } as any)
     layout.run()
   }
 

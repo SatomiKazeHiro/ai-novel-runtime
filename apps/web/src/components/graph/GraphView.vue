@@ -109,7 +109,7 @@ import { graphApi } from '../../api/graph'
 import { chaptersApi } from '../../api/chapters'
 import {
   useCytoscapeLifecycle,
-  normalizeGraph,
+  toGraphData,
   type GraphData
 } from '../../composables/graph/useCytoscapeLifecycle'
 
@@ -242,41 +242,8 @@ async function loadChapterGraph(chapterId: string) {
   const res = await graphApi.getSnapshot(chapterId)
   const data = res.data.data
 
-  // 转换 snapshot 为前端需要的格式，同时做 type 规范化
-  const snapshot = normalizeGraph(data.snapshot?.nodes, data.snapshot?.edges)
-  const delta = normalizeGraph(data.delta?.nodes, data.delta?.edges)
-
-  currentSnapshot.value = {
-    nodes: snapshot.nodes.map((n: any) => ({
-      id: `${n.type}:${n.key}`,
-      type: n.type,
-      key: n.key,
-      label: n.label,
-      ...n.data
-    })),
-    edges: snapshot.edges.map((e: any) => ({
-      source: `${e.fromType}:${e.fromKey}`,
-      target: `${e.toType}:${e.toKey}`,
-      relation: e.relation,
-      ...e
-    }))
-  }
-
-  currentDelta.value = {
-    nodes: delta.nodes.map((n: any) => ({
-      id: `${n.type}:${n.key}`,
-      type: n.type,
-      key: n.key,
-      label: n.label,
-      ...n.data
-    })),
-    edges: delta.edges.map((e: any) => ({
-      source: `${e.fromType}:${e.fromKey}`,
-      target: `${e.toType}:${e.toKey}`,
-      relation: e.relation,
-      ...e
-    }))
-  }
+  currentSnapshot.value = toGraphData(data.snapshot?.nodes, data.snapshot?.edges)
+  currentDelta.value = toGraphData(data.delta?.nodes, data.delta?.edges)
 
   // 加载上一章的 snapshot 用于 diff
   await loadPrevSnapshot(chapterId)
