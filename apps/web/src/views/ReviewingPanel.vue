@@ -100,16 +100,28 @@
           <!-- 剧情弧线编辑器 -->
           <n-card title="剧情弧线" size="small">
             <n-empty v-if="plotArcs.length === 0" description="暂无剧情弧线" />
-            <n-collapse v-if="plotArcs.length > 0">
-              <n-collapse-item v-for="(arc, idx) in plotArcs" :key="`arc-${idx}`" :title="arc.name">
+            <n-collapse
+              v-if="plotArcs.length > 0"
+              :default-expanded-names="plotArcs.map((_, i) => String(i))"
+            >
+              <n-collapse-item
+                v-for="(arc, idx) in plotArcs"
+                :key="`arc-${idx}`"
+                :name="String(idx)"
+                :title="arc.name"
+              >
                 <n-space vertical style="width: 100%">
                   <n-form-item label="名称" label-placement="left">
                     <n-input v-model:value="arc.name" placeholder="弧线名称" />
                   </n-form-item>
-                  <n-space justify="space-between" style="width: 100%">
-                    <n-select v-model:value="arc.type" :options="arcTypeOptions" style="width: 45%" />
-                    <n-select v-model:value="arc.status" :options="arcStatusOptions" style="width: 45%" />
-                  </n-space>
+                  <n-grid cols="2" x-gap="12" :show-divider="false">
+                    <n-gi>
+                      <n-select v-model:value="arc.type" :options="arcTypeOptions" />
+                    </n-gi>
+                    <n-gi>
+                      <n-select v-model:value="arc.status" :options="arcStatusOptions" />
+                    </n-gi>
+                  </n-grid>
                   <n-form-item label="进度" label-placement="left">
                     <n-slider v-model:value="arc.progress" :min="0" :max="100" :step="1" />
                     <n-text>{{ arc.progress }}%</n-text>
@@ -163,7 +175,7 @@
 import { ref, computed, watch } from 'vue'
 import {
   NCard, NSpace, NAlert, NTabs, NTabPane, NCollapse, NCollapseItem,
-  NInput, NInputNumber, NButton, NEmpty, NDivider, NFormItem, NText, NDynamicTags,
+  NInput, NInputNumber, NButton, NEmpty, NDivider, NFormItem, NGrid, NText, NDynamicTags,
   NSelect, NSlider
 } from 'naive-ui'
 import type { PendingArchiveData } from '@novel-runtime/shared'
