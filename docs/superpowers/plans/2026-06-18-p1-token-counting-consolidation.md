@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 `js-tiktoken` 7 处直接装收口到 `packages/ai-provider` 一处;3 套 token 实现统一调用 `countTokens(text: string): number`(从 `runtime-compiler.ts` 抽出到独立 `token-counter.ts`)。3 commit,纯重构。
+**Goal:** 把 `js-tiktoken` 7 处直接装收口到 `packages/ai-provider` 一处;3 套 token 实现统一调用 `countTokens(text: string): number`(从 `runtime-compiler.ts` 抽出到独立 `token-counter.ts`)。4 commit,纯重构。
+
+> **Plan 修正 (commit `bd62a21` 后追加):** Task 2 实施时发现 `packages/{shared,memory-engine,prompt-runtime}` 真的有 `import 'js-tiktoken'`,不能直接去直接装(pnpm 10 strict 隔离下 ERR_MODULE_NOT_FOUND)。Task 2 实际达成 **7→4 直接装**(根 + server + web 三个 0 引用者去除,shared/memory-engine/prompt-runtime 三个真用者保留,ai-provider 唯一指定保留)。**4→1 收口留给 Task 3 扩展范围**:Task 3 现在还要切换这 3 个 packages 的 `import 'js-tiktoken'` 到 `countTokens` 出口,然后才能删它们的直接装。
 
 **Architecture:** 单文件 + 改名 + import 改写 + package.json 收口。不改 API contract,不改 UI 体验,不改数据 schema。
 
@@ -244,17 +246,20 @@ EOF
 
 ---
 
-## Task 2: 收 7 个 package.json 的 js-tiktoken 直接装 + 锁 pnpm overrides
+## Task 2: 收 js-tiktoken 直接装(实际 7→4,4→1 留给 Task 3) + 锁 pnpm overrides
+
+> **Plan 修正:** Task 2 写时假设 7 个 package.json 都"装但可能没直接 import",实际 `packages/{shared,memory-engine,prompt-runtime}` 3 个真用者,不能直接去(否则 typecheck 破)。Task 2 实际只能 7→4,3 个真用者留到 Task 3 切换 import 后再删。
 
 **Files:**
-- Modify: `package.json` (root)
-- Modify: `apps/server/package.json`
-- Modify: `apps/web/package.json`
-- Modify: `packages/prompt-runtime/package.json`
-- Modify: `packages/memory-engine/package.json`
-- Modify: `packages/shared/package.json`
-- Modify: `packages/ai-provider/package.json` (保留 + 锁版本)
+- Modify: `package.json` (root) — 删直接装
+- Modify: `apps/server/package.json` — 删直接装
+- Modify: `apps/web/package.json` — 删直接装
+- Modify: `pnpm-workspace.yaml` — 加 overrides (pnpm 10 新位置)
 - Modify: `pnpm-lock.yaml` (重生成)
+- **Keep (DO NOT MODIFY):** `packages/ai-provider/package.json` (唯一指定保留)
+- **Keep (DO NOT MODIFY):** `packages/shared/package.json` (真用者,留 Task 3 删)
+- **Keep (DO NOT MODIFY):** `packages/memory-engine/package.json` (真用者,留 Task 3 删)
+- **Keep (DO NOT MODIFY):** `packages/prompt-runtime/package.json` (真用者,留 Task 3 删)
 
 - [ ] **Step 1: 确认 7 处现状**
 
@@ -406,13 +411,28 @@ EOF
 
 ---
 
-## Task 3: 外部使用方 `estimateTokens` → `countTokens`
+## Task 3: 外部使用方 `estimateTokens` → `countTokens` + 3 个 packages 的 `import 'js-tiktoken'` 切到 `countTokens`(完成 4→1 收口)
 
-**Files:**
-- Modify: `apps/server/src/routes/chapters.ts:12, 428-429` (2 处调用)
-- Modify: `apps/server/src/services/combined-extractor.ts:2, 241` (1 处调用)
-- Modify: `apps/server/src/services/runtime-compiler.ts`(无,只读 — 确认无 `js-tiktoken` 直接 import)
+> **Plan 修正:** 原 Task 3 只覆盖 `apps/server/*`,新发现 `packages/{shared,memory-engine,prompt-runtime}` 也是真用者,必须一并切到 `countTokens` 出口,然后才能在 Task 3 末尾(或额外小步)删它们的 `js-tiktoken` 直接装,完成 7→1 收口。
+
+**Files (Part A — apps/server 切换):**
+- Modify: `apps/server/src/routes/chapters.ts:12, 428-429` (1 import + 2 调用)
+- Modify: `apps/server/src/services/combined-extractor.ts:2, 241` (1 import + 1 调用)
+- Modify: `apps/server/src/services/runtime-compiler.ts`(只读,确认无 `js-tiktoken` 直接 import)
+
+**Files (Part B — 3 个 packages 切换 import 'js-tiktoken'):**
+- Modify: `packages/shared/src/index.ts:153` (`getEncoding` 调用切到 `countTokens` 出口)
+- Modify: `packages/memory-engine/src/index.ts:1` (同)
+- Modify: `packages/prompt-runtime/src/budget.ts:1` (`encodingForModel` 调用切到 `countTokens` 出口)
+- Modify: `packages/shared/package.json` (删 `js-tiktoken` 直接装)
+- Modify: `packages/memory-engine/package.json` (删 `js-tiktoken` 直接装)
+- Modify: `packages/prompt-runtime/package.json` (删 `js-tiktoken` 直接装)
+- Modify: `pnpm-lock.yaml` (重生成)
+
+**Files (Part C — 验证):**
 - (可能) Modify: `apps/web/src/**/*` 移除直接 `js-tiktoken` import(如无则跳过)
+
+> 实施时可考虑拆成 2-3 个 commit(Part A 一 commit,Part B 一 commit + Part C 一 commit),按"小步提交"原则。每 commit 后 typecheck + test 必须全绿。
 
 - [ ] **Step 1: 找全部 `estimateTokens` / 直接 `js-tiktoken` 使用**
 
