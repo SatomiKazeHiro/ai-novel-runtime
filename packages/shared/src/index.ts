@@ -258,3 +258,7 @@ export function scaleBudget(contextLength: number): BudgetConfig {
 
 export * from './archive.js'
 export * from './chapter-prompt.js'
+export * from './chapter.js'
+export * from './develop.js'
+export * from './prepare-archive.js'
+export * from './select-draft.js'
