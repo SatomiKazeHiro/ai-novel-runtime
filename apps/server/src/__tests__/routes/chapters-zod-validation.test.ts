@@ -96,3 +96,115 @@ describe('PUT /chapters/:chapterId — UpdateChapterRequestSchema', () => {
     expect(mockPrisma.chapter.update).not.toHaveBeenCalled()
   })
 })
+
+describe('POST /chapters/:chapterId/preview — PreviewRequestSchema', () => {
+  let mockPrisma: any
+  let routes: Record<string, any>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockPrisma = createMockPrisma({
+      chapter: {
+        ...createMockPrisma().chapter,
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'c1', storyId: 's1', status: 'draft',
+          outline: 'o', sceneLocation: '', sceneMood: '', sceneGoal: '',
+          number: 1, isSideStory: false, story: { id: 's1', title: 'S', description: '' }
+        }),
+        findFirst: vi.fn().mockResolvedValue(null)
+      },
+      loreItem: { findMany: vi.fn().mockResolvedValue([]) },
+      timelineEvent: { findMany: vi.fn().mockResolvedValue([]) },
+      plotArc: { findMany: vi.fn().mockResolvedValue([]) },
+      memory: { findMany: vi.fn().mockResolvedValue([]) },
+      character: { findMany: vi.fn().mockResolvedValue([]) },
+      characterBranchState: { findMany: vi.fn().mockResolvedValue([]) },
+      runtimeProfile: { findUnique: vi.fn().mockResolvedValue(null), findFirst: vi.fn().mockResolvedValue(null) },
+      storyWorkerBinding: { findUnique: vi.fn().mockResolvedValue(null) },
+      workerTask: { findUnique: vi.fn().mockResolvedValue(null), findFirst: vi.fn().mockResolvedValue(null) },
+      aiProviderConfig: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) }
+    })
+    const { chapterRoutes } = await import('../../routes/chapters.js')
+    const built = createMockApp(mockPrisma)
+    await chapterRoutes(built.app)
+    routes = built.routes
+  })
+
+  it('accepts body with storyId', async () => {
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/preview',
+      { storyId: 's1' },
+      { chapterId: 'c1' }
+    )
+    expect(result.status).not.toBe(400)
+  })
+
+  it('rejects missing storyId with 400', async () => {
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/preview',
+      {},
+      { chapterId: 'c1' }
+    )
+    expect(result.status).toBe(400)
+    expect(result.body).toEqual(
+      expect.objectContaining({ success: false, error: expect.stringContaining('storyId') })
+    )
+  })
+})
+
+describe('POST /chapters/:chapterId/generate — GenerateRequestSchema', () => {
+  let mockPrisma: any
+  let routes: Record<string, any>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockPrisma = createMockPrisma({
+      chapter: {
+        ...createMockPrisma().chapter,
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'c1', storyId: 's1', status: 'draft',
+          content: '', outline: 'o', title: 't',
+          sceneLocation: '', sceneMood: '', sceneGoal: '',
+          number: 1, isSideStory: false, story: { id: 's1', title: 'S', description: '' }
+        }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 })  // 锁成功
+      },
+      draft: { count: vi.fn().mockResolvedValue(0), create: vi.fn().mockResolvedValue({ id: 'd1' }) },
+      loreItem: { findMany: vi.fn().mockResolvedValue([]) },
+      timelineEvent: { findMany: vi.fn().mockResolvedValue([]) },
+      plotArc: { findMany: vi.fn().mockResolvedValue([]) },
+      memory: { findMany: vi.fn().mockResolvedValue([]) },
+      character: { findMany: vi.fn().mockResolvedValue([]) },
+      characterBranchState: { findMany: vi.fn().mockResolvedValue([]) },
+      runtimeProfile: { findUnique: vi.fn().mockResolvedValue(null), findFirst: vi.fn().mockResolvedValue(null) },
+      storyWorkerBinding: { findUnique: vi.fn().mockResolvedValue(null) },
+      workerTask: { findUnique: vi.fn().mockResolvedValue(null), findFirst: vi.fn().mockResolvedValue(null) },
+      aiProviderConfig: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) }
+    })
+    const { chapterRoutes } = await import('../../routes/chapters.js')
+    const built = createMockApp(mockPrisma)
+    await chapterRoutes(built.app)
+    routes = built.routes
+  })
+
+  it('accepts empty body (all fields optional — GenerateRequestSchema.storyId 是 optional)', async () => {
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/generate',
+      {},
+      { chapterId: 'c1' }
+    )
+    expect(result.status).not.toBe(400)
+  })
+
+  it('rejects compiledPrompt with missing userMessage (CompiledPromptSchema 嵌套校验)', async () => {
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/generate',
+      { compiledPrompt: { systemMessage: 'sys' } },
+      { chapterId: 'c1' }
+    )
+    expect(result.status).toBe(400)
+    expect(result.body).toEqual(
+      expect.objectContaining({ success: false, error: expect.stringContaining('userMessage') })
+    )
+  })
+})

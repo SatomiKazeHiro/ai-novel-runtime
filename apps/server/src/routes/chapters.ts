@@ -16,9 +16,10 @@ import {
   DEFAULT_PIPELINE_BUDGET,
   scaleBudget,
   safeJsonParse,
-  CompiledPromptSchema,
   CreateChapterRequestSchema,
-  UpdateChapterRequestSchema
+  UpdateChapterRequestSchema,
+  PreviewRequestSchema,
+  GenerateRequestSchema
 } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { callAIWithLog } from '../services/ai-call-logger.js'
@@ -284,7 +285,14 @@ export async function chapterRoutes(app: FastifyInstance) {
   // POST /api/chapters/:chapterId/preview
   app.post('/api/chapters/:chapterId/preview', async (request, reply) => {
     const { chapterId } = request.params as any
-    const body = request.body as any
+    const parseResult = PreviewRequestSchema.safeParse(request.body)
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        success: false,
+        error: parseResult.error.errors.map(e => `${e.path.join('.') || '<root>'}: ${e.message}`).join('; ')
+      })
+    }
+    const body = parseResult.data
     const storyId = body.storyId
 
     const prisma = app.prisma
@@ -358,8 +366,14 @@ export async function chapterRoutes(app: FastifyInstance) {
   // POST /api/chapters/:chapterId/generate
   app.post('/api/chapters/:chapterId/generate', async (request, reply) => {
     const { chapterId } = request.params as any
-    const body = request.body as any
-    const storyId = body.storyId
+    const parseResult = GenerateRequestSchema.safeParse(request.body)
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        success: false,
+        error: parseResult.error.errors.map(e => `${e.path.join('.') || '<root>'}: ${e.message}`).join('; ')
+      })
+    }
+    const body = parseResult.data
     const candidateCount = body.candidateCount || 3
     const temperatures = body.temperatures || [0.6, 0.75, 0.9]
     const customMaxTokens = body.maxTokens
@@ -373,6 +387,11 @@ export async function chapterRoutes(app: FastifyInstance) {
       include: { story: true }
     })
     if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
+
+    // storyId 是 optional (GenerateRequestSchema),fallback 到 chapter 自身所属 story。
+    // 这保留了原行为:之前 body.storyId 来自前端,缺失时下游 storyId 也会是 undefined
+    // 但前端总是会传 — 现在用 chapter.storyId 兜底,反而更稳。
+    const storyId = body.storyId ?? chapter.storyId
 
     // 允许 draft / generated / selected 三态生成候选
     // - draft: 首次生成
@@ -440,19 +459,13 @@ export async function chapterRoutes(app: FastifyInstance) {
     const customCompiled = body.compiledPrompt
 
     if (customCompiled) {
-      const parsed = CompiledPromptSchema.safeParse(customCompiled)
-      if (!parsed.success) {
-        return reply.status(400).send({
-          success: false,
-          error: 'compiledPrompt 格式错误',
-          details: parsed.error.flatten()
-        })
-      }
-      const systemTokens = countTokens(parsed.data.systemMessage)
-      const userTokens = countTokens(parsed.data.userMessage)
+      // GenerateRequestSchema 已嵌套校验 CompiledPromptSchema,
+      // 此处 schema 一定 valid,直接用 customCompiled。
+      const systemTokens = countTokens(customCompiled.systemMessage)
+      const userTokens = countTokens(customCompiled.userMessage)
       compiled = {
-        systemMessage: parsed.data.systemMessage,
-        userMessage: parsed.data.userMessage,
+        systemMessage: customCompiled.systemMessage,
+        userMessage: customCompiled.userMessage,
         meta: { systemTokens, userTokens, totalTokens: systemTokens + userTokens }
       }
     } else {
