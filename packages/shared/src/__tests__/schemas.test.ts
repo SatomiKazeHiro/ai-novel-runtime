@@ -166,3 +166,17 @@ describe('SelectDraftRequestSchema', () => {
     expect(result.success).toBe(false)
   })
 })
+
+import { PrepareArchiveRequestSchema } from '../prepare-archive.js'
+
+describe('PrepareArchiveRequestSchema', () => {
+  it('empty object → parses (no body required)', () => {
+    const result = PrepareArchiveRequestSchema.safeParse({})
+    expect(result.success).toBe(true)
+  })
+
+  it('extra field → fails (strict mode)', () => {
+    const result = PrepareArchiveRequestSchema.safeParse({ foo: 'bar' })
+    expect(result.success).toBe(false)
+  })
+})
