@@ -204,3 +204,53 @@ describe('DevelopRequestSchema', () => {
     expect(result.success).toBe(false)
   })
 })
+
+import {
+  PendingArchiveDataSchema,
+  PendingMemoriesSchema,
+  PendingGraphSnapshotSchema
+} from '../archive.js'
+
+describe('PendingArchiveDataSchema', () => {
+  const validPayload = {
+    memories: {
+      memories: [
+        {
+          storyId: 's1',
+          chapterId: 'c1',
+          fromChapterNumber: 1,
+          layer: 'chapter',
+          content: 'A memory',
+          tags: '[]',
+          importance: 0.8
+        }
+      ],
+      characterStates: [],
+      timelineEvents: [],
+      summary: 'chapter summary'
+    },
+    graph: {
+      mergedGraph: { nodes: [], edges: [], timestamp: '2026-06-18T00:00:00Z' },
+      chapterGraph: { nodes: [], edges: [], timestamp: '2026-06-18T00:00:00Z' }
+    },
+    plotArcs: [],
+    meta: { extractedAt: '2026-06-18T00:00:00Z', chapterNumber: 1 }
+  }
+
+  it('valid full payload → parses', () => {
+    const result = PendingArchiveDataSchema.safeParse(validPayload)
+    expect(result.success).toBe(true)
+  })
+
+  it('missing meta → fails (required)', () => {
+    const { meta, ...withoutMeta } = validPayload
+    const result = PendingArchiveDataSchema.safeParse(withoutMeta)
+    expect(result.success).toBe(false)
+  })
+
+  it('extra field at top level → passes (passthrough for user-editable payload)', () => {
+    const withExtra = { ...validPayload, _userNote: 'edited by reviewer' }
+    const result = PendingArchiveDataSchema.safeParse(withExtra)
+    expect(result.success).toBe(true)
+  })
+})

@@ -6,6 +6,8 @@
 // lifecycle. Both apps must agree on this shape, or the user's edits
 // will silently desync.
 
+import { z } from 'zod'
+
 /**
  * A single memory write prepared by `prepareMemoryWrites`. Mirrors the
  * server-side `MemoryWrite` row that will be inserted in phase 3.
@@ -136,3 +138,119 @@ export interface PendingArchiveData {
   plotArcs: PendingPlotArcWrite[]
   meta: PendingArchiveMeta
 }
+
+// =================================================================
+// Zod 版 schema(P2a 引入,与 interface 平行存在)
+// 用途:
+//   1. P2b wire-up:在 chapters.ts archive route 用 schema.parse() 校验
+//      Chapter.pendingArchiveData(round-trip JSON)
+//   2. 文档化:PendingArchiveData 字段允许什么类型 / 哪些必填 / 哪些可选
+// 与 interface 关系:
+//   - interface 保留,下游 5 处引用(ReviewingPanel / chapters.ts /
+//     combined-extractor) 继续用 interface
+//   - zod schema 推导出的 type 是 "strict source of truth" — P2b
+//     wire-up 时可以 `type PendingArchiveDataFromZod = z.infer<...>`
+//     替换 interface,本 commit 不替换(避免大爆炸改动)
+// 设计取舍:
+//   - `.passthrough()` (不 .strict()):ReviewingPanel 编辑时可能添加
+//     临时字段,不应被 zod 静默 strip
+//   - `data: z.record(z.string(), z.any())` 兼容 graph node 任意结构
+//   - `status/relationships/events/stages/unresolved` 是 z.string()
+//     (Prisma 列是 TEXT,前端要 JSON.stringify 存)
+// =================================================================
+
+export const PendingMemoryWriteSchema = z.object({
+  storyId: z.string(),
+  chapterId: z.string(),
+  fromChapterNumber: z.number(),
+  layer: z.string(),
+  content: z.string(),
+  tags: z.string(),
+  importance: z.number(),
+  originUid: z.string().optional()
+})
+
+export const PendingCharacterStateWriteSchema = z.object({
+  characterId: z.string(),
+  fromChapterNumber: z.number(),
+  status: z.string(),
+  relationships: z.string()
+})
+
+export const PendingTimelineEventWriteSchema = z.object({
+  storyId: z.string(),
+  fromChapterNumber: z.number(),
+  day: z.number(),
+  events: z.string()
+})
+
+export const PendingMemoriesSchema = z.object({
+  memories: z.array(PendingMemoryWriteSchema),
+  characterStates: z.array(PendingCharacterStateWriteSchema),
+  timelineEvents: z.array(PendingTimelineEventWriteSchema),
+  summary: z.string().nullable()
+})
+
+export const PendingGraphNodeSchema = z.object({
+  type: z.string(),
+  key: z.string(),
+  label: z.string(),
+  data: z.record(z.string(), z.any())
+}).passthrough()
+
+export const PendingGraphEdgeSchema = z.object({
+  fromType: z.string(),
+  fromKey: z.string(),
+  toType: z.string(),
+  toKey: z.string(),
+  relation: z.string(),
+  weight: z.number()
+})
+
+export const PendingGraphSnapshotSchema = z.object({
+  nodes: z.array(PendingGraphNodeSchema),
+  edges: z.array(PendingGraphEdgeSchema),
+  timestamp: z.string()
+})
+
+export const PendingPlotArcWriteSchema = z.object({
+  storyId: z.string(),
+  name: z.string(),
+  type: z.string(),
+  status: z.string(),
+  progress: z.number(),
+  stages: z.string(),
+  currentStage: z.string(),
+  nextGoal: z.string(),
+  unresolved: z.string(),
+  summary: z.string(),
+  isNew: z.boolean(),
+  existingId: z.string().optional()
+})
+
+export const PendingArchiveMetaSchema = z.object({
+  extractedAt: z.string(),
+  chapterNumber: z.number()
+})
+
+export const PendingArchiveDataSchema = z.object({
+  memories: PendingMemoriesSchema,
+  graph: z.object({
+    mergedGraph: PendingGraphSnapshotSchema,
+    chapterGraph: PendingGraphSnapshotSchema
+  }),
+  plotArcs: z.array(PendingPlotArcWriteSchema),
+  meta: PendingArchiveMetaSchema
+}).passthrough()
+
+// TypeScript 类型(zod 推导),与上面 interface 平行
+export type PendingMemoryWriteZ = z.infer<typeof PendingMemoryWriteSchema>
+export type PendingCharacterStateWriteZ = z.infer<typeof PendingCharacterStateWriteSchema>
+export type PendingTimelineEventWriteZ = z.infer<typeof PendingTimelineEventWriteSchema>
+export type PendingMemoriesZ = z.infer<typeof PendingMemoriesSchema>
+export type PendingGraphNodeZ = z.infer<typeof PendingGraphNodeSchema>
+export type PendingGraphEdgeZ = z.infer<typeof PendingGraphEdgeSchema>
+export type PendingGraphSnapshotZ = z.infer<typeof PendingGraphSnapshotSchema>
+export type PendingPlotArcWriteZ = z.infer<typeof PendingPlotArcWriteSchema>
+export type PendingArchiveMetaZ = z.infer<typeof PendingArchiveMetaSchema>
+export type PendingArchiveDataZ = z.infer<typeof PendingArchiveDataSchema>
