@@ -306,3 +306,75 @@ describe('POST /chapters/:chapterId/develop — DevelopRequestSchema', () => {
     expect(mockPrisma.chapter.create).not.toHaveBeenCalled()
   })
 })
+
+describe('POST /chapters/:chapterId/prepare-archive — PrepareArchiveRequestSchema (empty strict)', () => {
+  // 复用 prepare-archive.test.ts 的 mock 模式:mock combined-extractor + memory-optimizer + graph-snapshot
+  vi.mock('../../services/combined-extractor.js', () => ({
+    prepareArchiveData: vi.fn(),
+    extractAll: vi.fn()
+  }))
+  vi.mock('../../services/memory-optimizer.js', () => ({
+    optimizeMemories: vi.fn().mockResolvedValue(0)
+  }))
+  vi.mock('../../services/graph-snapshot.js', () => ({
+    saveGraphSnapshotAndDelta: vi.fn().mockResolvedValue({
+      snapshot: { nodes: [], edges: [], timestamp: '' },
+      delta: { nodes: [], edges: [], timestamp: '' }
+    })
+  }))
+
+  let mockPrisma: any
+  let routes: Record<string, any>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockPrisma = createMockPrisma({
+      chapter: {
+        ...createMockPrisma().chapter,
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'c1', storyId: 's1', status: 'selected',
+          isSideStory: false, content: 'a'.repeat(200), outline: 'o',
+          number: 1, parentChapterId: null,
+          story: { id: 's1' }
+        }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        update: vi.fn().mockResolvedValue({ id: 'c1', status: 'reviewing' })
+      }
+    })
+    const { prepareArchiveData } = await import('../../services/combined-extractor.js')
+    ;(prepareArchiveData as any).mockResolvedValue({
+      memories: { memories: [], characterStates: [], timelineEvents: [], summary: null },
+      graph: {
+        mergedGraph: { nodes: [], edges: [], timestamp: '2026-06-18T00:00:00.000Z' },
+        chapterGraph: { nodes: [], edges: [], timestamp: '2026-06-18T00:00:00.000Z' }
+      },
+      plotArcs: [],
+      meta: { extractedAt: '2026-06-18T00:00:00.000Z', chapterNumber: 1 }
+    })
+    const { chapterRoutes } = await import('../../routes/chapters.js')
+    const built = createMockApp(mockPrisma)
+    await chapterRoutes(built.app)
+    routes = built.routes
+  })
+
+  it('accepts empty body (no client input expected)', async () => {
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/prepare-archive',
+      {},
+      { chapterId: 'c1' }
+    )
+    expect(result.status).not.toBe(400)
+  })
+
+  it('rejects body with unrecognized keys (strict mode)', async () => {
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/prepare-archive',
+      { someField: 'unexpected' },
+      { chapterId: 'c1' }
+    )
+    expect(result.status).toBe(400)
+    expect(result.body).toEqual(
+      expect.objectContaining({ success: false, error: expect.stringContaining('someField') })
+    )
+  })
+})

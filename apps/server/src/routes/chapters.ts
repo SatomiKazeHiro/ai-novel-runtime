@@ -21,7 +21,8 @@ import {
   PreviewRequestSchema,
   GenerateRequestSchema,
   SelectDraftRequestSchema,
-  DevelopRequestSchema
+  DevelopRequestSchema,
+  PrepareArchiveRequestSchema
 } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { callAIWithLog } from '../services/ai-call-logger.js'
@@ -598,6 +599,13 @@ export async function chapterRoutes(app: FastifyInstance) {
   // POST /api/chapters/:chapterId/prepare-archive
   app.post('/api/chapters/:chapterId/prepare-archive', async (request, reply) => {
     const { chapterId } = request.params as any
+    const parseResult = PrepareArchiveRequestSchema.safeParse(request.body)
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        success: false,
+        error: parseResult.error.errors.map(e => `${e.path.join('.') || '<root>'}: ${e.message}`).join('; ')
+      })
+    }
     const prisma = app.prisma
 
     const chapter = await prisma.chapter.findUnique({
