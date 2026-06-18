@@ -60,6 +60,19 @@
 - **现状：** 字段被注释为"旧字段，兼容保留"，但实际取值路径未审计；替代字段是 `StoryWorkerBinding.storyId + workerType`。
 - **避雷指引：** 不要在新代码里写 `workerTask.storyId`，改读 `bindings` 表；扫到时一并清理。
 
+### 10. P1 token-counting 收口保留 3 个 packages 的 `js-tiktoken` 直接装(7→4 终态,有意保留)
+- **位置：** `packages/shared/package.json` + `packages/memory-engine/package.json` + `packages/prompt-runtime/package.json`(均保留 `js-tiktoken` 直接装)。
+- **现状：** P1 token-counting 收口(commit `bd62a21`)后,`js-tiktoken` 直接装从 7 个 package.json 收到 **4 个**:`packages/ai-provider`(唯一指定保留) + 上述 3 个真用者。spec 路线图(`docs/superpowers/specs/2026-06-18-decoupling-roadmap-design.md` 第 158-188 行)原计划 **7→1 不可达**。用户决策(2026-06-18,见 P1 plan 修正 commit `a9d36db`):接受 **7→4 为 P1 终态**,3 个 packages 保留直接装是**有意为之**,不是"未收口"。
+- **为什么重要：** 3 个 packages 有结构性原因无法切到 `countTokens`:
+  1. **Dep cycle** — `packages/ai-provider/package.json` 已依赖 `@novel-runtime/shared`(`shared` → `ai-provider` 会构成环)
+  2. **API 不匹配** — `shared.tokenize(text): number[]` / `memory-engine` 的 Jaccard 语义搜索需要**真实 token ID 数组**,`countTokens(text): number` 不是等价替换(行为会 silent 退化)
+  3. **Model-aware** — `prompt-runtime/budget.ts` 用 `encodingForModel(model)` + 启发式 fallback,不是单纯 `cl100k_base` 单 encoder
+- **避雷指引：**
+  - 新增 **token 计数**需求 → 统一用 `@novel-runtime/ai-provider` 的 `countTokens`(`packages/ai-provider/src/token-counter.ts`,Task 1 commit `5f0ba92` + 修复合并 `792b533`)
+  - 新增 **token ID 数组**需求(Jaccard / 语义搜索 / 重复检测)→ 在 3 个 packages 当前边界内**直接用** `js-tiktoken`,**不要**尝试"再切一次"到 `countTokens`(会破行为)
+  - 新增 **model-aware encoding**(per-model encoder 选择)→ 走 `packages/prompt-runtime/src/budget.ts` 的现成 `encodingForModel` + heuristic fallback 路径,不要自己造
+  - 看到 `js-tiktoken` 在 3 个 packages 的 import,**不要当成"未收口"删**——这是 P1 收口的**有意保留**边界
+
 ---
 
 ## 安全

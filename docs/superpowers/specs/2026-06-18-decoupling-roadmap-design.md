@@ -99,6 +99,8 @@ P4 / P5 与 backend 链独立,可并行实施。
 ### 目标
 `js-tiktoken` 7 处直接装 → 1 处直接装(`packages/ai-provider`)+ 6 处 transitive 依赖。3 套 token 实现统一调用 `countTokens(text: string): number`。
 
+> **实际结果(2026-06-18 commit `bd62a21` 后):** P1 实际达成 **7→4 直接装**,非 7→1。`packages/{shared,memory-engine,prompt-runtime}` 因结构性原因(dep cycle / API 不匹配 / model-aware)保留 `js-tiktoken` 直接装。详见 `KNOWN-ISSUES.md` 第 10 条。`countTokens` 作为"项目 token 计数唯一入口"目标已实现(被 `apps/server/*` 全面采用);`tokenize(token IDs)` + `encodingForModel(model-aware)` 是另一类抽象,合并会破行为或加新接口,故独立保留。
+
 ### 文件改动
 
 | 文件 | 改动 |
