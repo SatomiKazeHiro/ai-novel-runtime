@@ -176,7 +176,8 @@ import { ref, computed, watch } from 'vue'
 import {
   NCard, NSpace, NAlert, NTabs, NTabPane, NCollapse, NCollapseItem,
   NInput, NInputNumber, NButton, NEmpty, NDivider, NFormItem, NGrid, NText, NDynamicTags,
-  NSelect, NSlider
+  NSelect, NSlider,
+  useDialog
 } from 'naive-ui'
 import type { PendingArchiveData } from '@novel-runtime/shared'
 import EditableGraph from '../components/graph/EditableGraph.vue'
@@ -198,6 +199,17 @@ const emit = defineEmits<{
 
 const saving = ref(false)
 const confirming = ref(false)
+const dialog = useDialog()
+
+function confirmRemove(content: string, onConfirm: () => void) {
+  dialog.warning({
+    title: '确认删除',
+    content,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: onConfirm
+  })
+}
 
 function normalizePendingData(data: any): PendingArchiveData {
   const safe = data || {}
@@ -329,8 +341,10 @@ function addSideMemory() {
 }
 
 function removeMemory(mem: any) {
-  const idx = memories.value.indexOf(mem)
-  if (idx >= 0) memories.value.splice(idx, 1)
+  confirmRemove('确定要删除这条记忆吗?', () => {
+    const idx = memories.value.indexOf(mem)
+    if (idx >= 0) memories.value.splice(idx, 1)
+  })
 }
 
 function addCharacterState() {
@@ -344,7 +358,9 @@ function addCharacterState() {
 }
 
 function removeCharacterState(idx: number) {
-  characterStates.value.splice(idx, 1)
+  confirmRemove('确定要删除该角色状态吗?', () => {
+    characterStates.value.splice(idx, 1)
+  })
 }
 
 function addTimelineEvent() {
@@ -358,7 +374,9 @@ function addTimelineEvent() {
 }
 
 function removeTimelineEvent(idx: number) {
-  timelineEvents.value.splice(idx, 1)
+  confirmRemove('确定要删除该时间线事件吗?', () => {
+    timelineEvents.value.splice(idx, 1)
+  })
 }
 
 function addPlotArc() {
@@ -378,7 +396,9 @@ function addPlotArc() {
 }
 
 function removePlotArc(idx: number) {
-  plotArcs.value.splice(idx, 1)
+  confirmRemove('确定要删除该剧情弧线吗?', () => {
+    plotArcs.value.splice(idx, 1)
+  })
 }
 
 function onGraphUpdate(data: { nodes: any[], edges: any[] }) {
