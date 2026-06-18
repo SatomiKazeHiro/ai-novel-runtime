@@ -26,7 +26,6 @@
     "@prisma/client": "^6.0.0",
     "graphology": "^0.25.4",
     "graphology-types": "^0.24.8",
-    "js-tiktoken": "^1.0.21",
     "openai": "^4.104.0"
   }
 }

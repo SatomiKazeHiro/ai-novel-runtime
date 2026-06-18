@@ -16,7 +16,6 @@
     "axios": "^1.7.0",
     "cytoscape": "^3.33.4",
     "es-toolkit": "^1.47.0",
-    "js-tiktoken": "^1.0.21",
     "naive-ui": "^2.40.0",
     "pinia": "^2.3.0",
     "vue": "^3.5.0",
