@@ -25,13 +25,14 @@ export interface CompiledPrompt {
   }
 }
 
-import { getEncoding } from 'js-tiktoken'
+import { countTokens } from './token-counter.js'
 
-const enc = getEncoding('cl100k_base')
-
-export function estimateTokens(text: string): number {
-  return enc.encode(text).length
-}
+/**
+ * 向后兼容 re-export alias:早期版本把 estimateTokens 直接定义在 runtime-compiler.ts。
+ * 提取到 token-counter.ts 后,保留这个 alias 让老 import (`estimateTokens` from
+ * `@novel-runtime/ai-provider`) 不破。Task 3/4 才会逐步切到 countTokens 并最终删除。
+ */
+export const estimateTokens = countTokens
 
 export class RuntimePromptCompiler {
   compile(base: SharedRuntimeBase, task: WorkerTask, userMessage: string): CompiledPrompt {
@@ -54,8 +55,8 @@ export class RuntimePromptCompiler {
     const systemMessage = systemParts.join('\n\n')
 
     // 2. 计算 token
-    const systemTokens = estimateTokens(systemMessage)
-    const userTokens = estimateTokens(userMessage)
+    const systemTokens = countTokens(systemMessage)
+    const userTokens = countTokens(userMessage)
 
     return {
       systemMessage,
