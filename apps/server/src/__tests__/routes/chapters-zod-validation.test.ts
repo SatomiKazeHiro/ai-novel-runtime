@@ -208,3 +208,101 @@ describe('POST /chapters/:chapterId/generate — GenerateRequestSchema', () => {
     )
   })
 })
+
+describe('POST /chapters/:chapterId/select — SelectDraftRequestSchema', () => {
+  let mockPrisma: any
+  let routes: Record<string, any>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockPrisma = createMockPrisma({
+      chapter: {
+        ...createMockPrisma().chapter,
+        findUnique: vi.fn().mockResolvedValue({ id: 'c1', status: 'generated' }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 })  // 锁成功
+      },
+      draft: {
+        ...createMockPrisma().draft,
+        findUnique: vi.fn().mockResolvedValue({ id: 'd1', chapterId: 'c1', content: 'c' }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        update: vi.fn().mockResolvedValue({ id: 'd1', status: 'selected' })
+      },
+      $transaction: vi.fn(async (fn: any) => fn(mockPrisma))
+    })
+    const { chapterRoutes } = await import('../../routes/chapters.js')
+    const built = createMockApp(mockPrisma)
+    await chapterRoutes(built.app)
+    routes = built.routes
+  })
+
+  it('accepts body with draftId', async () => {
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/select',
+      { draftId: 'd1' },
+      { chapterId: 'c1' }
+    )
+    expect(result.status).not.toBe(400)
+    expect(result.body).toEqual(expect.objectContaining({ success: true }))
+  })
+
+  it('rejects missing draftId with 400', async () => {
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/select',
+      {},
+      { chapterId: 'c1' }
+    )
+    expect(result.status).toBe(400)
+    expect(result.body).toEqual(
+      expect.objectContaining({ success: false, error: expect.stringContaining('draftId') })
+    )
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled()
+  })
+})
+
+describe('POST /chapters/:chapterId/develop — DevelopRequestSchema', () => {
+  let mockPrisma: any
+  let routes: Record<string, any>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockPrisma = createMockPrisma({
+      chapter: {
+        ...createMockPrisma().chapter,
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'c1', storyId: 's1', status: 'archived', number: 1, isSideStory: false,
+          story: { id: 's1', runtimeProfileId: null }
+        }),
+        findFirst: vi.fn().mockResolvedValue(null),
+        count: vi.fn().mockResolvedValue(0),       // 无子章节
+        create: vi.fn().mockResolvedValue({ id: 'c2', number: 2 })
+      }
+    })
+    const { chapterRoutes } = await import('../../routes/chapters.js')
+    const built = createMockApp(mockPrisma)
+    await chapterRoutes(built.app)
+    routes = built.routes
+  })
+
+  it('accepts empty body (all fields optional)', async () => {
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/develop',
+      {},
+      { chapterId: 'c1' }
+    )
+    expect(result.status).not.toBe(400)
+    expect(result.body).toEqual(expect.objectContaining({ success: true }))
+  })
+
+  it('rejects wrong type (number must be number, not string)', async () => {
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/develop',
+      { number: 'not-a-number' },
+      { chapterId: 'c1' }
+    )
+    expect(result.status).toBe(400)
+    expect(result.body).toEqual(
+      expect.objectContaining({ success: false, error: expect.stringContaining('number') })
+    )
+    expect(mockPrisma.chapter.create).not.toHaveBeenCalled()
+  })
+})

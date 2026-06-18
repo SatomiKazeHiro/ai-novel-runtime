@@ -19,7 +19,9 @@ import {
   CreateChapterRequestSchema,
   UpdateChapterRequestSchema,
   PreviewRequestSchema,
-  GenerateRequestSchema
+  GenerateRequestSchema,
+  SelectDraftRequestSchema,
+  DevelopRequestSchema
 } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { callAIWithLog } from '../services/ai-call-logger.js'
@@ -540,7 +542,14 @@ export async function chapterRoutes(app: FastifyInstance) {
   // POST /api/chapters/:chapterId/select
   app.post('/api/chapters/:chapterId/select', async (request, reply) => {
     const { chapterId } = request.params as any
-    const body = request.body as any
+    const parseResult = SelectDraftRequestSchema.safeParse(request.body)
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        success: false,
+        error: parseResult.error.errors.map(e => `${e.path.join('.') || '<root>'}: ${e.message}`).join('; ')
+      })
+    }
+    const body = parseResult.data
 
     const chapter = await app.prisma.chapter.findUnique({ where: { id: chapterId } })
     if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
@@ -811,7 +820,14 @@ export async function chapterRoutes(app: FastifyInstance) {
   // POST /api/chapters/:chapterId/develop
   app.post('/api/chapters/:chapterId/develop', async (request, reply) => {
     const { chapterId } = request.params as any
-    const body = request.body as any
+    const parseResult = DevelopRequestSchema.safeParse(request.body)
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        success: false,
+        error: parseResult.error.errors.map(e => `${e.path.join('.') || '<root>'}: ${e.message}`).join('; ')
+      })
+    }
+    const body = parseResult.data
     const prisma = app.prisma
 
     const parentChapter = await prisma.chapter.findUnique({
@@ -844,7 +860,8 @@ export async function chapterRoutes(app: FastifyInstance) {
     // 计算新章节的序号
     let number: number
     if (isSideStory && body.number !== undefined) {
-      number = parseFloat(body.number)
+      // DevelopRequestSchema 已 narrow body.number 为 number,无需 parseFloat
+      number = body.number
     } else if (isSideStory) {
       const allocated = await allocateSideStoryNumber(prisma, parentChapter.storyId, parentChapter.number)
       if (allocated < 0) {
