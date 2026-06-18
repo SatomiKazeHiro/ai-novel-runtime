@@ -23,7 +23,11 @@ export function createMockApp(prisma: any, log: any = { info: vi.fn(), error: vi
     get: (path: string, handler: any) => { routes[`GET ${path}`] = handler },
     post: (path: string, handler: any) => { routes[`POST ${path}`] = handler },
     put: (path: string, handler: any) => { routes[`PUT ${path}`] = handler },
-    delete: (path: string, handler: any) => { routes[`DELETE ${path}`] = handler }
+    delete: (path: string, handler: any) => { routes[`DELETE ${path}`] = handler },
+    // Mirror Fastify's register behavior for our flat-registration usage:
+    // sub-route plugins receive the same app surface (no encapsulation,
+    // no prefix), so calling them with the mock app is functionally equivalent.
+    register: async (plugin: any) => { await plugin(app) }
   }
   return { app: app as any, routes }
 }
