@@ -7,80 +7,82 @@
       </n-alert>
 
       <!-- 主编辑区 -->
-      <n-grid cols="3" responsive="screen" x-gap="16" y-gap="16">
-        <!-- 左：记忆 + 角色状态 -->
-        <n-grid-item span="1">
-          <!-- 记忆编辑器 -->
-          <n-card title="提取的记忆" size="small" style="margin-bottom: 16px">
-            <n-space vertical style="width: 100%">
-              <n-collapse :default-expanded-names="['mainEvents']">
-                <n-collapse-item title="主要事件" name="mainEvents">
-                  <n-empty v-if="mainMemories.length === 0" description="暂无主要事件" />
-                  <n-space v-for="(mem, idx) in mainMemories" :key="`main-${idx}`" vertical style="width: 100%; margin-bottom: 12px">
-                    <n-input v-model:value="mem.content" type="textarea" :rows="2" placeholder="事件内容" />
-                    <n-space justify="space-between" style="width: 100%">
-                      <n-input-number v-model:value="mem.importance" :min="1" :max="10" placeholder="重要性" />
-                      <n-button size="small" type="error" @click="removeMemory(mem)">删除</n-button>
+      <n-tabs type="line" default-value="memories" :animated="true">
+        <!-- 记忆 tab：记忆编辑器 + 角色状态 -->
+        <n-tab-pane name="memories" tab="记忆">
+          <n-space vertical size="large" style="width: 100%">
+            <!-- 记忆编辑器 -->
+            <n-card title="提取的记忆" size="small">
+              <n-space vertical style="width: 100%">
+                <n-collapse :default-expanded-names="['mainEvents']">
+                  <n-collapse-item title="主要事件" name="mainEvents">
+                    <n-empty v-if="mainMemories.length === 0" description="暂无主要事件" />
+                    <n-space v-for="(mem, idx) in mainMemories" :key="`main-${idx}`" vertical style="width: 100%; margin-bottom: 12px">
+                      <n-input v-model:value="mem.content" type="textarea" :rows="2" placeholder="事件内容" />
+                      <n-space justify="space-between" style="width: 100%">
+                        <n-input-number v-model:value="mem.importance" :min="1" :max="10" placeholder="重要性" />
+                        <n-button size="small" type="error" @click="removeMemory(mem)">删除</n-button>
+                      </n-space>
                     </n-space>
-                  </n-space>
-                  <n-button size="small" dashed block @click="addMainMemory">添加主要事件</n-button>
-                </n-collapse-item>
+                    <n-button size="small" dashed block @click="addMainMemory">添加主要事件</n-button>
+                  </n-collapse-item>
 
-                <n-collapse-item title="次要事件" name="sideEvents">
-                  <n-empty v-if="sideMemories.length === 0" description="暂无次要事件" />
-                  <n-space v-for="(mem, idx) in sideMemories" :key="`side-${idx}`" vertical style="width: 100%; margin-bottom: 12px">
-                    <n-input v-model:value="mem.content" type="textarea" :rows="2" placeholder="事件内容" />
-                    <n-space justify="space-between" style="width: 100%">
-                      <n-input-number v-model:value="mem.importance" :min="1" :max="10" placeholder="重要性" />
-                      <n-button size="small" type="error" @click="removeMemory(mem)">删除</n-button>
+                  <n-collapse-item title="次要事件" name="sideEvents">
+                    <n-empty v-if="sideMemories.length === 0" description="暂无次要事件" />
+                    <n-space v-for="(mem, idx) in sideMemories" :key="`side-${idx}`" vertical style="width: 100%; margin-bottom: 12px">
+                      <n-input v-model:value="mem.content" type="textarea" :rows="2" placeholder="事件内容" />
+                      <n-space justify="space-between" style="width: 100%">
+                        <n-input-number v-model:value="mem.importance" :min="1" :max="10" placeholder="重要性" />
+                        <n-button size="small" type="error" @click="removeMemory(mem)">删除</n-button>
+                      </n-space>
                     </n-space>
-                  </n-space>
-                  <n-button size="small" dashed block @click="addSideMemory">添加次要事件</n-button>
-                </n-collapse-item>
+                    <n-button size="small" dashed block @click="addSideMemory">添加次要事件</n-button>
+                  </n-collapse-item>
 
-                <n-collapse-item title="情绪 / 伏笔 / 关系" name="others">
-                  <n-space vertical style="width: 100%">
-                    <n-text depth="3">情绪变化</n-text>
-                    <n-dynamic-tags v-model:value="emotions" />
-                    <n-text depth="3">新埋下的伏笔</n-text>
-                    <n-dynamic-tags v-model:value="foreshadowing" />
-                    <n-text depth="3">角色关系变化</n-text>
-                    <n-dynamic-tags v-model:value="relationshipChanges" />
-                  </n-space>
-                </n-collapse-item>
-              </n-collapse>
+                  <n-collapse-item title="情绪 / 伏笔 / 关系" name="others">
+                    <n-space vertical style="width: 100%">
+                      <n-text depth="3">情绪变化</n-text>
+                      <n-dynamic-tags v-model:value="emotions" />
+                      <n-text depth="3">新埋下的伏笔</n-text>
+                      <n-dynamic-tags v-model:value="foreshadowing" />
+                      <n-text depth="3">角色关系变化</n-text>
+                      <n-dynamic-tags v-model:value="relationshipChanges" />
+                    </n-space>
+                  </n-collapse-item>
+                </n-collapse>
 
-              <n-divider />
+                <n-divider />
 
-              <n-form-item label="本章摘要" label-placement="left">
-                <n-input v-model:value="summary" type="textarea" :rows="2" placeholder="一句话摘要" />
-              </n-form-item>
-            </n-space>
-          </n-card>
-
-          <!-- 角色状态编辑器 -->
-          <n-card title="角色状态" size="small">
-            <n-empty v-if="characterStates.length === 0" description="暂无角色状态" />
-            <n-space v-for="(state, idx) in characterStates" :key="`state-${idx}`" vertical style="width: 100%; margin-bottom: 12px">
-              <n-space justify="space-between" style="width: 100%">
-                <n-text strong>{{ state.characterId }}</n-text>
-                <n-button size="small" type="error" @click="removeCharacterState(idx)">删除</n-button>
+                <n-form-item label="本章摘要" label-placement="left">
+                  <n-input v-model:value="summary" type="textarea" :rows="2" placeholder="一句话摘要" />
+                </n-form-item>
               </n-space>
-              <n-form-item label="状态 JSON" label-placement="left" style="margin-bottom: 8px">
-                <n-input v-model:value="state.status" type="textarea" :rows="3" placeholder='{"rank": "...", "location": "..."}' />
-              </n-form-item>
-              <n-form-item label="关系 JSON" label-placement="left">
-                <n-input v-model:value="state.relationships" type="textarea" :rows="2" placeholder='{"角色A": "朋友", "角色B": "敌对"}' />
-              </n-form-item>
-            </n-space>
-            <n-button size="small" dashed block @click="addCharacterState">添加角色状态</n-button>
-          </n-card>
-        </n-grid-item>
+            </n-card>
 
-        <!-- 中：时间线 + 剧情弧线 -->
-        <n-grid-item span="1">
+            <!-- 角色状态编辑器 -->
+            <n-card title="角色状态" size="small">
+              <n-empty v-if="characterStates.length === 0" description="暂无角色状态" />
+              <n-space v-for="(state, idx) in characterStates" :key="`state-${idx}`" vertical style="width: 100%; margin-bottom: 12px">
+                <n-space justify="space-between" style="width: 100%">
+                  <n-text strong>{{ state.characterId }}</n-text>
+                  <n-button size="small" type="error" @click="removeCharacterState(idx)">删除</n-button>
+                </n-space>
+                <n-form-item label="状态 JSON" label-placement="left" style="margin-bottom: 8px">
+                  <n-input v-model:value="state.status" type="textarea" :rows="3" placeholder='{"rank": "...", "location": "..."}' />
+                </n-form-item>
+                <n-form-item label="关系 JSON" label-placement="left">
+                  <n-input v-model:value="state.relationships" type="textarea" :rows="2" placeholder='{"角色A": "朋友", "角色B": "敌对"}' />
+                </n-form-item>
+              </n-space>
+              <n-button size="small" dashed block @click="addCharacterState">添加角色状态</n-button>
+            </n-card>
+          </n-space>
+        </n-tab-pane>
+
+        <!-- 时间线 tab -->
+        <n-tab-pane name="timeline" tab="时间线">
           <!-- 时间线编辑器 -->
-          <n-card title="时间线事件" size="small" style="margin-bottom: 16px">
+          <n-card title="时间线事件" size="small">
             <n-empty v-if="timelineEvents.length === 0" description="暂无时间线事件" />
             <n-space v-for="(te, idx) in timelineEvents" :key="`te-${idx}`" vertical style="width: 100%; margin-bottom: 12px">
               <n-space justify="space-between" style="width: 100%">
@@ -91,7 +93,10 @@
             </n-space>
             <n-button size="small" dashed block @click="addTimelineEvent">添加时间线事件</n-button>
           </n-card>
+        </n-tab-pane>
 
+        <!-- 剧情弧线 tab -->
+        <n-tab-pane name="plotArcs" tab="剧情弧线">
           <!-- 剧情弧线编辑器 -->
           <n-card title="剧情弧线" size="small">
             <n-empty v-if="plotArcs.length === 0" description="暂无剧情弧线" />
@@ -130,10 +135,10 @@
             </n-collapse>
             <n-button size="small" dashed block @click="addPlotArc" style="margin-top: 12px">添加剧情弧线</n-button>
           </n-card>
-        </n-grid-item>
+        </n-tab-pane>
 
-        <!-- 右：图谱 -->
-        <n-grid-item span="1">
+        <!-- 图谱 tab -->
+        <n-tab-pane name="graph" tab="图谱">
           <!-- 图谱编辑器 -->
           <n-card title="本章图谱" size="small">
             <EditableGraph
@@ -141,8 +146,8 @@
               @update:graphData="onGraphUpdate"
             />
           </n-card>
-        </n-grid-item>
-      </n-grid>
+        </n-tab-pane>
+      </n-tabs>
 
       <!-- 底部操作 -->
       <n-space justify="end" style="width: 100%; margin-top: 16px">
@@ -157,7 +162,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import {
-  NCard, NSpace, NAlert, NGrid, NGridItem, NCollapse, NCollapseItem,
+  NCard, NSpace, NAlert, NTabs, NTabPane, NCollapse, NCollapseItem,
   NInput, NInputNumber, NButton, NEmpty, NDivider, NFormItem, NText, NDynamicTags,
   NSelect, NSlider
 } from 'naive-ui'
