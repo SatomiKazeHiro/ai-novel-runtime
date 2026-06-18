@@ -151,6 +151,16 @@ describe('GenerateRequestSchema', () => {
     })
     expect(result.success).toBe(true)
   })
+
+  it('accepts missing storyId (route derives it from chapterId via prisma)', () => {
+    const result = GenerateRequestSchema.safeParse({})
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects storyId="" (still validates type when provided)', () => {
+    const result = GenerateRequestSchema.safeParse({ storyId: '' })
+    expect(result.success).toBe(false)
+  })
 })
 
 import { SelectDraftRequestSchema } from '../select-draft.js'

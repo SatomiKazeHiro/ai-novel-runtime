@@ -112,7 +112,7 @@ export type PreviewRequest = z.infer<typeof PreviewRequestSchema>
  * compiledPrompt 嵌套引用 CompiledPromptSchema(chapter-prompt.ts)。
  */
 export const GenerateRequestSchema = z.object({
-  storyId: z.string().trim().min(1),
+  storyId: z.string().trim().min(1).optional(),
   candidateCount: z.number().int().positive().optional(),
   temperatures: z.array(z.number()).optional(),
   maxTokens: z.number().int().positive().optional(),
