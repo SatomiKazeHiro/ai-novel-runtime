@@ -10,7 +10,16 @@ import { prepareMemoryWrites, commitMemoryWrites } from '../services/memory-extr
 import { PromptPipeline } from '@novel-runtime/prompt-runtime'
 import { MemoryManager } from '@novel-runtime/memory-engine'
 import { RuntimePromptCompiler, countTokens } from '@novel-runtime/ai-provider'
-import { formatCharacterSnapshot, generateFallbackContent, DEFAULT_PIPELINE_BUDGET, scaleBudget, safeJsonParse, CompiledPromptSchema } from '@novel-runtime/shared'
+import {
+  formatCharacterSnapshot,
+  generateFallbackContent,
+  DEFAULT_PIPELINE_BUDGET,
+  scaleBudget,
+  safeJsonParse,
+  CompiledPromptSchema,
+  CreateChapterRequestSchema,
+  UpdateChapterRequestSchema
+} from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { callAIWithLog } from '../services/ai-call-logger.js'
 
@@ -70,7 +79,14 @@ export async function chapterRoutes(app: FastifyInstance) {
   // POST /api/stories/:storyId/chapters
   app.post('/api/stories/:storyId/chapters', async (request, reply) => {
     const { storyId } = request.params as any
-    const body = request.body as any
+    const parseResult = CreateChapterRequestSchema.safeParse(request.body)
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        success: false,
+        error: parseResult.error.errors.map(e => `${e.path.join('.') || '<root>'}: ${e.message}`).join('; ')
+      })
+    }
+    const body = parseResult.data
 
     const existingCount = await app.prisma.chapter.count({ where: { storyId } })
     if (existingCount > 0) {
@@ -112,7 +128,14 @@ export async function chapterRoutes(app: FastifyInstance) {
   // PUT /api/chapters/:chapterId
   app.put('/api/chapters/:chapterId', async (request, reply) => {
     const { chapterId } = request.params as any
-    const body = request.body as any
+    const parseResult = UpdateChapterRequestSchema.safeParse(request.body)
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        success: false,
+        error: parseResult.error.errors.map(e => `${e.path.join('.') || '<root>'}: ${e.message}`).join('; ')
+      })
+    }
+    const body = parseResult.data
 
     const chapter = await app.prisma.chapter.findUnique({ where: { id: chapterId } })
     if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
