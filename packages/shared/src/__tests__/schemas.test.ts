@@ -152,3 +152,17 @@ describe('GenerateRequestSchema', () => {
     expect(result.success).toBe(true)
   })
 })
+
+import { SelectDraftRequestSchema } from '../select-draft.js'
+
+describe('SelectDraftRequestSchema', () => {
+  it('valid { draftId } → parses', () => {
+    const result = SelectDraftRequestSchema.safeParse({ draftId: 'd1' })
+    expect(result.success).toBe(true)
+  })
+
+  it('empty draftId → fails', () => {
+    const result = SelectDraftRequestSchema.safeParse({ draftId: '' })
+    expect(result.success).toBe(false)
+  })
+})
