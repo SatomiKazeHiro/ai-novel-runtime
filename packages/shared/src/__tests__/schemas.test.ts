@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { CompiledPromptSchema } from '../chapter-prompt.js'
 import { CreateChapterRequestSchema, ChapterResponseSchema } from '../chapter.js'
+import {
+  UpdateChapterRequestSchema,
+  ChapterTreeNodeSchema
+} from '../chapter.js'
 
 describe('CompiledPromptSchema (P2a 验证)', () => {
   it('valid minimal prompt → parses', () => {
@@ -54,5 +58,55 @@ describe('ChapterResponseSchema', () => {
       status: 'draft'
     })
     expect(result.success).toBe(false)
+  })
+})
+
+describe('UpdateChapterRequestSchema', () => {
+  it('empty object → parses (all fields optional)', () => {
+    const result = UpdateChapterRequestSchema.safeParse({})
+    expect(result.success).toBe(true)
+  })
+
+  it('partial update { content } → parses', () => {
+    const result = UpdateChapterRequestSchema.safeParse({ content: 'new content' })
+    expect(result.success).toBe(true)
+  })
+})
+
+describe('ChapterTreeNodeSchema', () => {
+  it('leaf node without children → parses', () => {
+    const result = ChapterTreeNodeSchema.safeParse({
+      id: 'c1',
+      storyId: 's1',
+      number: 1,
+      isSideStory: false,
+      title: 'Chapter 1',
+      status: 'archived',
+      children: []
+    })
+    expect(result.success).toBe(true)
+  })
+
+  it('nested tree (root with child) → parses', () => {
+    const result = ChapterTreeNodeSchema.safeParse({
+      id: 'c1',
+      storyId: 's1',
+      number: 1,
+      isSideStory: false,
+      title: 'Chapter 1',
+      status: 'archived',
+      children: [
+        {
+          id: 'c1.1',
+          storyId: 's1',
+          number: 1.01,
+          isSideStory: true,
+          title: 'Side story',
+          status: 'archived',
+          children: []
+        }
+      ]
+    })
+    expect(result.success).toBe(true)
   })
 })
