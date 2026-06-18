@@ -180,3 +180,27 @@ describe('PrepareArchiveRequestSchema', () => {
     expect(result.success).toBe(false)
   })
 })
+
+import { DevelopRequestSchema } from '../develop.js'
+
+describe('DevelopRequestSchema', () => {
+  it('empty object → parses (all fields optional)', () => {
+    const result = DevelopRequestSchema.safeParse({})
+    expect(result.success).toBe(true)
+  })
+
+  it('isSideStory: true + number → parses (番外指定 number)', () => {
+    const result = DevelopRequestSchema.safeParse({
+      isSideStory: true,
+      number: 1.05
+    })
+    expect(result.success).toBe(true)
+  })
+
+  it('runtimeProfileId: null → fails (schema 要求 string 或 undefined)', () => {
+    const result = DevelopRequestSchema.safeParse({
+      runtimeProfileId: null
+    })
+    expect(result.success).toBe(false)
+  })
+})
