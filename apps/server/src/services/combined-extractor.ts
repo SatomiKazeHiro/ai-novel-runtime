@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import { RuntimePromptCompiler, estimateTokens } from '@novel-runtime/ai-provider'
+import { RuntimePromptCompiler, countTokens } from '@novel-runtime/ai-provider'
 import { truncateByParagraph } from '@novel-runtime/prompt-runtime'
 import { cleanJsonBlock, safeJsonParse, type PendingArchiveData } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
@@ -238,7 +238,7 @@ ${truncatedContent}`
     //   不在 prompt 模板里写, 是因为 truncateByParagraph 可能在 content 短于
     //   预算时不截断 — 用实际截断后长度判断更准确
     if (content.length > contentCharBudget) {
-      const actualContentTokens = estimateTokens(truncatedContent)
+      const actualContentTokens = countTokens(truncatedContent)
       const usageRatio = actualContentTokens / Math.max(1, contentTokenBudget)
       if (usageRatio >= CONTENT_BUDGET_HEADROOM) {
         app.log.warn(

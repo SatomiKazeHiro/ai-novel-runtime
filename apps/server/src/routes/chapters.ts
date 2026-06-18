@@ -9,7 +9,7 @@ import { organizeGraph } from '../services/graph-organizer.js'
 import { prepareMemoryWrites, commitMemoryWrites } from '../services/memory-extractor.js'
 import { PromptPipeline } from '@novel-runtime/prompt-runtime'
 import { MemoryManager } from '@novel-runtime/memory-engine'
-import { RuntimePromptCompiler, estimateTokens } from '@novel-runtime/ai-provider'
+import { RuntimePromptCompiler, countTokens } from '@novel-runtime/ai-provider'
 import { formatCharacterSnapshot, generateFallbackContent, DEFAULT_PIPELINE_BUDGET, scaleBudget, safeJsonParse, CompiledPromptSchema } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { callAIWithLog } from '../services/ai-call-logger.js'
@@ -425,8 +425,8 @@ export async function chapterRoutes(app: FastifyInstance) {
           details: parsed.error.flatten()
         })
       }
-      const systemTokens = estimateTokens(parsed.data.systemMessage)
-      const userTokens = estimateTokens(parsed.data.userMessage)
+      const systemTokens = countTokens(parsed.data.systemMessage)
+      const userTokens = countTokens(parsed.data.userMessage)
       compiled = {
         systemMessage: parsed.data.systemMessage,
         userMessage: parsed.data.userMessage,
