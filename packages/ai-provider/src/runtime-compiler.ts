@@ -27,13 +27,6 @@ export interface CompiledPrompt {
 
 import { countTokens } from './token-counter.js'
 
-/**
- * 向后兼容 re-export alias:早期版本把 estimateTokens 直接定义在 runtime-compiler.ts。
- * 提取到 token-counter.ts 后,保留这个 alias 让老 import (`estimateTokens` from
- * `@novel-runtime/ai-provider`) 不破。Task 3/4 才会逐步切到 countTokens 并最终删除。
- */
-export const estimateTokens = countTokens
-
 export class RuntimePromptCompiler {
   compile(base: SharedRuntimeBase, task: WorkerTask, userMessage: string): CompiledPrompt {
     // 1. 编译 system message

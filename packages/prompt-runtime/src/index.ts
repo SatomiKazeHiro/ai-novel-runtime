@@ -53,7 +53,7 @@ export interface PipelineResult {
   totalTokens: number
 }
 
-import { estimateTokens } from '@novel-runtime/ai-provider'
+import { countTokens } from '@novel-runtime/ai-provider'
 
 interface LayerDef {
   key: keyof PromptLayers
@@ -94,7 +94,7 @@ export class PromptAssembler {
             const { trimmed, truncated } = this.trimToBudget(text, def.budget, used)
             if (trimmed) {
               parts.push(`--- ${def.label} ---\n${trimmed}`)
-              const tokens = estimateTokens(trimmed)
+              const tokens = countTokens(trimmed)
               used += tokens
               stats.push({ name: def.label, tokens, budget: def.budget, truncated })
             }
@@ -106,7 +106,7 @@ export class PromptAssembler {
           const { trimmed, truncated } = this.trimToBudget(text, def.budget, used)
           if (trimmed) {
             parts.push(`--- ${def.label} ---\n${trimmed}`)
-            const tokens = estimateTokens(trimmed)
+            const tokens = countTokens(trimmed)
             used += tokens
             stats.push({ name: def.label, tokens, budget: def.budget, truncated })
           }
@@ -125,7 +125,7 @@ export class PromptAssembler {
     const remaining = this.budget.total - used
     if (remaining <= 0) return { trimmed: '', truncated: true }
     const effectiveBudget = Math.min(layerBudget, remaining)
-    const tokens = estimateTokens(text)
+    const tokens = countTokens(text)
     if (tokens <= effectiveBudget) return { trimmed: text, truncated: false }
     // rough char limit: assume ~2 chars per token for Chinese
     const charLimit = Math.floor(effectiveBudget * 2)
