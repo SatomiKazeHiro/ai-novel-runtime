@@ -136,10 +136,9 @@
         <n-grid-item span="1">
           <!-- 图谱编辑器 -->
           <n-card title="本章图谱" size="small">
-            <graph
+            <EditableGraph
               :initial-graph-data="graphData"
-              :draft-mode="true"
-              @update:graph-data="onGraphUpdate"
+              @update:graphData="onGraphUpdate"
             />
           </n-card>
         </n-grid-item>
@@ -163,7 +162,7 @@ import {
   NSelect, NSlider
 } from 'naive-ui'
 import type { PendingArchiveData } from '@novel-runtime/shared'
-import Graph from './Graph.vue'
+import EditableGraph from '../components/graph/EditableGraph.vue'
 
 // PendingArchiveData is now imported from @novel-runtime/shared — the
 // single source of truth shared with the server. Adding fields is
