@@ -407,15 +407,15 @@ DEEPSEEK_CONTEXT_LENGTH=64000
 
 修复进展：`stories.ts` 已引入 zod 校验作为示范（`createStorySchema` / `updateStorySchema`），其余路由可参照逐步引入。
 
-### 8.2 Token 计数（部分统一）
+### 8.2 Token 计数（P1 收口后，2026-06-18）
 
-`prompt-runtime/src/index.ts` 已改为从 `@novel-runtime/ai-provider` 导入 `estimateTokens`，`budget.ts` 的 fallback 也改为引用 `@novel-runtime/shared` 的启发式实现。
+`@novel-runtime/ai-provider` 的 `countTokens`（基于 `cl100k_base`）是项目 token 计数**唯一入口**。`apps/*` + `packages/prompt-runtime` 已全部采用。`estimateTokens` 作为 back-compat alias 已在 P1 Task 4 收尾删除（commit `412030a`）。
 
 仍保留的独立实现：
-- `shared`：无依赖的启发式 `estimateTokens`（纯函数，供无 tiktoken 环境使用）
-- `ai-provider/runtime-compiler`：基于 `cl100k_base` 的权威 `estimateTokens`
-- `prompt-runtime/budget.ts`：model-specific 的 `countTokens`（按模型选择 encoder）
-- `memory-engine` / `memory-extractor` / `memory-organizer`：直接使用 `js-tiktoken` 做 `encode()`（用于 Jaccard 相似度计算，非单纯计数）
+- `packages/shared` 的 `estimateTokens`（启发式，无依赖）—— 仅供 `prompt-runtime/budget.ts` 在 `js-tiktoken` 不可用时 fallback
+- `packages/{shared,memory-engine,prompt-runtime}` 3 个包**保留** `js-tiktoken` 直接装，因结构性原因（dep cycle / token ID API / model-aware encoding）无法切到 `countTokens`。详见 `KNOWN-ISSUES.md` 第 10 条。
+- `prompt-runtime/budget.ts` 用 `encodingForModel(model)` + heuristic fallback，model-aware 路径（不是单纯 `cl100k_base`）
+- `memory-engine` / `memory-extractor` / `memory-organizer` 直接使用 `js-tiktoken` 做 `encode()`（用于 Jaccard 相似度计算，token ID 数组，非单纯计数）
 
 ---
 

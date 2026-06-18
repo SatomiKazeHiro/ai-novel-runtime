@@ -114,7 +114,7 @@ Draft → Generating → Generated → (Scored) → Selected → Reviewing → A
 | 包 | 职责 | 关键导出 |
 |---|------|---------|
 | `@novel-runtime/shared` | 类型/常量/纯工具 | `ChapterStatus`（**只 6 个值，缺 `generating`+`reviewing`**）/ `MemoryLayer` / `estimateTokens`（启发式）/ `safeJsonParse` / `scaleBudget` |
-| `@novel-runtime/ai-provider` | LLM Provider 抽象 + Prompt 编译器 | `DeepSeekProvider` / `OpenAIProvider`（stub）/ `RuntimePromptCompiler` / `estimateTokens`（基于 cl100k_base） |
+| `@novel-runtime/ai-provider` | LLM Provider 抽象 + Prompt 编译器 | `DeepSeekProvider` / `OpenAIProvider`（stub）/ `RuntimePromptCompiler` / `countTokens`（基于 cl100k_base，唯一入口） |
 | `@novel-runtime/prompt-runtime` | 9 层 Pipeline 组装 + 预算控制 | `PromptPipeline` / `BudgetConfig` |
 | `@novel-runtime/memory-engine` | 语义检索 + 记忆格式化 | `MemoryManager.searchRelevant` / `formatForPrompt` |
 | `@novel-runtime/knowledge-graph` | graphology 内存图封装 | `GraphService` |
@@ -235,10 +235,10 @@ POST /api/chapters/:id/archive
 ### 3. JSON 字段手写序列化
 Prisma schema 把 `personality` / `metadata` / `params` / `settings` / `graphSnapshot` / `graphDelta` / `score` / `pendingArchiveData` / `compiledPrompt` 全部声明为 `String`。路由层手写 `JSON.stringify` / `JSON.parse`（`safeJsonParse` 存在但**只有 3 处用**：`combined-extractor.ts:220` / `chapters.ts:246` / `chapters.ts:646`）。**前后端契约不一致**：`prepare-archive` 路由返回的对象是 `data: pending`（已解析），前端 `useChapterEditor.ts:150` 又 `JSON.parse(res.data.data)` → 抛错 → 吞掉 → ReviewingPanel 进不去。
 
-### 4. 三套 token 计数
-- `shared/estimateTokens`（line 58）—— 启发式：中文 1 token/字，英文 0.25 token/字，**无依赖**
-- `ai-provider/runtime-compiler/estimateTokens` —— 基于 `cl100k_base`，**权威**
-- `prompt-runtime/budget.ts/countTokens` —— model-specific 分流
+### 4. token 计数(2026-06-18 P1 收口后)
+- `@novel-runtime/ai-provider` 的 `countTokens`(`packages/ai-provider/src/token-counter.ts`)—— 基于 `cl100k_base`,**项目 token 计数唯一入口**(commit `5f0ba92` + 修复合并 `792b533`)。所有 `apps/*` + `packages/prompt-runtime` 全部采用。
+- `@novel-runtime/shared` 的 `estimateTokens`(启发式)—— 中文 1 token/字,英文 0.25 token/字,**无依赖**,仅供 `prompt-runtime/budget.ts` fallback 使用。
+- `packages/{shared,memory-engine,prompt-runtime}` 3 个包**保留** `js-tiktoken` 直接装,因结构性原因(dep cycle / token ID API / model-aware)无法切到 `countTokens`。详见 `KNOWN-ISSUES.md` 第 10 条。
 
 `prompt-runtime` 已统一从 `ai-provider` 导入。`shared` 的启发式仅作无 tiktoken 环境的 fallback（实际项目用 `ai-provider` 那套）。**修改 prompt 拼装时不要新增"自己估 token"的分支**。
 
