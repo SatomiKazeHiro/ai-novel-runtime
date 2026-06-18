@@ -205,11 +205,7 @@ describe('DevelopRequestSchema', () => {
   })
 })
 
-import {
-  PendingArchiveDataSchema,
-  PendingMemoriesSchema,
-  PendingGraphSnapshotSchema
-} from '../archive.js'
+import { PendingArchiveDataSchema } from '../archive.js'
 
 describe('PendingArchiveDataSchema', () => {
   const validPayload = {
