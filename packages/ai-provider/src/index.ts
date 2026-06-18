@@ -1,6 +1,7 @@
 import { CompiledPrompt } from './runtime-compiler.js'
 
 export { CompiledPrompt, RuntimePromptCompiler, SharedRuntimeBase, WorkerTask, estimateTokens } from './runtime-compiler.js'
+export { countTokens } from './token-counter.js'
 
 export interface TokenUsage {
   promptTokens: number
