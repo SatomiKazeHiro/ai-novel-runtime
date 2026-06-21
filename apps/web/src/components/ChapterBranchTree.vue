@@ -13,12 +13,22 @@
       <!-- 节点圆点 -->
       <g v-for="node in flatList" :key="node.id">
         <circle
+          v-if="node.branchRootId === null"
           :cx="getNodeX(node)"
           :cy="getNodeY(node)"
-          r="4"
+          r="5"
           :fill="getNodeColor(node)"
-          stroke="#fff"
-          stroke-width="2"
+          style="stroke: var(--color-pure-white); stroke-width: 2"
+          class="node-dot node-dot--main"
+        />
+        <circle
+          v-else
+          :cx="getNodeX(node)"
+          :cy="getNodeY(node)"
+          r="3.5"
+          :fill="var_fill(node)"
+          style="stroke: var(--color-pure-white); stroke-width: 2"
+          class="node-dot"
         />
       </g>
     </svg>
@@ -28,52 +38,64 @@
       <div
         v-for="(node, index) in flatList"
         :key="node.id"
-        class="list-row"
+        class="list-row cap-rise"
         :class="{ active: selectedId === node.id }"
-        :style="{ height: ITEM_HEIGHT + 'px', marginBottom: (index < flatList.length - 1 ? GAP : 0) + 'px' }"
+        :data-status="node.status"
+        :data-mainline="node.branchRootId === null ? 'true' : 'false'"
+        :style="{
+          height: ITEM_HEIGHT + 'px',
+          marginBottom: (index < flatList.length - 1 ? GAP : 0) + 'px',
+          animationDelay: Math.min(index, 12) * 0.035 + 's',
+          '--row-color': getRowColor(node),
+          '--row-spine': getSpineColor(node)
+        }"
         @click="$emit('select', node)"
       >
-        <div
-          class="node-card"
-          :class="{ archived: node.status === 'archived', selected: node.status === 'selected' }"
-        >
-          <div class="node-main">
-            <div class="node-header">
-              <n-text strong class="node-title">{{ node.title }}</n-text>
-              <n-tag v-if="node.isSideStory" size="tiny" type="warning">番外</n-tag>
-              <n-tag size="tiny" :type="statusTagType(node.status)">{{ node.status }}</n-tag>
-            </div>
-            <div class="node-meta">
-              <n-text depth="3" style="font-size: 12px">
-                {{ formatNumber(node.number) }}
-                <span v-if="node.runtimeProfile">· {{ node.runtimeProfile.name }}</span>
-              </n-text>
-            </div>
+        <!-- 左侧编号徽章 -->
+        <div class="row-id">
+          <span class="row-id__bracket">[</span>
+          <span class="row-id__num">{{ formatNumberShort(node.number) }}</span>
+          <span class="row-id__bracket">]</span>
+        </div>
+
+        <!-- 主体信息 -->
+        <div class="row-main">
+          <div class="row-title">
+            <span class="row-title__text">{{ node.title }}</span>
+            <span v-if="node.isSideStory" class="row-tag row-tag--branch">番外</span>
           </div>
-          <div class="node-actions">
-            <n-button
-              v-if="canDevelop(node)"
-              size="tiny"
-              type="primary"
-              @click.stop="$emit('develop', node)"
-            >发展</n-button>
-            <n-button
-              v-if="canEdit(node)"
-              size="tiny"
-              @click.stop="$emit('edit', node)"
-            >编辑</n-button>
-            <n-button
-              v-if="canView(node)"
-              size="tiny"
-              @click.stop="$emit('view', node)"
-            >查看</n-button>
-            <n-button
-              v-if="canDelete(node)"
-              size="tiny"
-              type="error"
-              @click.stop="$emit('delete', node)"
-            >删除</n-button>
+          <div class="row-meta">
+            <span class="row-status" :data-status="node.status">
+              <span class="row-status__dot" />
+              {{ statusLabel(node.status) }}
+            </span>
+            <span v-if="node.runtimeProfile" class="row-meta__sep">·</span>
+            <span v-if="node.runtimeProfile" class="row-meta__profile">{{ node.runtimeProfile.name }}</span>
           </div>
+        </div>
+
+        <!-- 右侧动作 -->
+        <div class="row-actions">
+          <button
+            v-if="canDevelop(node)"
+            class="cap-pill is-sm is-primary"
+            @click.stop="$emit('develop', node)"
+          >发展</button>
+          <button
+            v-if="canEdit(node)"
+            class="cap-pill is-sm is-ghost"
+            @click.stop="$emit('edit', node)"
+          >编辑</button>
+          <button
+            v-if="canView(node)"
+            class="cap-pill is-sm is-ghost"
+            @click.stop="$emit('view', node)"
+          >查看</button>
+          <button
+            v-if="canDelete(node)"
+            class="cap-pill is-sm is-danger"
+            @click.stop="$emit('delete', node)"
+          >删除</button>
         </div>
       </div>
     </div>
@@ -82,22 +104,27 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NText, NTag, NButton } from 'naive-ui'
+import { COLOR } from '../styles/tokens'
 
-const ITEM_HEIGHT = 56
-const GAP = 8
-const COL_WIDTH = 20
+const ITEM_HEIGHT = 64
+const GAP = 10
+const COL_WIDTH = 22
 
-// 分支颜色（主分支 + 7 个分支色）
+// boords warm palette: main = terracotta; branches = 7 muted, storyboard-friendly hues
+// These values are consumed both by SVG attribute bindings (:fill, :stroke)
+// and by Vue :style custom properties (--row-color, --row-spine) — neither
+// path supports var() refs, so we use hex from tokens.ts. Branch hues 1–5
+// are storyboard-specific artistic colors; 6–7 are aliases for the system
+// tokens so theme changes flow through automatically.
+const MAIN_COLOR = COLOR.warmAccent
 const BRANCH_COLORS = [
-  '#52c41a', // 0: 主线 - 绿
-  '#1890ff', // 1: 分支1 - 蓝
-  '#fa8c16', // 2: 分支2 - 橙
-  '#eb2f96', // 3: 分支3 - 粉
-  '#722ed1', // 4: 分支4 - 紫
-  '#13c2c2', // 5: 分支5 - 青
-  '#f5222d', // 6: 分支6 - 红
-  '#2f54eb', // 7: 分支7 - 深蓝
+  COLOR.warmAccentHover, // deep terracotta
+  '#8a6914',             // ochre
+  '#7a4a2a',             // sienna
+  '#6a7a3a',             // olive
+  '#3a6a4a',             // forest
+  COLOR.positive,        // sage
+  COLOR.coolAccent       // slate
 ]
 
 interface TreeNode {
@@ -117,7 +144,7 @@ interface FlatNode extends TreeNode {
   rowIndex: number
   col: number
   hasChildren: boolean
-  branchRootId: string | null // 所属分支的根节点（主分支为 null）
+  branchRootId: string | null
 }
 
 const props = defineProps<{
@@ -133,7 +160,7 @@ defineEmits<{
   (e: 'delete', node: TreeNode): void
 }>()
 
-// 1. 扁平化树，收集 parentId 和 hasChildren
+// 1. 扁平化树
 const flatList = computed(() => {
   const allNodes: Omit<FlatNode, 'rowIndex' | 'col' | 'hasChildren' | 'branchRootId'>[] = []
   const childrenSet = new Set<string>()
@@ -153,24 +180,15 @@ const flatList = computed(() => {
   }
 
   walk(props.treeData)
-
-  // 2. 按创建时间全局排序（时间线视图）
   allNodes.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-
-  // 3. 计算主分支（从根出发，每次选 createdAt 最早的子节点）
   const mainBranch = findMainBranch(allNodes)
 
-  // 4. 计算每个节点的分支根
   const nodeMap = new Map(allNodes.map(n => [n.id, n]))
   const branchRootMap = new Map<string, string | null>()
   for (const node of allNodes) {
     branchRootMap.set(node.id, getBranchRoot(node, mainBranch, nodeMap))
   }
-
-  // 5. 分配列：主分支 col=0，每个独立分支根依次分配 col=1,2,3...
   const colMap = assignColumns(allNodes, mainBranch, branchRootMap)
-
-  // 6. 组装结果
   const result: FlatNode[] = allNodes.map((node, index) => ({
     ...node,
     rowIndex: index,
@@ -178,21 +196,17 @@ const flatList = computed(() => {
     hasChildren: childrenSet.has(node.id),
     branchRootId: branchRootMap.get(node.id) ?? null
   }))
-
   return result
 })
 
-// 找主分支（createdAt 最早的链）
 function findMainBranch(
   nodes: Array<{ id: string; parentId: string | null; createdAt: string }>
 ): Set<string> {
   const mainBranch = new Set<string>()
-
   const roots = nodes
     .filter(n => !n.parentId)
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   if (roots.length === 0) return mainBranch
-
   let current = roots[0]
   while (current) {
     mainBranch.add(current.id)
@@ -201,11 +215,9 @@ function findMainBranch(
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
     current = children[0]
   }
-
   return mainBranch
 }
 
-// 找节点的分支根（从主分支分叉出来的第一个节点）
 function getBranchRoot(
   node: { id: string; parentId: string | null },
   mainBranch: Set<string>,
@@ -213,165 +225,161 @@ function getBranchRoot(
 ): string | null {
   if (mainBranch.has(node.id)) return null
   if (!node.parentId) return node.id
-
   const parent = nodeMap.get(node.parentId)
   if (!parent) return node.id
-
-  if (mainBranch.has(parent.id)) {
-    return node.id // 父节点在主分支上，当前节点是分叉起点
-  }
-
+  if (mainBranch.has(parent.id)) return node.id
   return getBranchRoot(parent, mainBranch, nodeMap)
 }
 
-// 列分配
 function assignColumns(
   nodes: Array<{ id: string; parentId: string | null }>,
   mainBranch: Set<string>,
   branchRootMap: Map<string, string | null>
 ): Map<string, number> {
   const colMap = new Map<string, number>()
-  const branchColMap = new Map<string, number>() // branchRootId -> col
-
+  const branchColMap = new Map<string, number>()
   for (const node of nodes) {
     if (mainBranch.has(node.id)) {
       colMap.set(node.id, 0)
       continue
     }
-
     if (!node.parentId) {
       colMap.set(node.id, 1)
       continue
     }
-
     const parentCol = colMap.get(node.parentId) ?? 0
     if (parentCol === 0) {
-      // 从主分支分叉：每个分支根分配独立列
       const rootId = branchRootMap.get(node.id)
       if (rootId && !branchColMap.has(rootId)) {
         branchColMap.set(rootId, branchColMap.size + 1)
       }
       colMap.set(node.id, rootId ? (branchColMap.get(rootId) ?? 1) : 1)
     } else {
-      // 从分支继续：保持同列
       colMap.set(node.id, parentCol)
     }
   }
-
   return colMap
 }
 
-// SVG 宽度动态计算
 const svgWidth = computed(() => {
   const maxCol = flatList.value.reduce((max, n) => Math.max(max, n.col), 0)
-  return 12 + maxCol * COL_WIDTH + 12
+  return 14 + maxCol * COL_WIDTH + 14
 })
 
 function getNodeX(node: FlatNode) {
-  return 12 + node.col * COL_WIDTH
+  return 14 + node.col * COL_WIDTH
 }
-
 function getNodeY(node: FlatNode) {
   return node.rowIndex * (ITEM_HEIGHT + GAP) + ITEM_HEIGHT / 2
 }
 
-// 获取节点颜色（基于分支）
 function getNodeColor(node: FlatNode) {
   if (node.branchRootId) {
-    // 找到该分支根在分支列表中的索引
     const branchRoots = [...new Set(flatList.value.map(n => n.branchRootId).filter(Boolean))]
     const idx = branchRoots.indexOf(node.branchRootId)
-    return BRANCH_COLORS[(idx + 1) % BRANCH_COLORS.length]
+    return BRANCH_COLORS[(idx + 0) % BRANCH_COLORS.length]
   }
-  return BRANCH_COLORS[0] // 主分支
+  return MAIN_COLOR
 }
 
-// 计算 SVG 连接线（Git graph 风格：先向下再拐弯，圆角曲线）
+function getRowColor(node: FlatNode) {
+  return node.branchRootId === null ? MAIN_COLOR : getNodeColor(node)
+}
+
+function getSpineColor(node: FlatNode) {
+  if (node.status === 'archived') return MAIN_COLOR
+  if (node.status === 'selected') return MAIN_COLOR
+  if (node.status === 'generating') return COLOR.chapterGenerating
+  if (node.status === 'generated') return COLOR.chapterGenerated
+  if (node.status === 'reviewing') return COLOR.chapterReviewing
+  if (node.status === 'failed') return COLOR.chapterFailed
+  return getRowColor(node)
+}
+
+function var_fill(node: FlatNode) {
+  return getNodeColor(node)
+}
+
 const svgLines = computed(() => {
   const lines: { key: string; d: string; color: string }[] = []
-  const R = 5 // 圆角半径
-  const DOWN = 10 // 从圆点向下延伸的距离
-
+  const R = 6
+  const DOWN = 12
   for (const node of flatList.value) {
     if (!node.parentId) continue
     const parent = flatList.value.find(n => n.id === node.parentId)
     if (!parent) continue
-
     const px = getNodeX(parent)
     const py = getNodeY(parent)
     const cx = getNodeX(node)
     const cy = getNodeY(node)
     const color = getNodeColor(node)
-
     if (parent.col === node.col) {
-      // 同列：直线
       lines.push({
         key: `link-${parent.id}-${node.id}`,
-        d: `M ${px},${py + 4} L ${cx},${cy - 4}`,
+        d: `M ${px},${py + 5} L ${cx},${cy - 5}`,
         color
       })
     } else {
-      // 分叉：先从圆点向下走一段，再横向直达子节点列，然后向下到子节点
       const goingRight = cx > px
       const bendY = py + DOWN
-
       if (goingRight) {
         lines.push({
           key: `link-${parent.id}-${node.id}`,
-          d: `M ${px},${py + 4}`
+          d: `M ${px},${py + 5}`
             + ` L ${px},${bendY - R}`
             + ` Q ${px},${bendY} ${px + R},${bendY}`
             + ` L ${cx - R},${bendY}`
             + ` Q ${cx},${bendY} ${cx},${bendY + R}`
-            + ` L ${cx},${cy - 4}`,
+            + ` L ${cx},${cy - 5}`,
           color
         })
       } else {
         lines.push({
           key: `link-${parent.id}-${node.id}`,
-          d: `M ${px},${py + 4}`
+          d: `M ${px},${py + 5}`
             + ` L ${px},${bendY - R}`
             + ` Q ${px},${bendY} ${px - R},${bendY}`
             + ` L ${cx + R},${bendY}`
             + ` Q ${cx},${bendY} ${cx},${bendY + R}`
-            + ` L ${cx},${cy - 4}`,
+            + ` L ${cx},${cy - 5}`,
           color
         })
       }
     }
   }
-
   return lines
 })
 
-function statusTagType(status?: string) {
+function statusLabel(status?: string) {
   switch (status) {
-    case 'archived': return 'success'
-    case 'selected': return 'info'
-    case 'reviewing': return 'warning'
-    case 'generated': return 'warning'
-    case 'generating': return 'warning'
-    case 'draft': return 'default'
-    default: return 'default'
+    case 'archived': return 'archived · 已归档'
+    case 'selected': return 'selected · 已选'
+    case 'reviewing': return 'reviewing · 审阅中'
+    case 'generated': return 'generated · 待选'
+    case 'generating': return 'generating · 生成中'
+    case 'draft': return 'draft · 草稿'
+    case 'failed': return 'failed · 失败'
+    case 'rejected': return 'rejected · 驳回'
+    default: return status || 'unknown'
   }
 }
 
-function formatNumber(n: number) {
-  return Number.isInteger(n) ? `第${n}章` : `第${n}章`
+function formatNumberShort(n: number) {
+  if (Number.isInteger(n)) {
+    return n.toString().padStart(2, '0')
+  }
+  return n.toFixed(2)
 }
 
 function canDevelop(node: FlatNode) {
   return node.status === 'archived'
 }
-
 function canEdit(node: FlatNode) {
   return ['draft', 'generated', 'selected', 'reviewing'].includes(node.status)
 }
-
 function canView(node: FlatNode) {
   return node.status === 'archived'
 }
-
 function canDelete(node: FlatNode) {
   if (node.status === 'archived') {
     return !node.hasChildren
@@ -383,97 +391,233 @@ function canDelete(node: FlatNode) {
 <style scoped>
 .branch-list {
   display: flex;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--font-sans);
+  position: relative;
 }
 
-/* SVG 层 */
 .tree-svg {
   flex-shrink: 0;
   overflow: visible;
 }
-
 .link-line {
   stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
+  opacity: 0.55;
+}
+.node-dot--main {
+  filter: drop-shadow(0 0 2px rgba(184, 88, 30, 0.45));
 }
 
-/* 右侧内容 */
 .list-rows {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .list-row {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   cursor: pointer;
+  position: relative;
+  border-radius: var(--radius-card);
+  background: var(--color-pure-white);
+  border: 1px solid var(--border-default);
   overflow: hidden;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.18s ease;
+}
+.list-row::before {
+  content: '';
+  width: 3px;
+  flex-shrink: 0;
+  background: var(--row-spine, var(--border-default));
+  transition: background 0.2s ease;
 }
 
-.node-card {
-  flex: 1;
+.list-row:hover {
+  border-color: var(--color-mid-gray);
+  transform: translateX(2px);
+}
+
+.list-row.active {
+  border-color: var(--row-color, var(--accent));
+  background: color-mix(in srgb, var(--row-color, var(--accent)) 7%, var(--color-pure-white));
+}
+.list-row.active::before {
+  background: var(--row-color, var(--accent));
+}
+
+.row-id {
+  width: 92px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border: 1px solid #f0f0f0;
-  border-radius: 8px;
-  background: #fafafa;
-  transition: all 0.2s;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
+  justify-content: center;
+  padding: 0 var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  border-right: 1px solid var(--border-default);
+  background: var(--color-stone-gray);
+}
+.row-id__bracket {
+  color: var(--color-mid-gray);
+  margin: 0 2px;
+  font-weight: var(--weight-regular);
+}
+.row-id__num {
+  color: var(--row-color, var(--accent));
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: var(--weight-semibold);
 }
 
-.node-card:hover {
-  background: #f0f7ff;
-  border-color: #1890ff;
-}
-
-.list-row.active .node-card {
-  background: #e6f7ff;
-  border-color: #1890ff;
-  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
-}
-
-.node-card.archived {
-  background: #f6ffed;
-  border-color: #b7eb8f;
-}
-
-.node-card.selected {
-  background: #e6f7ff;
-  border-color: #91d5ff;
-}
-
-.node-main {
+.row-main {
   flex: 1;
   min-width: 0;
-}
-
-.node-header {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: nowrap;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 var(--space-4);
   overflow: hidden;
 }
-
-.node-title {
+.row-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.row-title__text {
   font-size: 14px;
+  font-weight: var(--weight-semibold);
+  color: var(--color-ink-black);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.list-row[data-mainline="false"] .row-title__text {
+  color: var(--color-graphite);
+  font-weight: var(--weight-medium);
+}
+
+.row-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.row-meta__sep { opacity: 0.5; }
+.row-meta__profile {
+  color: var(--color-graphite);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.node-meta {
-  margin-top: 2px;
+/* === Status badge — boords 6px-radius chip with leading dot === */
+.row-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px 1px 6px;
+  border-radius: var(--radius-badge);
+  background: var(--color-stone-gray);
+  border: 1px solid transparent;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+  flex-shrink: 0;
+  font-weight: var(--weight-semibold);
+}
+.row-status__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.row-status[data-status="archived"] {
+  color: var(--accent);
+  background: var(--color-warm-accent-tint);
+}
+.row-status[data-status="selected"] {
+  color: var(--accent-link);
+  background: var(--accent-info-tint);
+}
+.row-status[data-status="reviewing"] {
+  color: var(--color-review);
+  background: var(--color-review-tint);
+}
+.row-status[data-status="generated"] {
+  color: var(--color-positive);
+  background: var(--color-positive-tint);
+}
+.row-status[data-status="generating"] {
+  color: var(--accent);
+  background: var(--color-warm-accent-tint);
+}
+.row-status[data-status="generating"] .row-status__dot {
+  animation: row-pulse 1.05s ease-in-out infinite;
+}
+.row-status[data-status="draft"] {
+  color: var(--text-tertiary);
+}
+.row-status[data-status="failed"],
+.row-status[data-status="rejected"] {
+  color: var(--color-error);
+  background: var(--color-error-tint);
 }
 
-.node-actions {
-  display: flex;
-  gap: 6px;
+@keyframes row-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.row-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: var(--radius-badge);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  line-height: 1;
   flex-shrink: 0;
+  background: var(--color-warm-accent-tint);
+  color: var(--accent);
+  border: 1px solid transparent;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: var(--space-3);
+  flex-shrink: 0;
+}
+.row-actions .cap-pill {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .row-id { width: 72px; padding: 0 var(--space-2); }
+  .row-main { padding: 0 var(--space-3); }
+  .row-actions { padding-right: var(--space-2); gap: 4px; }
+  .row-actions .cap-pill { height: 26px; padding: 0 8px; font-size: 11px; }
 }
 </style>

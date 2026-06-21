@@ -1,6 +1,7 @@
 import type { Ref } from 'vue'
 import { onBeforeUnmount } from 'vue'
 import cytoscape from 'cytoscape'
+import { COLOR } from '../../styles/tokens'
 
 // ===== 类型导出 =====
 
@@ -47,6 +48,12 @@ export interface CytoscapeLifecycle {
   destroy(): void
   resetLayout(): void
   getInstance(): cytoscape.Core | null
+  /**
+   * 聚焦模式: 将与 focusId 相关的元素(节点 1 跳邻居 / 边 + 两端)保持原样,
+   * 其余元素加 .faded class 变半透明。重复点同一个焦点 = 取消聚焦。
+   */
+  applyFocus(focusId: string, focusType: 'node' | 'edge'): void
+  clearFocus(): void
 }
 
 // ===== normalizeGraph 工具 =====
@@ -121,12 +128,14 @@ export function toGraphData(rawNodes: any[], rawEdges: any[]): GraphData {
 
 function defaultNodeColor(type: string): string {
   const legend: Record<string, string> = {
-    character: '#3b82f6',
-    faction: '#ef4444',
-    event: '#f97316',
-    item: '#a855f7',
+    character: COLOR.graphCharacter,
+    faction: COLOR.graphFaction,
+    event: COLOR.graphEvent,
+    item: COLOR.graphItem,
   }
-  return legend[type] || '#94a3b8'
+  // 大小写防御: 后端偶发返回 'Character' / 'CHARACTER' 时, 不至于全部 fallback 成灰色
+  const key = (type || '').toLowerCase()
+  return legend[key] || COLOR.graphEdge
 }
 
 const COSE_LAYOUT_OPTIONS = {
@@ -161,21 +170,24 @@ function buildCytoscapeStyle(getNodeColor: (type: string) => string): cytoscape.
         'text-outline-width': 2,
         'text-valign': 'center',
         'text-halign': 'center',
+        // 缩小时不让字缩到 < 10px (否则糊); 章节图 zoom ≈ 0.9 字号 10.8 不触发,
+        // 知识图 zoom 被限制 ≥ 0.6 字号 7.2 也会被拉回 10
+        'min-zoomed-font-size': 10,
         'border-width': (ele: any) => ele.data('isNew') ? 3 : 0,
-        'border-color': '#22c55e'
+        'border-color': COLOR.graphNew
       }
     },
     {
       selector: 'edge',
       style: {
         'width': (ele: any) => ele.data('isNew') ? 3 : 2,
-        'line-color': (ele: any) => ele.data('isNew') ? '#22c55e' : '#94a3b8',
-        'target-arrow-color': (ele: any) => ele.data('isNew') ? '#22c55e' : '#94a3b8',
+        'line-color': (ele: any) => ele.data('isNew') ? COLOR.graphNew : COLOR.graphEdge,
+        'target-arrow-color': (ele: any) => ele.data('isNew') ? COLOR.graphNew : COLOR.graphEdge,
         'target-arrow-shape': 'triangle',
         'curve-style': 'bezier',
         'label': 'data(label)',
         'font-size': '10px',
-        'color': '#64748b',
+        'color': COLOR.graphText,
         'text-background-color': '#fff',
         'text-background-opacity': 0.8,
         'text-background-padding': '2px',
@@ -186,8 +198,18 @@ function buildCytoscapeStyle(getNodeColor: (type: string) => string): cytoscape.
       selector: ':selected',
       style: {
         'border-width': 4,
-        'border-color': '#fbbf24',
+        'border-color': COLOR.graphSelected,
         'border-opacity': 1
+      }
+    },
+    {
+      /* 聚焦模式: 不相关的元素半透明 */
+      selector: '.faded',
+      style: {
+        'opacity': 0.12,
+        'transition-property': 'opacity, background-opacity, border-opacity, text-opacity',
+        'transition-duration': 180,
+        'transition-timing-function': 'ease'
       }
     }
   ]
@@ -255,7 +277,32 @@ export function useCytoscapeLifecycle(
       container: options.containerRef.value,
       elements,
       style: buildCytoscapeStyle(nodeColorFn),
-      layout: COSE_LAYOUT_OPTIONS as any
+      layout: COSE_LAYOUT_OPTIONS as any,
+      // retina / 高 DPI 屏: 默认 1 让 canvas 被拉伸模糊, 改 'auto'
+      // 让 cytoscape 跟着 devicePixelRatio 渲染, 节点/边/字都更清晰
+      pixelRatio: 'auto',
+      // 节点少时 (如章节图) 不要被无限制放大, 防止 fit() 之后节点变巨大
+      maxZoom: 1.5,
+      minZoom: 0.3
+    })
+
+    // COSE 布局跑完后自动 fit 居中, 让画布被充分利用。
+    // 不加这一步: 节点多时画布只占一角, 节点少时画布又太空, 看着松散。
+    const cyRef = cy
+    cyRef.one('layoutstop', () => {
+      cyRef.fit(undefined, 20)
+      // 知识图谱节点多 (20+), fit() 后 zoom 会被压到 0.3-0.5,
+      // 节点缩到 12-20px、字号 4-6px 看着糊。强制把 zoom 拉回 0.6:
+      // - 节点 24px、字号 7.2px (再被 min-zoomed-font-size 拉回 10)
+      // - 节点会溢出画布, 用户可拖动查看, 比"糊"好
+      // - 章节图谱节点少 (≤10), fit zoom ≈ 0.9, 不触发, 不影响
+      const z = cyRef.zoom()
+      if (z < 0.6) {
+        cyRef.zoom({
+          level: 0.6,
+          renderedPosition: { x: cyRef.width() / 2, y: cyRef.height() / 2 }
+        })
+      }
     })
 
     if (options.onNodeTap) {
@@ -301,9 +348,33 @@ export function useCytoscapeLifecycle(
     return cy
   }
 
+  function clearFocus() {
+    if (!cy) return
+    cy.elements().removeClass('faded')
+  }
+
+  function applyFocus(focusId: string, focusType: 'node' | 'edge') {
+    if (!cy) return
+    const ele = cy.getElementById(focusId)
+    if (ele.empty()) return
+
+    cy.elements().removeClass('faded')
+
+    // 节点 = 自身 + 1 跳邻居 (closedNeighborhood)
+    // 边   = 自身 + 两端节点
+    let keep: cytoscape.Collection
+    if (focusType === 'node') {
+      keep = ele.closedNeighborhood()
+    } else {
+      keep = ele.union(ele.connectedNodes())
+    }
+
+    cy.elements().difference(keep).addClass('faded')
+  }
+
   onBeforeUnmount(() => {
     destroy()
   })
 
-  return { init, destroy, resetLayout, getInstance }
+  return { init, destroy, resetLayout, getInstance, applyFocus, clearFocus }
 }

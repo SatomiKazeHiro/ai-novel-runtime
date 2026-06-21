@@ -1,17 +1,46 @@
 <template>
   <div>
-    <n-space justify="space-between" align="center" style="margin-bottom: 16px">
-      <n-h1>本章图谱</n-h1>
-      <n-space>
-        <n-button :disabled="!selectedNode" @click="openEditNode">编辑节点</n-button>
-        <n-button :disabled="!selectedNode && !selectedEdge" type="error" @click="handleDelete">删除选中</n-button>
-        <n-button @click="resetLayout">重新布局</n-button>
-        <n-button type="primary" @click="showNodeModal = true">添加节点</n-button>
-      </n-space>
-    </n-space>
+    <header class="page-head">
+      <div class="page-head__text">
+        <span class="cap-eyebrow is-accent">EDIT GRAPH</span>
+        <h1 class="page-head__title">本章图谱</h1>
+        <p class="page-head__lede cap-body-sm">
+          校对本章抽出的实体与关系 — 点选节点 / 边后右侧操作可用。
+        </p>
+      </div>
+      <div class="page-head__actions">
+        <button
+          class="cap-pill is-sm"
+          :disabled="!selectedNode && !selectedEdge"
+          @click="handleDelete"
+        >
+          删除选中
+        </button>
+        <button
+          class="cap-pill is-sm"
+          :disabled="!selectedNode"
+          @click="openEditNode"
+        >
+          编辑节点
+        </button>
+        <button
+          class="cap-pill is-sm is-primary"
+          @click="showNodeModal = true"
+        >
+          + 添加节点
+        </button>
+      </div>
+    </header>
 
-    <!-- 图谱画布 -->
-    <div ref="cyContainer" style="width: 100%; height: 520px; border: 1px solid var(--n-border-color); border-radius: 8px; background: var(--n-card-color);"></div>
+    <div class="editable-graph__toolbar">
+      <GraphLegend />
+      <span class="editable-graph__hint cap-caption">
+        提示：先点选源节点，再点选目标节点可创建关系
+      </span>
+    </div>
+
+    <!-- 图谱画布 (graph-paper surface from base.css) -->
+    <div ref="cyContainer" class="graph-canvas" />
 
     <n-empty v-if="!displayGraphData || displayGraphData.nodes.length === 0" description="暂无图谱数据" style="margin-top: 24px" />
 
@@ -83,13 +112,14 @@
 <script setup lang="ts">
 import { ref, watch, computed, nextTick } from 'vue'
 import {
-  NH1, NSpace, NButton, NSelect, NModal, NForm, NFormItem, NInput, NEmpty
+  NSpace, NButton, NSelect, NModal, NForm, NFormItem, NInput, NEmpty
 } from 'naive-ui'
 import {
   useCytoscapeLifecycle,
   toGraphData,
   type GraphData
 } from '../../composables/graph/useCytoscapeLifecycle'
+import GraphLegend from './GraphLegend.vue'
 
 const props = defineProps<{
   initialGraphData?: GraphData<any, any> | null
@@ -157,10 +187,6 @@ function loadDraftGraph(raw?: GraphData<any, any> | null) {
     return
   }
   draftGraphData.value = toGraphData(raw.nodes, raw.edges)
-}
-
-function resetLayout() {
-  cytoscape.resetLayout()
 }
 
 async function handleCreateNode() {
@@ -300,3 +326,17 @@ watch(() => props.initialGraphData, (val) => {
   nextTick(() => cytoscape.init())
 }, { immediate: true, deep: true })
 </script>
+
+<style scoped>
+.editable-graph__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.editable-graph__hint {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+</style>
