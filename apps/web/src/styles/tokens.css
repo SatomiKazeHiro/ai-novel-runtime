@@ -218,3 +218,31 @@
      paper, not gray plastic. */
   --color-skeleton-end: #f4ede0;
 }
+
+/* === Dark mode — 轻量化, 只翻 surface / text / border 关键变量 ===
+   加新变量时, 只在 :root 加; 如果 dark 模式需要特殊调, 再补进这里。 */
+:root[data-theme="dark"] {
+  --color-warm-cream: #1a1a1a;
+  --color-pure-white: #2a2a2a;
+  --color-stone-gray: #353535;
+  --color-stone-gray-pressed: #404040;
+  --color-ink-black: #f0f0f0;
+  --color-ink-black-hover: #d8d8d8;
+  --color-pebble-border: #3a3a3a;
+  --color-graphite: #c8c8c8;
+  --color-mid-gray: #888888;
+  --color-muted-ash: #6a6a6a;
+  --color-text-disabled: #555555;
+  /* shadow-* 继承 light 即可, dark 阴影的 rgba alpha 实际是更弱的视觉, 不动 */
+
+  /* === Domain: Graph node type colors (dark variant) ===
+     Light 模式的 graph 节点色都是高饱和, dark 背景下需要更亮/更柔和,
+     否则节点读不清。Light 模式用 #4080d0 / #e07a2a / #d66060 / #a05cc0,
+     dark 模式把 lightness 提到 ~62-66%, chroma 调小, 配合 ink-black 背景。 */
+  --color-graph-character: #5b95e0;
+  --color-graph-event: #f0a560;
+  --color-graph-faction: #e89090;
+  --color-graph-item: #c084d8;
+  --color-graph-new: #8ab07f;
+  --color-graph-selected: #e8b870;
+}

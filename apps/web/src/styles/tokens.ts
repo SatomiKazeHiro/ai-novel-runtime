@@ -101,6 +101,17 @@ export const COLOR = {
   graphText: '#64748b',        // edge label text
   graphSelected: '#d4a04a',    // muted amber
 
+  // === Domain: graph node types — DARK variants ===
+  // Light 节点色在 dark 背景下读不清; 提高 lightness + 降 chroma。
+  // Cytoscape canvas 渲染需要 JS 字面量, 所以双份。
+  // 必须与 tokens.css 的 :root[data-theme="dark"] 块里 --color-graph-* 字段同步。
+  graphCharacterDark: '#5b95e0',
+  graphEventDark: '#f0a560',
+  graphFactionDark: '#e89090',
+  graphItemDark: '#c084d8',
+  graphNewDark: '#8ab07f',
+  graphSelectedDark: '#e8b870',
+
   // === Domain: identity / loading ===
   protagonist: '#d4a04a',      // gold star (distinct from graph event)
   skeletonEnd: '#f4ede0'
