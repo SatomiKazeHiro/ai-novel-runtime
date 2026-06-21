@@ -1,42 +1,56 @@
 <template>
     <div>
         <!-- 章节工作台标题 + 新建根章节按钮 -->
-        <n-space
-            justify="space-between"
-            align="center"
-            style="margin-bottom: 16px"
-        >
-            <n-h1>章节工作台</n-h1>
-            <n-button
-                v-if="treeData.length === 0"
-                type="primary"
-                @click="emit('open-create-root')"
-                >新建根章节</n-button
-            >
-        </n-space>
+        <header class="page-head">
+            <div class="page-head__text">
+                <span class="cap-eyebrow">CHAPTER WORKBENCH</span>
+                <h1 class="page-head__title">章节工作台</h1>
+                <p class="page-head__lede cap-body-sm">主线章节严格线性（1, 2, 3…），番外可从任意归档章节分支（1.01, 1.02）。</p>
+            </div>
+            <div class="page-head__actions">
+                <button
+                    v-if="treeData.length === 0"
+                    class="cap-pill is-primary"
+                    @click="emit('open-create-root')"
+                >+ 新建根章节</button>
+            </div>
+        </header>
 
         <!-- loading skeleton -->
-        <n-card v-if="loading" size="small">
+        <div v-if="loading" class="cap-card">
             <n-skeleton text :repeat="3" />
-        </n-card>
+        </div>
 
         <!-- 空状态 -->
-        <n-empty
-            v-else-if="treeData.length === 0"
-            description="暂无章节，点击新建根章节开始创作"
-        />
+        <div v-else-if="treeData.length === 0" class="cap-card cap-empty">
+            <svg class="cap-empty__mark" viewBox="0 0 48 48" width="48" height="48" fill="none" aria-hidden="true">
+                <rect width="48" height="48" rx="6" fill="var(--accent-info-tint)" stroke="var(--accent-link)" stroke-opacity="0.4"/>
+                <path d="M14 16 L24 24 L14 32" stroke="var(--accent-link)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <rect x="30" y="30" width="4" height="4" rx="0.8" fill="var(--accent)"/>
+            </svg>
+            <h3 class="cap-subheading" style="margin: 0">还没有章节</h3>
+            <p class="cap-body-sm cap-muted" style="margin: 4px 0 16px">从根章节开始你的故事</p>
+            <button class="cap-pill is-primary" @click="emit('open-create-root')">+ 新建根章节</button>
+        </div>
 
         <!-- 嵌入现有 ChapterBranchTree 组件(emit 转发) -->
-        <ChapterBranchTree
-            v-else
-            :tree-data="treeData"
-            :selected-id="selectedId"
-            @select="(node: any) => emit('select', node)"
-            @develop="(node: any) => emit('develop', node)"
-            @edit="(node: any) => emit('edit', node)"
-            @view="(node: any) => emit('view', node)"
-            @delete="(node: any) => emit('delete', node)"
-        />
+        <div v-else class="cap-card branch-card">
+            <div class="branch-card__header">
+                <span class="cap-eyebrow">TIMELINE</span>
+                <span class="branch-card__divider" />
+                <span class="branch-card__stat">{{ treeData.length }} ROOT · {{ chapterStats.total }} CHAPTERS</span>
+                <span v-if="chapterStats.branches > 0" class="branch-card__stat branch-card__stat--branch">+ {{ chapterStats.branches }} BRANCH</span>
+            </div>
+            <ChapterBranchTree
+                :tree-data="treeData"
+                :selected-id="selectedId"
+                @select="(node: any) => emit('select', node)"
+                @develop="(node: any) => emit('develop', node)"
+                @edit="(node: any) => emit('edit', node)"
+                @view="(node: any) => emit('view', node)"
+                @delete="(node: any) => emit('delete', node)"
+            />
+        </div>
 
         <!-- ========== 弹窗:新建根章节 ========== -->
         <n-modal
@@ -141,23 +155,21 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import {
-    NH1,
     NSpace,
     NButton,
     NModal,
     NForm,
     NFormItem,
     NInput,
-    NCard,
-    NEmpty,
     NSkeleton,
     NCheckbox,
     NText,
 } from "naive-ui";
 import ChapterBranchTree from "../../components/ChapterBranchTree.vue";
 
-defineProps<{
+const props = defineProps<{
     treeData: any[];
     loading: boolean;
     selectedId: string;
@@ -180,4 +192,64 @@ const emit = defineEmits<{
     (e: "close-create-modal"): void;
     (e: "close-develop-modal"): void;
 }>();
+
+void props; // referenced by chapterStats
+
+const chapterStats = computed(() => {
+    let total = 0;
+    let branches = 0;
+    function walk(nodes: any[]) {
+        for (const n of nodes) {
+            total += 1;
+            if (n.isSideStory) branches += 1;
+            if (n.children?.length) walk(n.children);
+        }
+    }
+    walk(props.treeData);
+    return { total, branches };
+});
 </script>
+
+<style scoped>
+.cap-empty {
+  text-align: center;
+  padding: 72px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.cap-empty__mark {
+  margin-bottom: 12px;
+}
+
+/* === Branch card container === */
+.branch-card {
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.branch-card__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-default);
+}
+.branch-card__divider {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--border-default), transparent);
+}
+.branch-card__stat {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.branch-card__stat--branch {
+  color: var(--accent);
+}
+</style>

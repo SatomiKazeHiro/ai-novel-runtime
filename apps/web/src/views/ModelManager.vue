@@ -1,11 +1,19 @@
 <template>
   <div>
-    <n-space justify="space-between" align="center" style="margin-bottom: 16px">
-      <n-h1>模型管理</n-h1>
-      <n-button type="primary" @click="openCreate">添加模型</n-button>
-    </n-space>
+    <header class="page-head">
+      <div class="page-head__text">
+        <span class="cap-eyebrow is-accent">MODELS</span>
+        <h1 class="page-head__title">模型管理</h1>
+        <p class="page-head__lede cap-body-sm">配置 AI Provider、API Key、模型参数。运行时热切换，全局默认与故事级覆盖。</p>
+      </div>
+      <div class="page-head__actions">
+        <button class="cap-pill is-primary" @click="openCreate">+ 添加模型</button>
+      </div>
+    </header>
 
-    <n-data-table :columns="columns" :data="configs" :loading="loading" />
+    <div class="cap-card" style="padding: 0; overflow: hidden">
+      <n-data-table :columns="columns" :data="configs" :loading="loading" :bordered="false" />
+    </div>
 
     <n-modal v-model:show="showModal" :title="editingId ? '编辑模型' : '添加模型'" preset="card" style="width: 560px">
       <n-form :model="form" label-placement="left" label-width="120">
@@ -51,7 +59,7 @@
 <script setup lang="ts">
 import { ref, onMounted, h } from 'vue'
 import {
-  NH1, NSpace, NButton, NDataTable, NModal, NForm, NFormItem,
+  NSpace, NButton, NDataTable, NModal, NForm, NFormItem,
   NInput, NInputNumber, NSelect, NSwitch, NSlider, NTag,
   useMessage, type DataTableColumns
 } from 'naive-ui'

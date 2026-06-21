@@ -1,10 +1,18 @@
 <template>
   <div>
-    <n-space justify="space-between" align="center" style="margin-bottom: 16px">
-      <n-h1>小说管理</n-h1>
-      <n-button type="primary" @click="openCreate">新建小说</n-button>
-    </n-space>
-    <n-data-table :columns="columns" :data="stories" :loading="loading" />
+    <header class="page-head">
+      <div class="page-head__text">
+        <span class="cap-eyebrow is-accent">STORIES</span>
+        <h1 class="page-head__title">小说管理</h1>
+        <p class="page-head__lede cap-body-sm">每个故事是一个独立的运行时沙盒，可关联写作人格与运行模型。</p>
+      </div>
+      <div class="page-head__actions">
+        <button class="cap-pill is-primary" @click="openCreate">+ 新建小说</button>
+      </div>
+    </header>
+    <div class="cap-card" style="padding: 0; overflow: hidden">
+      <n-data-table :columns="columns" :data="stories" :loading="loading" :bordered="false" />
+    </div>
 
     <n-modal v-model:show="showModal" :title="editingId ? '编辑小说' : '新建小说'" preset="card" style="width: 500px">
       <n-form :model="form" label-placement="left" label-width="100">
@@ -45,7 +53,7 @@
 import { ref, onMounted, h, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  NH1, NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSelect,
+  NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSelect,
   useDialog, type DataTableColumns
 } from 'naive-ui'
 import { storiesApi } from '../api/stories'

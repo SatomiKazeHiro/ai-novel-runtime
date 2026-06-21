@@ -1,11 +1,15 @@
 <template>
   <div>
-    <n-space justify="space-between" align="center" style="margin-bottom: 16px">
-      <n-h1>时间线</n-h1>
-      <n-space>
-        <n-button type="primary" @click="showModal = true">添加事件</n-button>
-      </n-space>
-    </n-space>
+    <header class="page-head">
+      <div class="page-head__text">
+        <span class="cap-eyebrow">TIMELINE</span>
+        <h1 class="page-head__title">时间线</h1>
+        <p class="page-head__lede cap-body-sm">章节中的事件按天串联，跨章节保持时序一致。</p>
+      </div>
+      <div class="page-head__actions">
+        <button class="cap-pill is-primary" @click="showModal = true">+ 添加事件</button>
+      </div>
+    </header>
 
     <n-spin :show="loading">
       <n-timeline v-if="events.length > 0">
@@ -28,7 +32,7 @@
           <n-input-number v-model:value="form.day" :min="1" />
         </n-form-item>
         <n-form-item label="事件">
-          <n-dynamic-tags v-model:value="form.events" />
+          <DynamicTags v-model="form.events" />
         </n-form-item>
       </n-form>
       <template #footer>
@@ -45,11 +49,12 @@
 import { ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NH1, NSpace, NButton, NModal, NForm, NFormItem, NInputNumber, NDynamicTags,
+  NSpace, NButton, NModal, NForm, NFormItem, NInputNumber,
   NTimeline, NTimelineItem, NUl, NLi, NEmpty, NSpin,
   useDialog
 } from 'naive-ui'
 import { timelineApi } from '../api/timeline'
+import DynamicTags from '../components/DynamicTags.vue'
 
 const route = useRoute()
 const dialog = useDialog()

@@ -1,10 +1,14 @@
 <template>
-  <n-card title="归档审查" size="small" style="margin-top: 16px">
+  <div class="cap-card" style="margin-top: 16px">
+    <header class="page-head" style="margin-bottom: 16px">
+      <div class="page-head__text">
+        <span class="cap-eyebrow">ARCHIVE REVIEW</span>
+        <h2 class="page-head__title" style="font-size: 20px">归档审查</h2>
+        <p class="cap-body-sm">本章已进入归档审查。你可以编辑 AI 提取的记忆和图谱，确认无误后再归档。</p>
+      </div>
+    </header>
+
     <n-space vertical size="large" style="width: 100%">
-      <!-- 顶部提示 -->
-      <n-alert type="info" :show-icon="false">
-        本章已进入归档审查。你可以编辑 AI 提取的记忆和图谱，确认无误后再归档。
-      </n-alert>
 
       <!-- 主编辑区 -->
       <n-tabs type="line" default-value="memories" :animated="true">
@@ -42,11 +46,11 @@
                   <n-collapse-item title="情绪 / 伏笔 / 关系" name="others">
                     <n-space vertical style="width: 100%">
                       <n-text depth="3">情绪变化</n-text>
-                      <n-dynamic-tags v-model:value="emotions" />
+                      <DynamicTags v-model="emotions" />
                       <n-text depth="3">新埋下的伏笔</n-text>
-                      <n-dynamic-tags v-model:value="foreshadowing" />
+                      <DynamicTags v-model="foreshadowing" />
                       <n-text depth="3">角色关系变化</n-text>
-                      <n-dynamic-tags v-model:value="relationshipChanges" />
+                      <DynamicTags v-model="relationshipChanges" />
                     </n-space>
                   </n-collapse-item>
                 </n-collapse>
@@ -168,19 +172,20 @@
         <n-button type="success" :loading="confirming" @click="handleConfirm">确认归档</n-button>
       </n-space>
     </n-space>
-  </n-card>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import {
-  NCard, NSpace, NAlert, NTabs, NTabPane, NCollapse, NCollapseItem,
-  NInput, NInputNumber, NButton, NEmpty, NDivider, NFormItem, NGrid, NText, NDynamicTags,
+  NCard, NSpace, NTabs, NTabPane, NCollapse, NCollapseItem,
+  NInput, NInputNumber, NButton, NEmpty, NDivider, NFormItem, NGrid, NText,
   NSelect, NSlider,
   useDialog
 } from 'naive-ui'
 import type { PendingArchiveData } from '@novel-runtime/shared'
 import EditableGraph from '../components/graph/EditableGraph.vue'
+import DynamicTags from '../components/DynamicTags.vue'
 
 // PendingArchiveData is now imported from @novel-runtime/shared — the
 // single source of truth shared with the server. Adding fields is

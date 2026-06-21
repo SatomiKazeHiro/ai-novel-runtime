@@ -1,0 +1,597 @@
+/* boords-style base — non-Naive-UI styles only.
+   All Naive UI component theming is configured in App.vue's
+   GlobalThemeOverrides (single source of truth). This file only carries:
+   - Global resets (box-sizing, body, paper grain, scrollbar)
+   - Focus / selection / link states
+   - Typography utilities (cap-eyebrow / cap-display / cap-body-* etc.)
+   - Layout primitives (cap-page / cap-shell / page-head)
+   - Custom boords components (cap-card / cap-pill / cap-chip / cap-code)
+   - Animations (cap-rise staggered reveal, reduced motion)
+   - Decorative mark (cap-pencil)
+
+   Palette: warm cream (#fafaf5) canvas, pure white (#ffffff) cards,
+   ink-black text, single terracotta (#b8581e) CTA, blueprint blue
+   (#4a5a7a) for links, sage (#5a7a4f) for positive states. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg-canvas);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-lh);
+  color: var(--text-primary);
+  background: var(--bg-canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-weight: var(--weight-regular);
+}
+
+/* Subtle paper grain — barely there, adds warmth to flat cream */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.4 0 0 0 0 0.35 0 0 0 0 0.25 0 0 0 0.05 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  opacity: 0.5;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  z-index: 0;
+}
+#app { position: relative; z-index: 1; }
+
+/* === Custom scrollbar — slim, monochrome === */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-pebble-border);
+  border-radius: var(--radius-pill);
+  border: 2px solid var(--bg-canvas);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-mid-gray); }
+html { scrollbar-width: thin; scrollbar-color: var(--color-pebble-border) transparent; }
+
+/* === Focus ring — 1px terracotta ring replaces glow === */
+:focus { outline: none; }
+:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: rgba(184, 88, 30, 0.25);
+  color: var(--color-ink-black);
+}
+
+/* === Links === */
+a {
+  color: var(--text-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  transition: color 0.15s ease;
+}
+a:hover { color: var(--accent-link-hover); }
+
+/* === Typography utilities === */
+.cap-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  line-height: 1;
+}
+.cap-eyebrow.is-accent { color: var(--accent); }
+.cap-eyebrow.is-snow { color: var(--color-pure-white); }
+.cap-eyebrow.is-blue { color: var(--accent-link); }
+
+.cap-display {
+  font-size: var(--text-display-size);
+  font-weight: var(--weight-semibold);
+  line-height: var(--text-display-lh);
+  letter-spacing: var(--text-display-ls);
+  color: var(--color-ink-black);
+}
+.cap-display em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+.cap-heading {
+  font-size: var(--text-heading-size);
+  font-weight: var(--weight-semibold);
+  line-height: var(--text-heading-lh);
+  letter-spacing: var(--text-heading-ls);
+  color: var(--color-ink-black);
+}
+.cap-heading em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+.cap-heading-sm {
+  font-size: var(--text-heading-sm-size);
+  font-weight: var(--weight-semibold);
+  line-height: var(--text-heading-sm-lh);
+  letter-spacing: var(--text-heading-sm-ls);
+  color: var(--color-ink-black);
+}
+
+.cap-heading-lg {
+  font-size: var(--text-heading-lg-size);
+  font-weight: var(--weight-semibold);
+  line-height: var(--text-heading-lg-lh);
+  color: var(--color-ink-black);
+}
+
+.cap-subheading {
+  font-size: var(--text-subheading-size);
+  font-weight: var(--weight-semibold);
+  line-height: var(--text-subheading-lh);
+  letter-spacing: var(--text-subheading-ls);
+  color: var(--color-ink-black);
+}
+
+.cap-body {
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-lh);
+  color: var(--text-primary);
+  font-weight: var(--weight-regular);
+}
+
+.cap-body-lg {
+  font-size: var(--text-body-lg-size);
+  line-height: var(--text-body-lg-lh);
+  color: var(--text-primary);
+  font-weight: var(--weight-regular);
+}
+
+.cap-body-sm {
+  font-size: var(--text-body-sm-size);
+  line-height: var(--text-body-sm-lh);
+  letter-spacing: var(--text-body-sm-ls);
+  color: var(--text-secondary);
+  font-weight: var(--weight-regular);
+}
+
+.cap-caption {
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-lh);
+  letter-spacing: var(--text-caption-ls);
+  color: var(--text-tertiary);
+  font-weight: var(--weight-medium);
+}
+
+.cap-muted { color: var(--text-muted); }
+.cap-silver { color: var(--text-secondary); }
+.cap-strong { color: var(--color-ink-black); font-weight: var(--weight-semibold); }
+.cap-accent { color: var(--accent); }
+.cap-blue { color: var(--accent-link); }
+
+/* === Page layout === */
+.cap-page {
+  width: 100%;
+  max-width: var(--page-max-width);
+  margin: 0 auto;
+  padding: 0 var(--page-padding-x);
+}
+
+.cap-section {
+  padding-top: var(--section-gap);
+  padding-bottom: var(--section-gap);
+}
+
+.cap-section-tight {
+  padding-top: var(--space-8);
+  padding-bottom: var(--space-8);
+}
+
+.cap-shell {
+  min-height: calc(100vh - var(--nav-height));
+  padding: var(--space-10) 0 var(--space-20);
+}
+
+/* === Page head (eyebrow + heading + lede + actions) === */
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-8);
+  margin-bottom: var(--space-8);
+  flex-wrap: wrap;
+}
+.page-head__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 720px;
+}
+.page-head__title {
+  margin: 0;
+  font-size: var(--text-heading-size);
+  font-weight: var(--weight-semibold);
+  line-height: var(--text-heading-lh);
+  color: var(--color-ink-black);
+}
+.page-head__lede {
+  margin: 0;
+  color: var(--text-secondary);
+  max-width: 640px;
+}
+.page-head__actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-shrink: 0;
+}
+@media (max-width: 760px) {
+  .page-head { flex-direction: column; align-items: flex-start; }
+}
+
+/* === Cards (1px pebble border, 6px radius, no shadow) === */
+.cap-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  padding: var(--card-padding);
+  transition: border-color 0.18s ease, transform 0.18s ease;
+}
+.cap-card.is-interactive {
+  cursor: pointer;
+}
+.cap-card.is-interactive:hover {
+  border-color: var(--color-mid-gray);
+  transform: translateY(-1px);
+}
+.cap-card.is-section {
+  background: var(--bg-section);
+  border-color: transparent;
+}
+.cap-card-lg {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  padding: var(--space-6);
+}
+
+.cap-divider {
+  height: 1px;
+  background: var(--border-default);
+  border: 0;
+  margin: 0;
+}
+
+/* === Buttons — 6px radius, three flavors: amber primary / dark filled / ghost === */
+.cap-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: 36px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-button);
+  font-family: inherit;
+  font-size: var(--text-body-size);
+  font-weight: var(--weight-medium);
+  line-height: 1;
+  cursor: pointer;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  user-select: none;
+  text-decoration: none;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease;
+}
+
+/* Primary: terracotta filled, white text — strictly one per view */
+.cap-pill.is-primary {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border-color: var(--accent);
+}
+.cap-pill.is-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  transform: translateY(-1px);
+}
+.cap-pill.is-primary:active {
+  background: var(--accent-pressed);
+  border-color: var(--accent-pressed);
+}
+
+/* Dark filled: secondary nav action (e.g. Log in) */
+.cap-pill.is-dark {
+  background: var(--color-ink-black);
+  color: var(--color-pure-white);
+  border-color: var(--color-ink-black);
+}
+.cap-pill.is-dark:hover {
+  background: var(--color-ink-black-hover);
+  border-color: var(--color-ink-black-hover);
+  transform: translateY(-1px);
+}
+
+/* Ghost: transparent + ink-black text + 1px pebble border */
+.cap-pill.is-ghost {
+  background: transparent;
+  color: var(--color-ink-black);
+  border-color: var(--border-default);
+}
+.cap-pill.is-ghost:hover {
+  background: var(--color-stone-gray);
+  border-color: var(--color-mid-gray);
+}
+
+/* Link-style: no border, blue or ink text + underline on hover */
+.cap-pill.is-link {
+  background: transparent;
+  color: var(--accent-link);
+  border-color: transparent;
+  padding: 0;
+  height: auto;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-weight: var(--weight-medium);
+}
+.cap-pill.is-link:hover {
+  color: var(--accent-link-hover);
+}
+
+.cap-pill.is-danger {
+  background: transparent;
+  color: var(--color-error);
+  border-color: var(--border-default);
+}
+.cap-pill.is-danger:hover {
+  background: var(--color-error-tint);
+  border-color: var(--color-error);
+}
+
+.cap-pill.is-sm { height: 30px; padding: 0 14px; font-size: 13px; }
+.cap-pill.is-lg { height: 44px; padding: 0 24px; font-size: 16px; }
+
+.cap-pill:disabled,
+.cap-pill[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* === Status badge — 6px radius, 4px/10px padding, dot prefix ===
+   Default = blueprint info. Variants use semantic colors. */
+.cap-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: var(--radius-badge);
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.05em;
+  background: var(--accent-info-tint);
+  color: var(--accent-link);
+  line-height: 1;
+  border: 1px solid transparent;
+  text-transform: none;
+}
+.cap-chip::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.cap-chip.is-snow {
+  background: var(--color-pure-white);
+  color: var(--color-ink-black);
+  border-color: var(--border-default);
+}
+.cap-chip.is-warm {
+  background: var(--color-warm-accent-tint);
+  color: var(--accent);
+  border-color: rgba(184, 88, 30, 0.30);
+}
+.cap-chip.is-positive {
+  background: var(--color-positive-tint);
+  color: var(--color-positive);
+  border-color: rgba(90, 122, 79, 0.30);
+}
+.cap-chip.is-error {
+  background: var(--color-error-tint);
+  color: var(--color-error);
+  border-color: rgba(185, 76, 76, 0.30);
+}
+
+/* Inline mono code — warm-toned pill */
+.cap-code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--color-ink-black);
+  background: var(--color-stone-gray);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-input);
+  padding: 2px 6px;
+}
+
+/* === Reduced motion === */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* === Orchestrated entrance: stagger reveal ===
+   Add `cap-rise` to elements that should fade-rise in on mount;
+   chain with `data-rise="1..7"` for cascade. Single 0.4s sweep per item. */
+@keyframes cap-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.cap-rise {
+  animation: cap-rise 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.cap-rise[data-rise="1"] { animation-delay: 0.04s; }
+.cap-rise[data-rise="2"] { animation-delay: 0.10s; }
+.cap-rise[data-rise="3"] { animation-delay: 0.16s; }
+.cap-rise[data-rise="4"] { animation-delay: 0.22s; }
+.cap-rise[data-rise="5"] { animation-delay: 0.28s; }
+.cap-rise[data-rise="6"] { animation-delay: 0.34s; }
+.cap-rise[data-rise="7"] { animation-delay: 0.40s; }
+
+/* Pencil mark — small terracotta decorative indicator (storyboard accent) */
+.cap-pencil {
+  display: inline-block;
+  width: 8px;
+  height: 2px;
+  background: var(--accent);
+  vertical-align: middle;
+  margin-right: 6px;
+  border-radius: 1px;
+  transform: rotate(-8deg);
+}
+
+/* === Override --n-menu-box-shadow on the Select dropdown ===
+   Naive UI sets --n-menu-box-shadow as an inline style on .n-select-menu.
+   Normal external CSS loses to that inline declaration, so we need
+   !important on the custom property to win the cascade.
+   Soft single-direction shadow, warm-tinted (ink, not pure black) so the
+   shadow reads as paper resting on paper. */
+.n-select-menu {
+  --n-menu-box-shadow: 0 2px 8px 0 rgba(18, 18, 18, 0.08) !important;
+}
+
+/* === Popover / Tooltip 文本截断 ===
+   触发场景: DataTable 列用 `ellipsis: { tooltip: true }` 时, hover 弹出
+   完整文本(纯文本), 长字符串会把弹层撑到屏幕外。
+
+   - max-width: 20em   中文约 20 字宽
+   - word-break / overflow-wrap: 强制单词内换行, 防止超长英文/URL 撑开
+   - -webkit-line-clamp: 8 + -webkit-box-orient: vertical: 8 行后省略号
+
+   只针对 .n-popover__content (Popover 内部 text 容器), 因为我们项目
+   当前唯一用到 Popover 的场景就是 ellipsis tooltip, 内容是纯文本。
+   若将来引入 `<n-popover>` 套复杂 slot, 把此规则迁移到 `.cap-line-clamp`
+   工具类并按需套用即可。 */
+.n-popover,
+.n-popover__content {
+  max-width: 20em;
+}
+.n-popover__content {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 8;
+  line-clamp: 8;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* === Graph canvas — 共享给 GraphView(查看) 和 EditableGraph(编辑) ===
+   - 1px pebble 边框 + 6px radius, 与其他卡片一致, 拖到边缘能直接看到边界
+   - 纯白底, 不加 dot / grid 纹理 — 节点浮在干净的画布上最清楚
+   - 720px 是 GraphView 占用空间; EditableGraph 通过 inline style 覆盖 */
+.graph-canvas {
+  position: relative;
+  width: 100%;
+  height: 720px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  /* 让 cytoscape canvas 占据全部内容区 */
+  overflow: hidden;
+}
+
+/* === Chapter reel — pill-shaped chapter selector ===
+   中间 n-select 是 dropdown, 两侧是上/下章按钮, 像胶片轮的两端 knob。
+   用于 GraphView 的章节切换。 */
+.chapter-reel {
+  display: inline-flex;
+  align-items: stretch;
+  height: 32px;
+  background: var(--color-pure-white);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+.chapter-reel:hover { border-color: var(--color-mid-gray); }
+.chapter-reel:focus-within { border-color: var(--accent); }
+
+.chapter-reel__nav {
+  flex: 0 0 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  font-family: inherit;
+  padding: 0;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.chapter-reel__nav:hover:not(:disabled) {
+  background: var(--color-stone-gray);
+  color: var(--text-primary);
+}
+.chapter-reel__nav:active:not(:disabled) {
+  background: var(--color-stone-gray-pressed);
+}
+.chapter-reel__nav:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.chapter-reel__select {
+  flex: 1 1 auto;
+  min-width: 200px;
+}
+/* 抹掉 n-select 自带的 border / radius, 嵌入 pill 中部 */
+.chapter-reel .n-select {
+  border-left: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+}
+.chapter-reel .n-select .n-base-selection,
+.chapter-reel .n-select .n-base-selection:hover,
+.chapter-reel .n-select .n-base-selection:focus,
+.chapter-reel .n-select .n-base-selection:active {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  border-radius: 0;
+  height: 30px;
+  --n-height: 30px;
+}
+.chapter-reel .n-select .n-base-selection .n-base-selection-label {
+  font-size: 13px;
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+  padding: 0 10px;
+}

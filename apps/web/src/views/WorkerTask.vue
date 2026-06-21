@@ -1,18 +1,26 @@
 <template>
   <div>
-    <n-space justify="space-between" align="center" style="margin-bottom: 16px">
-      <n-h1>全局 Worker Task 配置</n-h1>
-      <n-space>
+    <header class="page-head">
+      <div class="page-head__text">
+        <span class="cap-eyebrow is-accent">WORKER TASKS</span>
+        <h1 class="page-head__title">全局 Worker Task</h1>
+        <p class="page-head__lede cap-body-sm">生成、评分、记忆、图谱、改写 — 每种 worker 一个 prompt 模板，全局可覆盖。</p>
+      </div>
+      <div class="page-head__actions">
         <n-select v-model:value="filterWorkerType" :options="[{ label: '全部类型', value: '' }, ...workerTypeOptions]" style="width: 160px" placeholder="筛选类型" clearable />
-        <n-button type="primary" @click="openCreate">新建 Task</n-button>
-      </n-space>
-    </n-space>
+        <button class="cap-pill is-primary" @click="openCreate">+ 新建 Task</button>
+      </div>
+    </header>
 
-    <n-alert type="info" style="margin-bottom: 16px">
-      此处配置的是全局 Worker Task。系统内置的 Task 不可编辑删除，但你可以"以此为基础新建"自己的版本。
-    </n-alert>
+    <div class="cap-card" style="margin-bottom: 16px; padding: 14px 18px; background: var(--accent-info-tint); border-color: transparent;">
+      <span class="cap-body-sm" style="color: var(--accent-link);">
+        此处配置的是全局 Worker Task。系统内置的 Task 不可编辑删除，但你可以"以此为基础新建"自己的版本。
+      </span>
+    </div>
 
-    <n-data-table :columns="columns" :data="filteredTasks" :loading="loading" />
+    <div class="cap-card" style="padding: 0; overflow: hidden">
+      <n-data-table :columns="columns" :data="filteredTasks" :loading="loading" :bordered="false" />
+    </div>
 
     <n-modal v-model:show="showModal" :title="editingId ? '编辑 Task' : '新建 Task'" preset="card" style="width: 750px; max-height: 90vh">
       <n-scrollbar style="max-height: 75vh">
@@ -44,7 +52,7 @@
 <script setup lang="ts">
 import { ref, onMounted, h, computed } from 'vue'
 import {
-  NH1, NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSelect, NSwitch, NScrollbar, NAlert, NTag,
+  NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSelect, NSwitch, NScrollbar, NTag,
   type DataTableColumns
 } from 'naive-ui'
 import { workerTaskApi } from '../api/worker-task'

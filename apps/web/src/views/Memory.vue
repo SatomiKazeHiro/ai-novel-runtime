@@ -1,17 +1,24 @@
 <template>
   <div>
-    <n-space justify="space-between" align="center" style="margin-bottom: 16px">
-      <n-h1>记忆管理</n-h1>
-      <n-space>
-        <n-button type="primary" @click="showModal = true">添加记忆</n-button>
-      </n-space>
-    </n-space>
+    <header class="page-head">
+      <div class="page-head__text">
+        <span class="cap-eyebrow">MEMORY</span>
+        <h1 class="page-head__title">记忆管理</h1>
+        <p class="page-head__lede cap-body-sm">global / chapter / scene / temporary — 四层记忆自动装配到 prompt。</p>
+      </div>
+      <div class="page-head__actions">
+        <button class="cap-pill is-primary" @click="showModal = true">+ 添加记忆</button>
+      </div>
+    </header>
 
-    <n-tabs v-model:value="activeLayer" type="segment" @update:value="loadMemory">
-      <n-tab-pane v-for="layer in layerOptions" :key="layer.value" :name="layer.value" :tab="layer.label" />
-    </n-tabs>
-
-    <n-data-table :columns="columns" :data="memories" :loading="loading" style="margin-top: 16px" />
+    <div class="cap-card" style="padding: 16px">
+      <n-tabs v-model:value="activeLayer" type="segment" @update:value="loadMemory">
+        <n-tab-pane v-for="layer in layerOptions" :key="layer.value" :name="layer.value" :tab="layer.label" />
+      </n-tabs>
+      <div style="margin-top: 16px">
+        <n-data-table :columns="columns" :data="memories" :loading="loading" :bordered="false" />
+      </div>
+    </div>
 
     <n-modal v-model:show="showModal" title="添加记忆" preset="card" style="width: 500px">
       <n-form :model="form" label-placement="left" label-width="80">
@@ -38,7 +45,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { NH1, NSpace, NButton, NSelect, NTabs, NTabPane, NDataTable, NModal, NForm, NFormItem, NInput, NSlider } from 'naive-ui'
+import { NSpace, NButton, NSelect, NTabs, NTabPane, NDataTable, NModal, NForm, NFormItem, NInput, NSlider } from 'naive-ui'
 import { memoryApi } from '../api/memory'
 
 const layerOptions = [

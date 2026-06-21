@@ -1,13 +1,19 @@
 <template>
   <div>
-    <n-space justify="space-between" align="center" style="margin-bottom: 16px">
-      <n-h1>角色管理</n-h1>
-      <n-space>
-        <n-button type="primary" @click="openCreate">新建角色</n-button>
-      </n-space>
-    </n-space>
+    <header class="page-head">
+      <div class="page-head__text">
+        <span class="cap-eyebrow is-accent">CHARACTERS</span>
+        <h1 class="page-head__title">角色管理</h1>
+        <p class="page-head__lede cap-body-sm">人物是叙事的载体 — 定义身份、性格、关系网。</p>
+      </div>
+      <div class="page-head__actions">
+        <button class="cap-pill is-primary" @click="openCreate">+ 新建角色</button>
+      </div>
+    </header>
 
-    <n-data-table :columns="columns" :data="characters" :loading="loading" />
+    <div class="cap-card" style="padding: 0; overflow: hidden">
+      <n-data-table :columns="columns" :data="characters" :loading="loading" :bordered="false" />
+    </div>
 
     <!-- 新建/编辑角色弹窗 -->
     <n-modal v-model:show="showModal" :title="isEdit ? '编辑角色' : '新建角色'" preset="card" style="width: 640px">
@@ -22,19 +28,19 @@
           <n-checkbox v-model:checked="form.protagonist"></n-checkbox>
         </n-form-item>
         <n-form-item label="身份">
-          <n-dynamic-tags v-model:value="form.identity" />
+          <DynamicTags v-model="form.identity" />
         </n-form-item>
         <n-form-item label="外貌">
-          <n-dynamic-tags v-model:value="form.appearance" />
+          <DynamicTags v-model="form.appearance" />
         </n-form-item>
         <n-form-item label="气质">
-          <n-dynamic-tags v-model:value="form.temperament" />
+          <DynamicTags v-model="form.temperament" />
         </n-form-item>
         <n-form-item label="性格">
-          <n-dynamic-tags v-model:value="form.personality" />
+          <DynamicTags v-model="form.personality" />
         </n-form-item>
         <n-form-item label="说话风格">
-          <n-dynamic-tags v-model:value="form.speechStyle" />
+          <DynamicTags v-model="form.speechStyle" />
         </n-form-item>
         <n-form-item label="关系">
           <n-input v-model:value="relationshipsJson" type="textarea" :rows="3" placeholder='{"张三": "兄弟", "李四": "敌对"}' />
@@ -57,11 +63,12 @@
 import { ref, onMounted, h, watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NH1, NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NDynamicTags, NCheckbox,
+  NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NCheckbox,
   type DataTableColumns
 } from 'naive-ui'
 import { charactersApi } from '../api/characters'
 import { safeJsonParse } from '@novel-runtime/shared'
+import DynamicTags from '../components/DynamicTags.vue'
 
 const route = useRoute()
 const characters = ref<any[]>([])
@@ -106,7 +113,7 @@ function formatJson(jsonStr: string): string {
 const columns: DataTableColumns<any> = [
   { title: '标识', key: 'slug', width: 100 },
   { title: '姓名', key: 'name', width: 100 },
-  { title: '主角', key: 'protagonist', width: 60, render: (row) => row.protagonist ? h('span', { style: 'color: #f0a020' }, '★') : '' },
+  { title: '主角', key: 'protagonist', width: 60, render: (row) => row.protagonist ? h('span', { style: 'color: var(--color-protagonist)' }, '★') : '' },
   { title: '身份', key: 'identity', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.identity) },
   { title: '外貌', key: 'appearance', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.appearance) },
   { title: '气质', key: 'temperament', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.temperament) },

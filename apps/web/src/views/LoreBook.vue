@@ -1,15 +1,24 @@
 <template>
   <div>
-    <n-space justify="space-between" align="center" style="margin-bottom: 16px">
-      <n-h1>世界观管理</n-h1>
-      <n-button type="primary" @click="openCreate">新建条目</n-button>
-    </n-space>
+    <header class="page-head">
+      <div class="page-head__text">
+        <span class="cap-eyebrow">WORLDBUILDING</span>
+        <h1 class="page-head__title">世界观管理</h1>
+        <p class="page-head__lede cap-body-sm">地理、势力、典故、术语 — 一致性的基石。</p>
+      </div>
+      <div class="page-head__actions">
+        <button class="cap-pill is-primary" @click="openCreate">+ 新建条目</button>
+      </div>
+    </header>
 
-    <n-tabs v-model:value="activeCategory" type="segment" @update:value="loadLore">
-      <n-tab-pane v-for="cat in categories" :key="cat.value" :name="cat.value" :tab="cat.label" />
-    </n-tabs>
-
-    <n-data-table :columns="columns" :data="loreItems" :loading="loading" style="margin-top: 16px" />
+    <div class="cap-card" style="padding: 16px">
+      <n-tabs v-model:value="activeCategory" type="segment" @update:value="loadLore">
+        <n-tab-pane v-for="cat in categories" :key="cat.value" :name="cat.value" :tab="cat.label" />
+      </n-tabs>
+      <div style="margin-top: 16px">
+        <n-data-table :columns="columns" :data="loreItems" :loading="loading" :bordered="false" />
+      </div>
+    </div>
 
     <n-modal v-model:show="showModal" :title="isEdit ? '编辑世界观条目' : '新建世界观条目'" preset="card" style="width: 600px">
       <n-form :model="form" label-placement="left" label-width="80">
@@ -40,7 +49,7 @@
 import { ref, onMounted, h, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NH1, NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSelect, NTabs, NTabPane,
+  NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSelect, NTabs, NTabPane,
   useDialog, type DataTableColumns
 } from 'naive-ui'
 import { loreApi } from '../api/lore'

@@ -1,6 +1,22 @@
 <template>
   <div>
-    <h2 style="margin-bottom: 16px;">AI 调用日志</h2>
+    <header class="page-head">
+      <div class="page-head__text">
+        <span class="cap-eyebrow">PROMPT LOGS</span>
+        <h1 class="page-head__title">AI 调用日志</h1>
+        <p class="page-head__lede cap-body-sm">所有 AI 调用的完整记录 — prompt 模板、token 用量、响应时间、错误追踪。</p>
+      </div>
+      <div class="page-head__actions">
+        <n-select
+          v-model:value="filterCallType"
+          :options="callTypeOptions"
+          placeholder="全部类型"
+          clearable
+          style="width: 160px"
+          @update:value="handleFilterChange"
+        />
+      </div>
+    </header>
 
     <n-space vertical size="large">
       <!-- 过滤器 -->
@@ -201,7 +217,7 @@ const columns: DataTableColumns<any> = [
     key: 'status',
     width: 80,
     render: (row) => h('span', {
-      style: `color: ${row.status === 'success' ? '#18a058' : '#d03050'}; font-weight: bold;`
+      style: `color: ${row.status === 'success' ? 'var(--color-positive)' : 'var(--color-error)'}; font-weight: bold;`
     }, row.status === 'success' ? '成功' : '失败')
   }
 ]

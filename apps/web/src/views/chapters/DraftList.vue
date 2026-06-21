@@ -78,7 +78,7 @@
                     </n-tab-pane>
                     <n-tab-pane name="prompt" tab="Prompt">
                         <n-scrollbar style="max-height: 300px">
-                            <n-p style="white-space: pre-wrap; font-size: 12px; color: #666;">
+                            <n-p style="white-space: pre-wrap; font-size: 12px; color: var(--color-text-caption);">
                                 {{ prompt.formatCompiledPrompt(draft.compiledPrompt) }}
                             </n-p>
                         </n-scrollbar>
@@ -192,7 +192,7 @@
                         style="
                             font-size: 48px;
                             font-weight: 700;
-                            color: #1890ff;
+                            color: var(--color-cool-accent);
                         "
                         >{{ drafts.scoreResult.totalScore }}</n-text
                     >

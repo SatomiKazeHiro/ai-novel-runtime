@@ -1,11 +1,19 @@
 <template>
   <div>
-    <n-space justify="space-between" align="center" style="margin-bottom: 16px">
-      <n-h1>Runtime Profile</n-h1>
-      <n-button type="primary" @click="openCreate">新建 Profile</n-button>
-    </n-space>
+    <header class="page-head">
+      <div class="page-head__text">
+        <span class="cap-eyebrow is-accent">RUNTIME PROFILES</span>
+        <h1 class="page-head__title">写作人格</h1>
+        <p class="page-head__lede cap-body-sm">定义"谁在写" — Identity / Settings / Behavior / Jailbreak 四个固定层。</p>
+      </div>
+      <div class="page-head__actions">
+        <button class="cap-pill is-primary" @click="openCreate">+ 新建 Profile</button>
+      </div>
+    </header>
 
-    <n-data-table :columns="columns" :data="profiles" :loading="loading" />
+    <div class="cap-card" style="padding: 0; overflow: hidden">
+      <n-data-table :columns="columns" :data="profiles" :loading="loading" :bordered="false" />
+    </div>
 
     <n-modal v-model:show="showModal" :title="editingId ? '编辑 Profile' : '新建 Profile'" preset="card" style="width: 750px; max-height: 90vh">
       <n-scrollbar style="max-height: 75vh">
@@ -67,7 +75,7 @@
 <script setup lang="ts">
 import { ref, onMounted, h } from 'vue'
 import {
-  NH1, NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSwitch, NScrollbar,
+  NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSwitch, NScrollbar,
   NSelect, NDivider, NGrid, NGridItem,
   type DataTableColumns
 } from 'naive-ui'
