@@ -3,6 +3,15 @@ import { onBeforeUnmount } from 'vue'
 import cytoscape from 'cytoscape'
 import { COLOR } from '../../styles/tokens'
 
+// Cytoscape 节点 type -> dark 模式色 (从 tokens.ts 拉的 DARK 字段)
+// 使用函数式 style 时, cytoscape 会调用这里取颜色, isDark 变化时自动重绘。
+const DARK_NODE_COLORS: Record<string, string> = {
+  character: COLOR.graphCharacterDark,
+  faction: COLOR.graphFactionDark,
+  event: COLOR.graphEventDark,
+  item: COLOR.graphItemDark,
+}
+
 // ===== 类型导出 =====
 
 export interface GraphNode {
@@ -41,6 +50,8 @@ export interface CytoscapeLifecycleOptions {
   onEdgeTap?: (edge: { id: string; source: string; target: string; relation: string }) => void
   onBackgroundTap?: () => void
   getNodeColor?: (type: string) => string
+  /** 主题切换时驱动 cytoscape canvas 重新取色; 不传则维持 light 行为。 */
+  isDark?: Ref<boolean>
 }
 
 export interface CytoscapeLifecycle {
@@ -138,6 +149,11 @@ function defaultNodeColor(type: string): string {
   return legend[key] || COLOR.graphEdge
 }
 
+function defaultNodeColorDark(type: string): string {
+  const key = (type || '').toLowerCase()
+  return DARK_NODE_COLORS[key] || COLOR.graphEdge
+}
+
 const COSE_LAYOUT_OPTIONS = {
   name: 'cose',
   padding: 20,
@@ -155,7 +171,16 @@ const COSE_LAYOUT_OPTIONS = {
   minTemp: 1.0
 } as const
 
-function buildCytoscapeStyle(getNodeColor: (type: string) => string): cytoscape.StylesheetJson {
+function buildCytoscapeStyle(
+  getNodeColor: (type: string) => string,
+  isDark?: Ref<boolean>
+): cytoscape.StylesheetJson {
+  // dark 模式下, new 描边色 / 选中色 / 边色都用 dark 变体;
+  // 文字 text-outline-color 翻成深色以适配亮色背景的文字
+  const newEdgeColor = () => isDark?.value ? COLOR.graphNewDark : COLOR.graphNew
+  const selectedColor = () => isDark?.value ? COLOR.graphSelectedDark : COLOR.graphSelected
+  const labelOutlineColor = () => isDark?.value ? '#000' : '#000'
+
   return [
     {
       selector: 'node',
@@ -166,7 +191,7 @@ function buildCytoscapeStyle(getNodeColor: (type: string) => string): cytoscape.
         'height': 40,
         'font-size': '12px',
         'color': '#fff',
-        'text-outline-color': '#000',
+        'text-outline-color': labelOutlineColor(),
         'text-outline-width': 2,
         'text-valign': 'center',
         'text-halign': 'center',
@@ -174,15 +199,15 @@ function buildCytoscapeStyle(getNodeColor: (type: string) => string): cytoscape.
         // 知识图 zoom 被限制 ≥ 0.6 字号 7.2 也会被拉回 10
         'min-zoomed-font-size': 10,
         'border-width': (ele: any) => ele.data('isNew') ? 3 : 0,
-        'border-color': COLOR.graphNew
+        'border-color': newEdgeColor()
       }
     },
     {
       selector: 'edge',
       style: {
         'width': (ele: any) => ele.data('isNew') ? 3 : 2,
-        'line-color': (ele: any) => ele.data('isNew') ? COLOR.graphNew : COLOR.graphEdge,
-        'target-arrow-color': (ele: any) => ele.data('isNew') ? COLOR.graphNew : COLOR.graphEdge,
+        'line-color': (ele: any) => ele.data('isNew') ? newEdgeColor() : COLOR.graphEdge,
+        'target-arrow-color': (ele: any) => ele.data('isNew') ? newEdgeColor() : COLOR.graphEdge,
         'target-arrow-shape': 'triangle',
         'curve-style': 'bezier',
         'label': 'data(label)',
@@ -198,7 +223,7 @@ function buildCytoscapeStyle(getNodeColor: (type: string) => string): cytoscape.
       selector: ':selected',
       style: {
         'border-width': 4,
-        'border-color': COLOR.graphSelected,
+        'border-color': selectedColor(),
         'border-opacity': 1
       }
     },
@@ -246,7 +271,10 @@ export function useCytoscapeLifecycle(
       data.nodes.map((n: any) => `${n.type}:${n.key}`)
     )
 
-    const nodeColorFn = options.getNodeColor ?? defaultNodeColor
+    const nodeColorFn: (type: string) => string = options.getNodeColor ?? ((type: string) => {
+      if (options.isDark?.value) return defaultNodeColorDark(type)
+      return defaultNodeColor(type)
+    })
 
     const elements = [
       ...data.nodes.map((n: any) => {
@@ -276,7 +304,7 @@ export function useCytoscapeLifecycle(
     cy = cytoscape({
       container: options.containerRef.value,
       elements,
-      style: buildCytoscapeStyle(nodeColorFn),
+      style: buildCytoscapeStyle(nodeColorFn, options.isDark),
       layout: COSE_LAYOUT_OPTIONS as any,
       // retina / 高 DPI 屏: 默认 1 让 canvas 被拉伸模糊, 改 'auto'
       // 让 cytoscape 跟着 devicePixelRatio 渲染, 节点/边/字都更清晰

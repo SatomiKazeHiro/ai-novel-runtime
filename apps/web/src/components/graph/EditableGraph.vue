@@ -119,11 +119,13 @@ import {
   toGraphData,
   type GraphData
 } from '../../composables/graph/useCytoscapeLifecycle'
+import { useThemeStore } from '../../stores/theme'
 import GraphLegend from './GraphLegend.vue'
 
 const props = defineProps<{
   initialGraphData?: GraphData<any, any> | null
 }>()
+const themeStore = useThemeStore()
 
 const emit = defineEmits<{
   'update:graphData': [data: GraphData<any, any>]
@@ -162,6 +164,7 @@ const displayGraphData = computed<GraphData<any, any> | null>(() => draftGraphDa
 const cytoscape = useCytoscapeLifecycle({
   containerRef: cyContainer,
   getDisplayData: () => displayGraphData.value,
+  isDark: computed(() => themeStore.isDark),
   onNodeTap: (node) => {
     if (selectedNode.value && selectedNode.value.id !== node.id) {
       edgeForm.value = { targetId: node.id, relation: '' }

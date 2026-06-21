@@ -81,10 +81,12 @@ import {
   toGraphData,
   type GraphData
 } from '../../composables/graph/useCytoscapeLifecycle'
+import { useThemeStore } from '../../stores/theme'
 import ChapterReel from './ChapterReel.vue'
 import GraphLegend from './GraphLegend.vue'
 
 const route = useRoute()
+const themeStore = useThemeStore()
 const cyContainer = ref<HTMLDivElement>()
 
 const chapters = ref<any[]>([])
@@ -174,6 +176,7 @@ function clearFocus() {
 const cytoscape = useCytoscapeLifecycle({
   containerRef: cyContainer,
   getDisplayData: () => displayGraphData.value,
+  isDark: computed(() => themeStore.isDark),
   getNewIds: () => {
     if (viewMode.value !== 'snapshot' || !currentSnapshot.value || !prevSnapshot.value) {
       return { newNodes: new Set(), newEdges: new Set() }
