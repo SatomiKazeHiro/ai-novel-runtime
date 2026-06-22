@@ -5,10 +5,10 @@
       <div class="cap-hero__text">
         <span class="cap-eyebrow cap-rise" data-rise="1">
           <span class="cap-pencil" />
-          AI NOVEL RUNTIME · DASHBOARD
+          AI 小说工坊 · 控制台
         </span>
         <h1 class="cap-display cap-rise" data-rise="2" style="margin: 16px 0 0">
-          Build novels<br /><em>with one runtime.</em>
+          打造小说<br /><em>在一个 AI 小说工坊里。</em>
         </h1>
         <p class="cap-body-lg cap-silver cap-rise" data-rise="3" style="margin: 20px 0 28px; max-width: 520px">
           {{ greeting }} — 你的故事工作台。统一管理写作人格、运行模型、章节生成与归档流水线。

@@ -12,7 +12,7 @@
             <rect x="16" y="15" width="2" height="2" rx="0.4" :fill="markAccent"/>
           </svg>
         </span>
-        <span class="cap-nav__brand-text">AI Novel Runtime</span>
+        <span class="cap-nav__brand-text">AI 小说工坊</span>
         <span class="cap-nav__brand-version">v0.1.0</span>
       </div>
       <nav class="cap-nav__links">
@@ -44,7 +44,7 @@
           </n-radio-group>
         </n-form-item>
         <n-form-item label="关于">
-          <n-text>AI Novel Runtime v0.1.0</n-text>
+          <n-text>AI 小说工坊 v0.1.0</n-text>
         </n-form-item>
       </n-form>
     </n-modal>
