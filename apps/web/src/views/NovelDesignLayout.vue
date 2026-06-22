@@ -65,10 +65,14 @@ const currentStory = computed(() =>
   storyStore.stories.find(s => s.id === storyId.value) || null
 )
 
-watch(storyId, (id) => {
-  if (id && id !== storyStore.selectedStoryId) {
-    storyStore.selectStory(id)
+watch(storyId, async (id) => {
+  if (!id) return
+  // URL 直接进入时 stories 还没加载 (store 是惰性的), 此时 find 返回 undefined
+  // 会让 sider 标题显示 "未知小说". 先确保列表已加载再 select.
+  if (!storyStore.loaded) {
+    await storyStore.loadStories()
   }
+  storyStore.selectStory(id)
 }, { immediate: true })
 
 function renderIcon(icon: any) {
