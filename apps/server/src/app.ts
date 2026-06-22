@@ -33,8 +33,8 @@ export async function buildApp() {
   await app.register(swagger, {
     openapi: {
       info: {
-        title: 'AI Novel Runtime API',
-        description: 'API documentation for AI Novel Runtime',
+        title: 'AI 小说工坊 API',
+        description: 'AI 小说工坊 的 API 文档',
         version: '0.1.0'
       }
     }
