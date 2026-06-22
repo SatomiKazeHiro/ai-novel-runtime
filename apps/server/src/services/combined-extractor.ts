@@ -20,6 +20,14 @@ export interface CombinedExtractionData {
 /** N-1 inventory cap: 防 prompt 爆炸；超出按 importance desc 截断 */
 export const PREV_SNAPSHOT_INVENTORY_CAP = 500
 
+// ---- Estimation vs Validation 边界 (P0 #8 收口, 2026-06-22) ----
+// 本节 heuristic 是 **规划意图** (planning),不是真 token 数。
+//   - CONTENT_BUDGET_* 算出来的 charBudget/tokenBudget → 喂给 truncateByParagraph 截段
+//   - 截段后真值由 `countTokens(truncatedContent)` 在 line ~241 重算
+//   - 真值与预算的差 (usageRatio >= CONTENT_BUDGET_HEADROOM) 触发 app.log.warn
+// 因此: heuristic 失真只影响"截多少",不影响"AI 看到的最终内容长度"。
+// 见 docs/ISSUES.md P0 #8 "estimation vs validation" 说明。
+
 // 章节内容 token 预算（借鉴 graph-organizer 的 SAFETY_MARGIN / BUDGET_HEADROOM 模式）
 // tokenBudget = floor(contextLength × RATIO) − maxTokens − SAFETY
 //   0.6 留给 system + lore + memory + ...; 真实生产数据校准前先保守
@@ -29,8 +37,10 @@ const CONTENT_BUDGET_CONTEXT_RATIO = 0.6
 const CONTENT_BUDGET_SAFETY_MARGIN_TOKENS = 2000
 // CJK mixed content: ~1.5 chars/token, 取保守值 2.0 留 buffer
 //   (宁可少放内容也不要超 contextLength 把整段 prompt 截断)
+//   此处仅用于 charBudget 规划; 截段后用 countTokens 算真值校验。
 const CONTENT_BUDGET_CHARS_PER_TOKEN = 2.0
 // 实际 token 使用率 ≥ 此值时打 TODO warn（供将来接"告警面板"用, 当前不阻断流程）
+// 校验点在 line ~241 (countTokens(truncatedContent) / tokenBudget)
 const CONTENT_BUDGET_HEADROOM = 0.9
 // aiConfig 缺失时的兜底（与 .env DEEPSEEK_CONTEXT_LENGTH 默认值一致）
 const CONTENT_BUDGET_FALLBACK_CONTEXT = 64000

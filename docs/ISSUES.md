@@ -1,11 +1,11 @@
 # P0 Issues
 
-> 修订说明: 本文件**第二次刷新 2026-06-22** (基于 spec `2026-06-17-refresh-issues-doc-design.md` / commit `07dbcc5` 的字段框架填新内容)。
-> **P0**: 历史 7 条 P0 仍 RESOLVED;P0 #8 (token 重复依赖) 部分进展 (4 commit: `bd62a21` 重复装收口 / `792b533` 重新导出 / `412030a` 一处迁移 / `4ccfb32` call sites 切换),仍 OPEN — 剩余"内联估算逻辑"收口待下一轮。
+> 修订说明: 本文件**第三次刷新 2026-06-22** (在第二次刷新同日内补 P0 #8 收口)。
+> **P0**: 历史 7 条 P0 仍 RESOLVED;P0 #8 (token 重复依赖) **本日内 RESOLVED 2026-06-22** — 4 commit 重复装收口 + estimation vs validation 文档化 (combined-extractor.ts 顶部 + graph-snapshot.ts defaultTokenEstimator 注释固化边界,用户决策 A 方案文档化收口)。
 > **Q 决策**: Q1/Q3/Q5/Q6/Q7/Q8/Q9/Q10 仍 RESOLVED;Q 决策 OPEN 组**无**。
 > **工程化决策** (本周期新增小节): 配置规范化 (YAML + Zod + seeds/) / runtime-compiler Mustache 模板 / ChapterReader 独立阅读页 / 双调色板 + boords design system / dark mode contrast 修复 / build hooks (auto-build packages)。共 6 个非 bugfix / 非 Q 决策 的工程改进,全部已落。
-> **库选型**: 4 子节定稿仍不变 (新引入库 = 0,复用 `zod`);3.2 token counting 状态从"待评估" → "部分应用" (4 commit 已落: 7 处重复装收口 + 统一入口 + 一处迁移)。
-> **修复时间线**: 从 17 行扩到 26 行 (2026-06-17 ~ 2026-06-22, 与 P0 / Q 决策 / bonus fix 直接相关的 commit)。
+> **库选型**: 4 子节定稿仍不变 (新引入库 = 0,复用 `zod`);3.2 token counting 状态从"部分应用" → **"已收口"** (estimation vs validation 边界文档化,heuristic 保留是有意为之)。
+> **修复时间线**: 从 26 行扩到 27 行 (2026-06-17 ~ 2026-06-22, 与 P0 / Q 决策 / bonus fix 直接相关的 commit)。
 
 ---
 
@@ -124,8 +124,11 @@
   - `792b533` — `packages/ai-provider` 重新导出 `countTokens`,让其它包能直接 `import { countTokens }` ✅
   - `412030a` — `packages/prompt-runtime` 内部 `estimateTokens` → `countTokens`,旧 alias 移除 ✅
   - `4ccfb32` — `apps/server` 2 个文件 call sites 切到 `countTokens`(`routes/chapters.ts` 1 import + 2 调用 / `services/combined-extractor.ts` 1 import + 1 调用) ✅
-- **仍未完成:** `graph-organizer` 的内联 token 估算逻辑 + `combined-extractor` 的 `computeContentCharBudget`(字符除以 4 之类的简化公式)都还没接入 `countTokens` 精确计数;`graph-organizer` 在 4ccfb32 没被覆盖,`combined-extractor` 的 import 切了但 `computeContentCharBudget` 函数本身仍在。两处仍是"快速估算"路径,只在 prompt 总量走 `scaleBudget` 时才精确。这块需要把"是否够"判定也从两套逻辑收口到一处,留作下一轮 P0。
-- **Status:** [OPEN,部分进展: 重复装清理 + 统一入口 + 一处迁移已完成 (4 commit),内部估算逻辑收口待下一轮]
+- **仍未完成:** ~~`graph-organizer` 的内联 token 估算逻辑 + `combined-extractor` 的 `computeContentCharBudget`(字符除以 4 之类的简化公式)都还没接入 `countTokens` 精确计数;`graph-organizer` 在 4ccfb32 没被覆盖,`combined-extractor` 的 import 切了但 `computeContentCharBudget` 函数本身仍在。两处仍是"快速估算"路径,只在 prompt 总量走 `scaleBudget` 时才精确。这块需要把"是否够"判定也从两套逻辑收口到一处,留作下一轮 P0。~~ **2026-06-22 收口说明:** 经查"estimation vs validation" 边界清晰,heuristic 失真**不会**污染 AI 实际看到的 prompt。两处代码已加注释固化边界(见下),不强制切到 `countTokens`:
+  - `combined-extractor.ts` 顶部常量区: 标注 heuristic 是规划,真值由 `countTokens(truncatedContent)` (line ~241) 重算 + `usageRatio >= 0.9` 告警
+  - `graph-snapshot.ts` `defaultTokenEstimator`: 标注 per-node heuristic 是 BFS 性能取舍(200+ 节点/章),真值由 `graph-organizer.ts` 的 `firstCompiled.meta.totalTokens` (line ~47) 在邻域确定后做一次精确编译校验
+  - 用户决策(2026-06-22): A 方案 — 文档化收口,不动代码逻辑。**estimation 与 validation 角色分离是有意为之,不是未完成的 bug**。
+- **Status:** [RESOLVED 2026-06-22 by documentation-only 收口 — combined-extractor.ts 顶部 + graph-snapshot.ts defaultTokenEstimator 注释固化 estimation vs validation 边界]
 
 ---
 

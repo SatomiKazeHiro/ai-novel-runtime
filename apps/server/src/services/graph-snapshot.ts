@@ -151,8 +151,16 @@ export interface NeighborhoodResult {
 }
 
 const defaultTokenEstimator = (n: GraphNodeSnapshot): number => {
-  // Rough heuristic: ~4 chars per token (English-leaning). Matches the project's
+  // Heuristic: ~4 chars per token (English-leaning). Matches the project's
   // shared/estimateTokens convention; suitable for prompt-side planning only.
+  //
+  // Estimation vs Validation 边界 (P0 #8 收口, 2026-06-22):
+  //   - 此函数被 expandNeighborhood BFS 循环里 per-node 调用 (单章 200+ 次)。
+  //     同步调 `countTokens` (js-tiktoken) 会让 BFS 慢一个数量级, 故保留 heuristic。
+  //   - 真值校验由 graph-organizer.ts 的 `firstCompiled.meta.totalTokens` (line ~47)
+  //     在邻域选择后做一次精确编译, 与 heuristic 预算对比并打 warn。
+  //   - 也就是说: heuristic 失真只影响"选哪些节点",不影响"AI 看到的最终邻域大小"。
+  //   见 docs/ISSUES.md P0 #8 "estimation vs validation" 说明。
   return Math.ceil((n.label.length + JSON.stringify(n.data || {}).length) / 4)
 }
 
