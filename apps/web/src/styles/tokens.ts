@@ -218,21 +218,21 @@ export const DARK_PALETTE: Palette = {
   warmCream: '#141414',
   pureWhite: '#2e2e2e',
   pureLight: '#ffffff',
-  stoneGray: '#3a3a3a',
-  stoneGrayPressed: '#454545',
+  stoneGray: '#3e3e3e',
+  stoneGrayPressed: '#4a4a4a',
   inkBlack: '#f0f0f0',
   inkBlackHover: '#d8d8d8',
 
-  // === Borders ===
-  pebbleBorder: '#4a4a4a',
+  // === Borders (#5a5a5a 在 #2e2e2e 卡片上 2.55:1, 1px pebble 清晰可见) ===
+  pebbleBorder: '#5a5a5a',
   infoTint: '#1f2a3a',
 
-  // === Text (二级 c8→d8, 三级 88→a8) ===
+  // === Text (二级 d8 不变, 三级 a8→b8, 四级 muted-ash 888→9a9a 过 AA 正文 4.83:1) ===
   graphite: '#d8d8d8',
-  midGray: '#a8a8a8',
-  mutedAsh: '#888888',
+  midGray: '#b8b8b8',
+  mutedAsh: '#9a9a9a',
   textDisabled: '#666666',
-  textCaption: '#a0a0a0',
+  textCaption: '#a8a8a8',
   placeholder: 'rgba(168, 168, 168, 0.85)',
   placeholderDisabled: 'rgba(168, 168, 168, 0.45)',
 

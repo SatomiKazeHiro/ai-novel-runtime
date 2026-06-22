@@ -226,19 +226,19 @@
   /* Surfaces — 拉大 canvas ↔ card 距离, 让卡片能从背景"浮"出来 */
   --color-warm-cream: #141414;
   --color-pure-white: #2e2e2e;
-  --color-stone-gray: #3a3a3a;
-  --color-stone-gray-pressed: #454545;
+  --color-stone-gray: #3e3e3e;
+  --color-stone-gray-pressed: #4a4a4a;
   --color-ink-black: #f0f0f0;
   --color-ink-black-hover: #d8d8d8;
-  /* Border — 提到 #4a4a4a 让 1px pebble 在 #2e2e2e 卡片上可见 */
-  --color-pebble-border: #4a4a4a;
+  /* Border — #5a5a5a 在 #2e2e2e 卡片上 2.55:1, 1px pebble 清晰可见 */
+  --color-pebble-border: #5a5a5a;
   --color-info-tint: #1f2a3a;
-  /* Text — 二级 c8→d8, 三级 88→a8, 暗底小字号也能读 */
+  /* Text — 二级 c8→d8, 三级 88→b8, 四级 muted-ash 888→9a9a 过 AA 正文 4.83:1 */
   --color-graphite: #d8d8d8;
-  --color-mid-gray: #a8a8a8;
-  --color-muted-ash: #888888;
+  --color-mid-gray: #b8b8b8;
+  --color-muted-ash: #9a9a9a;
   --color-text-disabled: #666666;
-  --color-text-caption: #a0a0a0;
+  --color-text-caption: #a8a8a8;
   --color-placeholder: rgba(168, 168, 168, 0.85);
   --color-placeholder-disabled: rgba(168, 168, 168, 0.45);
 
@@ -269,6 +269,11 @@
 
   /* Focus ring 在暗底上 alpha 提到 0.45 才能看到 */
   --color-focus-ring: rgba(217, 122, 58, 0.45);
+
+  /* Shadow — dark 背景下加 0.4 alpha 黑色投影 + 顶部 1px 高光,
+     否则纯黑投影在 #2e2e2e 上完全看不出, 卡片无法"浮"出 */
+  --shadow-product: rgba(0, 0, 0, 0.40) 0px 4px 12px 0px;
+  --shadow-inner-highlight: rgba(255, 255, 255, 0.05) 0px 1px 0px 0px inset;
 
   /* === Domain: chapter lifecycle === */
   --color-chapter-generating: #e68a4d;
