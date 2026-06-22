@@ -20,7 +20,8 @@
 :root {
   /* === Colors: Surfaces (boords-style: cream + white + dark) === */
   --color-warm-cream: #fafaf5;       /* page canvas — the warm paper ground */
-  --color-pure-white: #ffffff;        /* card / panel / storyboard frame */
+  --color-pure-white: #ffffff;        /* card / panel / storyboard frame (light: 白; dark: 卡片色 #2e2e2e, 名字遗留但语义是 surface) */
+  --color-pure-light: #ffffff;        /* 永远白 — 用于"白字"语义 (text on accent / on dark), dark 下也保持 #ffffff, 不随主题翻 */
   --color-stone-gray: #e9e9e7;       /* alternate section, subtle separator */
   --color-stone-gray-pressed: #d4d4d2;/* one step deeper than stone-gray — pressed/active bg */
   --color-ink-black: #121212;        /* primary text, dark workspace background */
@@ -76,8 +77,8 @@
   --text-secondary: var(--color-graphite);
   --text-tertiary: var(--color-mid-gray);
   --text-muted: var(--color-muted-ash);
-  --text-on-accent: var(--color-pure-white);   /* white text on terracotta CTA */
-  --text-on-dark: var(--color-pure-white);
+  --text-on-accent: var(--color-pure-light);   /* white text on terracotta CTA — 永远白, dark 下保持 #ffffff */
+  --text-on-dark: var(--color-pure-light);     /* white text on dark UI surfaces */
   --text-link: var(--color-cool-accent);
 
   --border-default: var(--color-pebble-border);

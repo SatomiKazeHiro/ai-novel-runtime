@@ -25,6 +25,8 @@ export type Palette = {
   // === Surfaces ===
   warmCream: string
   pureWhite: string
+  /** 永远 = #ffffff — "白字"语义, 不随主题翻. 与 pureWhite 不同: pureWhite 在 dark 下变成卡片色. */
+  pureLight: string
   stoneGray: string
   stoneGrayPressed: string
   inkBlack: string
@@ -117,6 +119,7 @@ export const LIGHT_PALETTE: Palette = {
   // === Surfaces ===
   warmCream: '#fafaf5',
   pureWhite: '#ffffff',
+  pureLight: '#ffffff',
   stoneGray: '#e9e9e7',
   stoneGrayPressed: '#d4d4d2',
   inkBlack: '#121212',
@@ -214,6 +217,7 @@ export const DARK_PALETTE: Palette = {
   // === Surfaces (拉大 canvas ↔ card 距离) ===
   warmCream: '#141414',
   pureWhite: '#2e2e2e',
+  pureLight: '#ffffff',
   stoneGray: '#3a3a3a',
   stoneGrayPressed: '#454545',
   inkBlack: '#f0f0f0',

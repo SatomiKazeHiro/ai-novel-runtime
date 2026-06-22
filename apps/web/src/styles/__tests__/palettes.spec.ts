@@ -43,6 +43,14 @@ describe('palette field values', () => {
 
   it('light palette has no empty values', () => assertNonEmpty(LIGHT_PALETTE, 'LIGHT_PALETTE'))
   it('dark palette has no empty values', () => assertNonEmpty(DARK_PALETTE, 'DARK_PALETTE'))
+
+  it('pureLight is #ffffff in both palettes (always-white semantic, NOT theme-flipped)', () => {
+    // pureLight 用于 --text-on-accent / --text-on-dark, 必须永远白;
+    // 与 pureWhite 不同 (pureWhite 在 dark 下变成 #2e2e2e 卡片色).
+    // 改名/翻色都会导致 .cap-pill.is-primary 等 primary 按钮文字在暗色下变暗灰.
+    expect(LIGHT_PALETTE.pureLight).toBe('#ffffff')
+    expect(DARK_PALETTE.pureLight).toBe('#ffffff')
+  })
 })
 
 describe('dark palette contrast guarantees', () => {
