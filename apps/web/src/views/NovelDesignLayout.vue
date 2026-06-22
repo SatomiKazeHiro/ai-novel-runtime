@@ -82,7 +82,7 @@ const menuOptions: MenuOption[] = [
   { label: '知识图谱', key: 'Graph', icon: renderIcon(AnalyticsOutline) },
   { label: '记忆管理', key: 'Memory', icon: renderIcon(LibraryOutline) },
   { label: '时间线', key: 'Timeline', icon: renderIcon(TimerOutline) },
-  { label: 'Worker Task', key: 'StoryWorkerTasks', icon: renderIcon(HammerOutline) },
+  { label: '任务模板', key: 'StoryWorkerTasks', icon: renderIcon(HammerOutline) },
   { label: '调用日志', key: 'PromptLogs', icon: renderIcon(CodeWorkingOutline) }
 ]
 

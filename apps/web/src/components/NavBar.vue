@@ -74,7 +74,7 @@ const links = [
   { path: '/', label: '仪表盘' },
   { path: '/stories', label: '小说管理' },
   { path: '/runtime-profiles', label: '写作人格' },
-  { path: '/worker-tasks', label: 'Worker Task' },
+  { path: '/worker-tasks', label: '任务模板' },
   { path: '/models', label: '模型管理' }
 ]
 

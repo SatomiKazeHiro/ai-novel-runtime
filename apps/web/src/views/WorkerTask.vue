@@ -3,7 +3,7 @@
     <header class="page-head">
       <div class="page-head__text">
         <span class="cap-eyebrow is-accent">WORKER TASKS</span>
-        <h1 class="page-head__title">全局 Worker Task</h1>
+        <h1 class="page-head__title">全局任务模板</h1>
         <p class="page-head__lede cap-body-sm">生成、评分、记忆、图谱、改写 — 每种 worker 一个 prompt 模板，全局可覆盖。</p>
       </div>
       <div class="page-head__actions">
@@ -14,7 +14,7 @@
 
     <div class="cap-card" style="margin-bottom: 16px; padding: 14px 18px; background: var(--accent-info-tint); border-color: transparent;">
       <span class="cap-body-sm" style="color: var(--accent-link);">
-        此处配置的是全局 Worker Task。系统内置的 Task 不可编辑删除，但你可以"以此为基础新建"自己的版本。
+        此处配置的是全局任务模板。系统内置的 Task 不可编辑删除，但你可以"以此为基础新建"自己的版本。
       </span>
     </div>
 

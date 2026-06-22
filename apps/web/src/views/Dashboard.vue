@@ -88,7 +88,7 @@
           <span class="cap-feature__icon">
             <n-icon size="20"><ConstructOutline /></n-icon>
           </span>
-          <h3 class="cap-subheading">Worker Task</h3>
+          <h3 class="cap-subheading">任务模板</h3>
           <p class="cap-body-sm">生成、评分、记忆、图谱、改写 — 每种 worker 一个 prompt 模板，全局可覆盖。</p>
           <a class="cap-feature__link">查看 Task →</a>
         </article>

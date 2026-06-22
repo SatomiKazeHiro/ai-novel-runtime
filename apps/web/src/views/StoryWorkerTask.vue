@@ -3,7 +3,7 @@
     <header class="page-head">
       <div class="page-head__text">
         <span class="cap-eyebrow is-accent">WORKER TASKS · STORY</span>
-        <h1 class="page-head__title">Worker Task 配置</h1>
+        <h1 class="page-head__title">任务模板 配置</h1>
         <p class="page-head__lede cap-body-sm">为当前小说的每个 Worker 类型选择使用的 Task。</p>
       </div>
       <div class="page-head__actions">
@@ -13,7 +13,7 @@
 
     <div class="cap-card" style="margin-bottom: 16px; padding: 14px 18px; background: var(--accent-info-tint); border-color: transparent;">
       <span class="cap-body-sm" style="color: var(--accent-link);">
-        系统内置的 Task 会自动列出，你也可以在"全局 Worker Task 配置"页面创建自定义版本。
+        系统内置的 Task 会自动列出，你也可以在"全局任务模板 配置"页面创建自定义版本。
       </span>
     </div>
 
