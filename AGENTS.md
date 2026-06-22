@@ -55,7 +55,7 @@
 | Vite | 构建工具，开发端口 5173，代理 `/api` 到后端 3000 |
 | Pinia | 状态管理（`story.ts`、`theme.ts`），持久化到 `localStorage` |
 | Vue Router | 路由，history 模式，双 Layout：SimpleLayout / NovelDesignLayout |
-| Naive UI | 组件库，中文 locale，主题色 `#6366f1`，支持暗黑模式 |
+| Naive UI | 组件库,中文 locale;主题色走 boords design system(`warmAccent: #b8581e` light / `#d97a3a` dark,见 `apps/web/src/styles/tokens.ts`),支持 light/dark/system 三模式切换 |
 | Axios | HTTP 请求，baseURL 来自 `VITE_API_BASE_URL`，30 秒超时 |
 | Cytoscape | 知识图谱可视化 |
 | @vueuse/core | 组合式工具库（`useIntervalFn` 用于轮询生成状态） |
@@ -72,8 +72,8 @@
 | BullMQ | 任务队列（Redis 可用时使用） |
 | IORedis | Redis 客户端 |
 | graphology | 图引擎（内存中操作，由 `GraphService` 封装） |
-| js-tiktoken | Token 计算（cl100k_base） |
-| zod | 运行时校验（已安装但当前路由中**未使用**） |
+| js-tiktoken | Token 计算（cl100k_base）— P1 收口后**仅** `packages/ai-provider` 直接装,其它包 transitive 依赖;`packages/{shared,memory-engine,prompt-runtime}` 因结构性原因(dep cycle / token ID API / model-aware encoding)保留直接装,详见 `KNOWN-ISSUES.md` 第 10 条 |
+| zod | 运行时校验(Q9 已接入前后端,`CompiledPromptSchema` / `CreateChapterRequestSchema` / `PrepareArchiveRequestSchema` / `PendingArchiveDataSchema` 等均在 `packages/shared/src/`) |
 
 ### 2.3 数据库
 
@@ -157,8 +157,8 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 │   │   │   │   └── prisma.ts    # PrismaClient 封装为 Fastify 插件
 │   │   │   ├── queue/
 │   │   │   │   └── index.ts     # BullMQ + 内存回退队列
-│   │   │   ├── routes/          # 14 个路由模块（见下表）
-│   │   │   └── services/        # 14 个服务/业务逻辑模块
+│   │   │   ├── routes/          # 18 个路由模块（P3 拆分后，见下表;`chapters.ts` 拆为 chapters-{crud,generate,archive,tree}.ts + _helpers.ts 共 5 文件）
+│   │   │   └── services/        # 15 个服务/业务逻辑模块
 │   │   └── package.json
 │   └── web/             # Vue 3 前端
 │       ├── src/
@@ -180,14 +180,16 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 │   ├── memory-engine/   # 记忆提取、语义搜索、格式化
 │   ├── knowledge-graph/ # 内存图服务
 │   ├── scoring-engine/  # 规则评分引擎
-│   └── warning-engine/  # 占位（已移除）
 ├── prisma/
-│   ├── schema.prisma    # Prisma 数据模型（20+ 个模型）
+│   ├── schema.prisma    # Prisma 数据模型（16 个模型）
 │   ├── migrations/      # 迁移文件（按时间顺序命名）
 │   └── seed.ts          # 种子脚本
 └── docs/
-    ├── profiles/        # RuntimeProfile JSON 预设（启动时自动导入）
-    └── sql-reference.md # SQL 相关
+    ├── DESIGN.md        # boords 设计系统参考
+    ├── ISSUES.md        # P0 + Q 决策 + 工程化决策 + 库选型 + 修复时间线
+    ├── LOGIC.md         # 15 分钟架构速览
+    ├── sql-reference.md # 数据模型 + 关系 + 迁移历史
+    └── superpowers/     # 设计文档(specs/*) + 实施计划(保留 P1 / P5 作为模板)
 ```
 
 ### 4.2 后端路由一览
@@ -199,7 +201,7 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 | `characters.ts` | `/api/stories/:storyId/characters` + `/api/characters/:charId` | 角色 CRUD + `CharacterBranchState` 历史 |
 | `lore.ts` | `/api/stories/:storyId/lore` + `/api/lore/:itemId` | 世界观设定 CRUD |
 | `timeline.ts` | `/api/stories/:storyId/timeline` + `/api/timeline/:eventId` | 时间线事件 CRUD |
-| `chapters.ts` | `/api/stories/:storyId/chapters`, `/api/chapters/:chapterId/...` | **最复杂**：CRUD、preview、generate、select、archive、develop、chapter-tree |
+| `chapters-{crud,generate,archive,tree}.ts` + `_helpers.ts` | `/api/stories/:storyId/chapters`, `/api/chapters/:chapterId/...` | **最复杂**(P3 拆分):crud(基础 CRUD) / generate(preview + generate + select + develop) / archive(prepare-archive + archive 确认 + 事务) / tree(chapter-tree) |
 | `drafts.ts` | `/api/chapters/:chapterId/drafts`, `/api/drafts/:draftId` | 草稿 CRUD |
 | `graph.ts` | `/api/stories/:storyId/graph`, `/api/chapters/:chapterId/graph-snapshot` | 知识图谱查询 + 手动增删节点/边 |
 | `memories.ts` | `/api/stories/:storyId/memory` | 记忆查询 + 创建 |
@@ -218,7 +220,7 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 | `ai-provider-init.ts` | 从环境变量初始化 DeepSeek 配置到数据库；提供 `getDefaultProvider()` 工厂 |
 | `ai-call-logger.ts` | **统一 AI 调用封装**：自动记录 `promptLog`（成功/失败均异步写入），返回 content 或抛出错误 |
 | `runtime-loader.ts` | 加载 `RuntimeBase` 和 `WorkerTask`（按 Story → 全局默认 → 硬编码回退） |
-| `runtime-profile-init.ts` | 启动时扫描 `../../docs/profiles/*.json` 导入 `runtimeProfile` |
+| `runtime-profile-init.ts` | 启动时扫描 `seeds/profiles/*.yaml` 导入 `runtimeProfile`(YAML 解析失败立即报错) |
 | `generate-processor.ts` | 队列处理器：循环为每个 draft 调用 AI，更新 `draft.content` 和状态 |
 | `combined-extractor.ts` | **归档核心**：一次 AI 调用同时提取记忆 + 图谱 + 剧情弧线 |
 | `graph-extractor.ts` | 从章节提取图谱节点/边（`importance >= 6`），保存到 `graphNode`/`graphEdge` |
@@ -226,6 +228,7 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 | `graph-snapshot.ts` | 将 `mergedGraph` 保存为 `chapter.graphSnapshot`，`chapterGraph` 保存为 `graphDelta` |
 | `memory-extractor.ts` | 提取结构化记忆（主线/支线/情绪/伏笔/关系/状态/场景/摘要），Jaccard 去重后存入 `memory` 表 |
 | `memory-organizer.ts` | 归档后 AI 整理记忆：merge/update/delete/keep，有 Jaccard > 0.5 保守校验 |
+| `memory-optimizer.ts` | **阶段 4 全局记忆融合**：`archive` 路由事务提交后调用,把上一章 global 记忆 + 本章 chapter 记忆喂 AI 生成下一章 global 快照;失败不阻塞归档。`chapters-archive.ts:3` import `optimizeMemories` |
 | `memory-compressor.ts` | 每 5 章自动压缩 chapter 记忆为 global 摘要；AI 压缩失败则降级为简单合并 |
 | `plot-extractor.ts` | 提取/更新剧情弧线（`plotArc`），维护 stages/unresolved；`getActivePlotArcs()` 供 Prompt 注入 |
 
@@ -340,18 +343,17 @@ Prisma 的 JSON 字段（`personality`、`metadata`、`params`、`settings`、`g
 - 前端以 **inline style** 为主（直接写在 Naive UI 组件的 `style` 属性上）
 - 仅在 `ChapterBranchTree.vue` 等少数组件使用 scoped CSS
 - 全局 reset 在 `App.vue`：`* { margin:0; padding:0; box-sizing:border-box }`
-- 背景色随主题切换：`#f5f5f5`（light）/ `#101014`（dark）
+- 颜色/间距统一走 boords design system tokens(`apps/web/src/styles/tokens.ts` + `tokens.css`),light 用 `warmCream #fafaf5` / dark 用 `#141414`;**不要**在 view 文件里硬编码 hex
 
 ---
 
 ## 6. 测试说明
 
-- **测试框架**：Vitest 已安装（根目录 `devDependencies`）
-- **当前状态**：**没有任何测试文件**（`.test.*` / `.spec.*`）
-- 后端 `apps/server` 的 `package.json` 已配置 `"test": "vitest"`
-- 根目录 `pnpm test` 会递归执行各包的 test 脚本
+- **测试框架**：Vitest（根目录 + 各包 devDependencies）
+- **当前状态**：已有测试,集中在 `apps/server/src/__tests__/`(vitest 后端,e.g. `combined-extractor.test.ts` / `graph-organizer-neighborhood.test.ts` / `chapters-zod-validation.test.ts` / `chapters-concurrency.test.ts` 等 9 个文件);`packages/ai-provider` 也有 `runtime-compiler.test.ts`(13 个 case)
+- 根目录 `pnpm test` 会递归执行各包的 test 脚本;`apps/server` 的 `pretest` hook 会先 build 所有 packages 避免 stale dist
 
-**建议**：新增测试时放在与被测代码同级或 `__tests__` 目录，使用 Vitest 的 API。
+**建议**：新增测试时放在与被测代码同级或 `__tests__` 目录，使用 Vitest 的 API。TDD 优先 — 写失败测试 → 写实现 → 重构。
 
 ---
 

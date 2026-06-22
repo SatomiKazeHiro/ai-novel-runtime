@@ -1,7 +1,7 @@
 # LOGIC.md — AI 小说工坊 架构速览
 
 > 目标：15 分钟读懂 12k 行代码的核心逻辑。读者：项目所有者本人。
-> 配套文档：`docs/QUESTIONS.md`（AI 编写时可能漂移的疑点）、`docs/ISSUES.md`（P0 级别的数据/崩溃/安全问题）。
+> 配套文档：`docs/ISSUES.md`（P0 + Q 决策 + 工程化决策 + 库选型 + 修复时间线）、`KNOWN-ISSUES.md`（数据鲁棒性 + 安全陷阱）。
 
 ---
 

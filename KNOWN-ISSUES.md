@@ -33,10 +33,10 @@
 - **避雷指引：** 修字段读写路径时，对 `String` JSON 字段统一封装（比如 `chapter.graphSnapshot = JSON.stringify(payload)` 的辅助函数），不要复制粘贴。如果要做"真实 JSON 列"迁移（SQLite 实际是 TEXT），是独立任务。
 
 ### 5. `ReviewingPanel.vue` 的 `PendingArchiveData` 接口全用 `any[]`
-- **位置：** `apps/web/src/views/ReviewingPanel.vue:167-183`。
-- **现状：** `memories.memories`、`graph.mergedGraph.nodes` 等所有列表都是 `any[]`，仅靠 `normalizePendingData` 在运行期防御。
-- **为什么重要：** 用户在审查阶段编辑的是 AI 输出后的人类修正版，结构错位会在 phase 3 事务里直接抛错（最坏情况：commit 时才发现 N 章前的编辑崩了）。
-- **避雷指引：** 改 ReviewingPanel 时优先用 `prepare-archive` 接口的真实返回类型；不要新增 `any` 字段。如果改了 `combined-extractor` 的返回结构，必须同步改 `PendingArchiveData`。
+- **位置：** `apps/web/src/views/ReviewingPanel.vue:246, 409`(`baselineChapterGraph` 与 `onGraphUpdate` 两处 `nodes: any[], edges: any[]`)。
+- **现状（部分修复）：** `PendingArchiveData` interface + `PendingArchiveDataSchema`(zod)已搬到 `packages/shared/src/archive.ts:132 + 236`(Q6 + commit `e72091b`),前后端共享一份类型;但 `ReviewingPanel.vue` 内部两处 graph 操作仍用 `any[]`,仅靠运行期 `normalizePendingData` 防御。
+- **为什么重要：** 用户在审查阶段编辑的是 AI 输出后的人类修正版,结构错位会在 phase 3 事务里直接抛错(最坏情况:commit 时才发现 N 章前的编辑崩了)。
+- **避雷指引：** 改 ReviewingPanel 时优先用 `packages/shared/src/archive.ts` 的 `PendingArchiveData` / `PendingGraphSnapshot` 类型;不要新增 `any` 字段。如果改了 `combined-extractor` 的返回结构,必须同步改 `PendingArchiveDataSchema` (zod) + ReviewingPanel.vue 内任何残留 `any[]`。
 
 ### 6. `Memory` 历史版本按 `originUid` 取最新是隐含约定
 - **位置：** `packages/memory-engine/src/index.ts`、归档阶段的 `memory-optimizer.ts`。
@@ -82,7 +82,7 @@
 - **为什么重要：** 这是开发态的合理选择，但**部署到非本机环境前必须先加认证层**。如果直接暴露到公网，任意人能调生成、归档、删库。
 - **避雷指引：** 不要在没有显式鉴权的情况下加新的"管理类"接口（删除、重置、批量更新）。任何 `DELETE`/`PUT` 路由默认应拒绝外部访问，直到补好认证。
 
-### 5. 遗留 extractor 仍使用 `content.slice(0, 8000)` 粗截断
+### S5. 遗留 extractor 仍使用 `content.slice(0, 8000)` 粗截断
 - **位置：** `apps/server/src/services/memory-extractor.ts:124`（`extractMemoryFromChapter`）、`apps/server/src/services/graph-extractor.ts:71`（`extractGraphFromChapter`）。
 - **现状：** 这两个函数 prompt 模板里都有 `${content.slice(0, 8000)}`，与 P0 #2 修复前的 `combined-extractor.ts:148` 完全同模式。`combined-extractor.ts` 的活跃路径（`extractAll`）已用 `truncateByParagraph` 替换（commit `482cca9`），但这两个 legacy 函数仍存在同样截断风险。
 - **调用关系：** `extractMemoryFromChapter` 仅被 `combined-extractor.ts:7` import 并在 `:262` re-export，**当前不被任何路由调用**；`extractGraphFromChapter` **完全无人 import**。属于死代码。

@@ -39,7 +39,7 @@
 | `outline` | String? | 大纲 |
 | `content` | String? | 正文 |
 | `summary` | String? | 摘要（AI 提取生成） |
-| `status` | String | `draft` / `generated` / `selected` / `archived` |
+| `status` | String | `draft` / `generating` / `generated` / `scored` / `selected` / `reviewing` / `archived` / `rejected` (8 值,见 `prisma/schema.prisma` 的 `enum ChapterStatus`) |
 | `sceneLocation` | String? | 场景地点 |
 | `sceneMood` | String? | 场景氛围 |
 | `sceneGoal` | String? | 场景目标 |
@@ -47,6 +47,7 @@
 | `compiledPrompt` | String? | 生成时使用的完整 Prompt（JSON：{ systemMessage, userMessage, meta }）。**注意**：生成候选时 backend 会同步写入此字段，确保前端编辑页面始终能展示当前 Prompt |
 | `graphDelta` | String? | 相对于上一章的图谱变化（JSON：{ addedNodes, updatedNodes, addedEdges, summary }） |
 | `graphSnapshot` | String? | 到当前章节的完整图谱快照（JSON：{ nodes, edges, timestamp }） |
+| `pendingArchiveData` | String? | `reviewing` 状态时 AI 提取的归档 payload（记忆 / 图谱 / 弧线 / 时间线 JSON）;用户 ReviewingPanel 编辑后写回,确认归档时回放进事务。**prepare-archive** 阶段写入,confirm `archive` 阶段读出消费 |
 | `createdAt` | DateTime | |
 | `updatedAt` | DateTime | |
 
@@ -60,7 +61,8 @@
 - 1:N `Draft`、`Memory`、`Score`
 
 **归档行为**：
-- `archive` 路由一次性执行：状态更新 → `combined-extractor.ts` 提取 → `memory-organizer.ts` 整理 → `graph-snapshot.ts` 计算快照与变化
+- `prepare-archive` 阶段：状态更新 + `combined-extractor.ts` 一次 AI 提取记忆+图谱+弧线 → `graph-organizer.ts` 整理 → 写入 `pendingArchiveData` → 状态变 `reviewing`
+- `archive` 确认阶段：从 `pendingArchiveData` 读出 → `prisma.$transaction` 一次性提交所有 DB 写入(Memory/CharacterBranchState/TimelineEvent/PlotArc/GraphNode+Edge/Chapter.summary/graphSnapshot/graphDelta + status=`archived`) → `optimizeMemories` 阶段 4 全局记忆融合(失败不阻塞)
 - 已 `archived` 再次调用会跳过（防重复污染）
 
 ---
@@ -204,7 +206,7 @@
 | `jailbreak` | String? | `[Jailbreak]` 层内容（可选） |
 | `isDefault` | Boolean | |
 
-**初始化**：后端启动时扫描 `docs/profiles/*.json` 自动导入（按 `name` 去重）
+**初始化**：后端启动时扫描 `seeds/profiles/*.yaml` 自动导入（按 `name` 去重;YAML 解析失败立即报错,无 silent fallback）
 
 **加载优先级**：`Chapter.runtimeProfileId` → `Story.runtimeProfileId` → `isDefault=true` 全局默认 → 硬编码兜底
 
