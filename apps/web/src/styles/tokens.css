@@ -222,18 +222,58 @@
 /* === Dark mode — 轻量化, 只翻 surface / text / border 关键变量 ===
    加新变量时, 只在 :root 加; 如果 dark 模式需要特殊调, 再补进这里。 */
 :root[data-theme="dark"] {
-  --color-warm-cream: #1a1a1a;
-  --color-pure-white: #2a2a2a;
-  --color-stone-gray: #353535;
-  --color-stone-gray-pressed: #404040;
+  /* Surfaces — 拉大 canvas ↔ card 距离, 让卡片能从背景"浮"出来 */
+  --color-warm-cream: #141414;
+  --color-pure-white: #2e2e2e;
+  --color-stone-gray: #3a3a3a;
+  --color-stone-gray-pressed: #454545;
   --color-ink-black: #f0f0f0;
   --color-ink-black-hover: #d8d8d8;
-  --color-pebble-border: #3a3a3a;
-  --color-graphite: #c8c8c8;
-  --color-mid-gray: #888888;
-  --color-muted-ash: #6a6a6a;
-  --color-text-disabled: #555555;
-  /* shadow-* 继承 light 即可, dark 阴影的 rgba alpha 实际是更弱的视觉, 不动 */
+  /* Border — 提到 #4a4a4a 让 1px pebble 在 #2e2e2e 卡片上可见 */
+  --color-pebble-border: #4a4a4a;
+  --color-info-tint: #1f2a3a;
+  /* Text — 二级 c8→d8, 三级 88→a8, 暗底小字号也能读 */
+  --color-graphite: #d8d8d8;
+  --color-mid-gray: #a8a8a8;
+  --color-muted-ash: #888888;
+  --color-text-disabled: #666666;
+  --color-text-caption: #a0a0a0;
+  --color-placeholder: rgba(168, 168, 168, 0.85);
+  --color-placeholder-disabled: rgba(168, 168, 168, 0.45);
+
+  /* === Accents: warm (提亮一档, hue 保持, CTA 在暗底上更"跳") === */
+  --color-warm-accent: #d97a3a;
+  --color-warm-accent-hover: #e68a4d;
+  --color-warm-accent-pressed: #c46a30;
+  --color-warm-accent-tint: rgba(217, 122, 58, 0.18);
+
+  /* === Accents: cool (提亮一档, 链接 / Sider 激活色 / focus 在暗底上清晰) === */
+  --color-cool-accent: #7a8fb4;
+  --color-cool-accent-hover: #8da0c2;
+  --color-cool-accent-pressed: #6a7ea2;
+
+  /* === Accents: positive / error / review (在暗底上整体提亮) === */
+  --color-positive: #8ab07f;
+  --color-positive-hover: #9cc090;
+  --color-positive-pressed: #7aa06f;
+  --color-positive-tint: rgba(138, 176, 127, 0.18);
+
+  --color-error: #e89090;
+  --color-error-hover: #f0a0a0;
+  --color-error-pressed: #d88080;
+  --color-error-tint: rgba(232, 144, 144, 0.16);
+
+  --color-review: #c084d8;
+  --color-review-tint: rgba(192, 132, 216, 0.16);
+
+  /* Focus ring 在暗底上 alpha 提到 0.45 才能看到 */
+  --color-focus-ring: rgba(217, 122, 58, 0.45);
+
+  /* === Domain: chapter lifecycle === */
+  --color-chapter-generating: #e68a4d;
+  --color-chapter-generated: #8ab07f;
+  --color-chapter-reviewing: #c084d8;
+  --color-chapter-failed: #e89090;
 
   /* === Domain: Graph node type colors (dark variant) ===
      Light 模式的 graph 节点色都是高饱和, dark 背景下需要更亮/更柔和,
@@ -244,5 +284,10 @@
   --color-graph-faction: #e89090;
   --color-graph-item: #c084d8;
   --color-graph-new: #8ab07f;
+  --color-graph-text: #a8b8c8;
   --color-graph-selected: #e8b870;
+
+  /* === Domain: identity / loading === */
+  --color-protagonist: #e8b870;
+  --color-skeleton-end: #2f2f2f;
 }

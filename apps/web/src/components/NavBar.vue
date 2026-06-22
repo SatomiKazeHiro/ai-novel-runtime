@@ -57,15 +57,15 @@ import {
   SunnyOutline, MoonOutline, DesktopOutline
 } from '@vicons/ionicons5'
 import { useThemeStore, type ThemeMode } from '../stores/theme'
-import { COLOR } from '../styles/tokens'
+import { PALETTES } from '../styles/tokens'
 
 const route = useRoute()
 const router = useRouter()
 const themeStore = useThemeStore()
 
-// SVG fill/stroke attributes do not resolve var() — bind literal hex from tokens.
-const markBg = COLOR.inkBlack
-const markAccent = COLOR.warmAccent
+// SVG fill/stroke attributes do not resolve var() — bind literal hex from active palette.
+const markBg = computed(() => PALETTES[themeStore.isDark ? 'dark' : 'light'].inkBlack)
+const markAccent = computed(() => PALETTES[themeStore.isDark ? 'dark' : 'light'].warmAccent)
 
 const links = [
   { path: '/', label: '仪表盘' },

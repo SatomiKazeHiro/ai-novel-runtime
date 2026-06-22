@@ -1,15 +1,15 @@
 import type { Ref } from 'vue'
 import { onBeforeUnmount } from 'vue'
 import cytoscape from 'cytoscape'
-import { COLOR } from '../../styles/tokens'
+import { PALETTES } from '../../styles/tokens'
 
-// Cytoscape 节点 type -> dark 模式色 (从 tokens.ts 拉的 DARK 字段)
+// Cytoscape 节点 type -> dark 模式色 (从 PALETTES.dark 取).
 // 使用函数式 style 时, cytoscape 会调用这里取颜色, isDark 变化时自动重绘。
 const DARK_NODE_COLORS: Record<string, string> = {
-  character: COLOR.graphCharacterDark,
-  faction: COLOR.graphFactionDark,
-  event: COLOR.graphEventDark,
-  item: COLOR.graphItemDark,
+  character: PALETTES.dark.graphCharacter,
+  faction: PALETTES.dark.graphFaction,
+  event: PALETTES.dark.graphEvent,
+  item: PALETTES.dark.graphItem,
 }
 
 // ===== 类型导出 =====
@@ -139,19 +139,19 @@ export function toGraphData(rawNodes: any[], rawEdges: any[]): GraphData {
 
 function defaultNodeColor(type: string): string {
   const legend: Record<string, string> = {
-    character: COLOR.graphCharacter,
-    faction: COLOR.graphFaction,
-    event: COLOR.graphEvent,
-    item: COLOR.graphItem,
+    character: PALETTES.light.graphCharacter,
+    faction: PALETTES.light.graphFaction,
+    event: PALETTES.light.graphEvent,
+    item: PALETTES.light.graphItem,
   }
   // 大小写防御: 后端偶发返回 'Character' / 'CHARACTER' 时, 不至于全部 fallback 成灰色
   const key = (type || '').toLowerCase()
-  return legend[key] || COLOR.graphEdge
+  return legend[key] || PALETTES.light.graphEdge
 }
 
 function defaultNodeColorDark(type: string): string {
   const key = (type || '').toLowerCase()
-  return DARK_NODE_COLORS[key] || COLOR.graphEdge
+  return DARK_NODE_COLORS[key] || PALETTES.light.graphEdge
 }
 
 const COSE_LAYOUT_OPTIONS = {
@@ -177,9 +177,9 @@ function buildCytoscapeStyle(
 ): cytoscape.StylesheetJson {
   // dark 模式下, new 描边色 / 选中色 / 边色都用 dark 变体;
   // 文字 text-outline-color 翻成深色以适配亮色背景的文字
-  const newEdgeColor = () => isDark?.value ? COLOR.graphNewDark : COLOR.graphNew
-  const selectedColor = () => isDark?.value ? COLOR.graphSelectedDark : COLOR.graphSelected
-  const labelOutlineColor = () => isDark?.value ? '#000' : '#000'
+  const newEdgeColor = () => (isDark?.value ? PALETTES.dark : PALETTES.light).graphNew
+  const selectedColor = () => (isDark?.value ? PALETTES.dark : PALETTES.light).graphSelected
+  const labelOutlineColor = () => '#000'
 
   return [
     {
@@ -206,13 +206,13 @@ function buildCytoscapeStyle(
       selector: 'edge',
       style: {
         'width': (ele: any) => ele.data('isNew') ? 3 : 2,
-        'line-color': (ele: any) => ele.data('isNew') ? newEdgeColor() : COLOR.graphEdge,
-        'target-arrow-color': (ele: any) => ele.data('isNew') ? newEdgeColor() : COLOR.graphEdge,
+        'line-color': (ele: any) => ele.data('isNew') ? newEdgeColor() : PALETTES.light.graphEdge,
+        'target-arrow-color': (ele: any) => ele.data('isNew') ? newEdgeColor() : PALETTES.light.graphEdge,
         'target-arrow-shape': 'triangle',
         'curve-style': 'bezier',
         'label': 'data(label)',
         'font-size': '10px',
-        'color': COLOR.graphText,
+        'color': PALETTES.light.graphText,
         'text-background-color': '#fff',
         'text-background-opacity': 0.8,
         'text-background-padding': '2px',
