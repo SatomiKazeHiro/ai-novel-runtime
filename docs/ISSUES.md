@@ -1,11 +1,11 @@
 # P0 Issues
 
-> 修订说明: 本文件最后刷新 2026-06-17,基于 spec `docs/superpowers/specs/2026-06-17-refresh-issues-doc-design.md` (commit `07dbcc5`) 实施刷新。
-> 历史 7 条 P0 全部 RESOLVED;Q1/Q3/Q5/Q6/Q7/Q8/Q9/Q10 全部 RESOLVED;Q 决策 OPEN 组**无**。
-> 唯一新增高优项:[NEW 2026-06-17] 重复依赖 + 三套 token 实现。
-> 库选型 4 子节已定稿,新引入库 = 0,复用 1 个 (`zod`),调研 12 候选全部拒掉。
-> 原则:"通用 + 解耦 + 易读 + 扩展性,宁少勿滥"。
-> 注:SPEC 修正 — Q9(zod 接入)在 spec 「背景」节里误标 OPEN,实施时经 git log 校对确认**实际已修** (`47e0d2c` + `8ce9eaa`),已移到 [Q 决策 - 已修]。
+> 修订说明: 本文件**第二次刷新 2026-06-22** (基于 spec `2026-06-17-refresh-issues-doc-design.md` / commit `07dbcc5` 的字段框架填新内容)。
+> **P0**: 历史 7 条 P0 仍 RESOLVED;P0 #8 (token 重复依赖) 部分进展 (4 commit: `bd62a21` 重复装收口 / `792b533` 重新导出 / `412030a` 一处迁移 / `4ccfb32` call sites 切换),仍 OPEN — 剩余"内联估算逻辑"收口待下一轮。
+> **Q 决策**: Q1/Q3/Q5/Q6/Q7/Q8/Q9/Q10 仍 RESOLVED;Q 决策 OPEN 组**无**。
+> **工程化决策** (本周期新增小节): 配置规范化 (YAML + Zod + seeds/) / runtime-compiler Mustache 模板 / ChapterReader 独立阅读页 / 双调色板 + boords design system / dark mode contrast 修复 / build hooks (auto-build packages)。共 6 个非 bugfix / 非 Q 决策 的工程改进,全部已落。
+> **库选型**: 4 子节定稿仍不变 (新引入库 = 0,复用 `zod`);3.2 token counting 状态从"待评估" → "部分应用" (4 commit 已落: 7 处重复装收口 + 统一入口 + 一处迁移)。
+> **修复时间线**: 从 17 行扩到 26 行 (2026-06-17 ~ 2026-06-22, 与 P0 / Q 决策 / bonus fix 直接相关的 commit)。
 
 ---
 
@@ -119,7 +119,13 @@
 - **Root cause hypothesis:** 各 service 各自 import 各自的 `js-tiktoken`,无单一 source of truth;`PromptAssembler` 与 service-level budget 没有契约对接。
 - **Blast radius:** token 预算不一致 → 长章节可能 1) 被错算成"够"实际不够(超过 contextLength,AI 截断/拒绝) 2) 被错算成"不够"实际够(白丢 context,生成内容变短)。
 - **修复方向:** 集中到 `packages/ai-provider` 一处(`countTokens(text: string): number`),其它包 transitive 依赖。详见 [解耦候选库 - 3.2](#32-token-counting-统一--不引入新库自建单例)。
-- **Status:** [OPEN]
+- **进展 (2026-06-17 ~ 2026-06-22):**
+  - `bd62a21` — `js-tiktoken` 7 处重复装收口到 `packages/ai-provider` 1 处,其它包 transitive 依赖 ✅
+  - `792b533` — `packages/ai-provider` 重新导出 `countTokens`,让其它包能直接 `import { countTokens }` ✅
+  - `412030a` — `packages/prompt-runtime` 内部 `estimateTokens` → `countTokens`,旧 alias 移除 ✅
+  - `4ccfb32` — `apps/server` 2 个文件 call sites 切到 `countTokens`(`routes/chapters.ts` 1 import + 2 调用 / `services/combined-extractor.ts` 1 import + 1 调用) ✅
+- **仍未完成:** `graph-organizer` 的内联 token 估算逻辑 + `combined-extractor` 的 `computeContentCharBudget`(字符除以 4 之类的简化公式)都还没接入 `countTokens` 精确计数;`graph-organizer` 在 4ccfb32 没被覆盖,`combined-extractor` 的 import 切了但 `computeContentCharBudget` 函数本身仍在。两处仍是"快速估算"路径,只在 prompt 总量走 `scaleBudget` 时才精确。这块需要把"是否够"判定也从两套逻辑收口到一处,留作下一轮 P0。
+- **Status:** [OPEN,部分进展: 重复装清理 + 统一入口 + 一处迁移已完成 (4 commit),内部估算逻辑收口待下一轮]
 
 ---
 
@@ -152,11 +158,29 @@ SPEC 修正说明:Q9(zod 接入)在 spec「背景」节中误标 OPEN,实施时�
 ## [Bug fix 备忘]
 
 ### Cytoscape null `isHeadless` 报错(准备归档后 hover 触发)
-- **File:line:** `apps/web/src/views/Graph.vue:146, 253-264, 283, 773`
+- **File:line:** `apps/web/src/composables/graph/useCytoscapeLifecycle.ts:250-257`(原 `apps/web/src/views/Graph.vue:146, 253-264, 283, 773`,P5 解耦后修复路径迁入共享 hook,见 commit `18fdd45` + `4434cb3`)
 - **Symptom:** 准备归档后,鼠标 hover 知识图谱触发 `cytoscape.esm.mjs:20003 TypeError: Cannot read properties of null (reading 'isHeadless')`。Graph 视图偶发不可用。
 - **Root cause hypothesis:** 缺 `onBeforeUnmount` 钩子,`cy` 实例在组件 unmount 后未清理,残留的事件 listener 仍在引用已销毁的 instance。
-- **Fix:** 加 `onBeforeUnmount` + `removeAllListeners()` + `destroy()` + `cy = null`,确保组件销毁时彻底释放 cytoscape 实例。
-- **Status:** [RESOLVED 2026-06-17 by 4def263]
+- **Fix:** 加 `onBeforeUnmount` + `removeAllListeners()` + `destroy()` + `cy = null`,确保组件销毁时彻底释放 cytoscape 实例。P5 解耦后该路径迁入共享 hook `useCytoscapeLifecycle.ts:destroy()`,`GraphView.vue` (display) 与 `EditableGraph.vue` (editable) 都通过 `init()` / `destroy()` 复用同一份 unmount 路径,行为一致。
+- **Status:** [RESOLVED 2026-06-17 by 4def263,2026-06-22 P5 解耦后保留修复路径 by 18fdd45 + 4434cb3]
+
+---
+
+## [工程化决策 - 本周期已落]
+
+> 6 个非 bugfix / 非 Q 决策 的工程改进。所有这些**不需要用户决策**(走"健壮可读优先"原则直接落),仅在此汇总以备追溯。
+> 不属于 P0(代码 bug),不属于 Q 决策(行为选项),属于"工程演进"。完整 commit 链见 [修复时间线](#修复时间线) 与 `git log --since="2026-06-17"`。
+
+| # | 决策 | 核心 commit | 说明 |
+|---|------|------------|------|
+| 1 | **配置规范化**:`docs/*.json` → `seeds/*.yaml` + Zod schema | `36134aa` | 解析失败报错(无 silent fallback),Zod schema 单一来源,前端可消费 yaml 的类型化导出。`pnpm dev` 现在能精准报"哪一行 YAML 错"而不是 JSON 解析出 `undefined` |
+| 2 | **runtime-compiler Mustache 模板** | `8b97113` | 字符串拼接收敛为 `{{var}}` 模板 + `buildViewModel()` viewmodel 层;新增 13 个 vitest 单测覆盖分支逻辑;加 `mustache` 依赖(零新库,标准库) |
+| 3 | **ChapterReader 独立阅读页** | `d253ac0` | 章节内容从 status 页面独立到 `/chapter/:chapterId` reader 页;`ChapterStatusBadge` 抽为通用组件复用 |
+| 4 | **双调色板 + boords design system** | `5f0bc43` + `4f86ac0` | token-based 颜色,light/dark 双套(`PALETTES = { light, dark }`),`resolvePalette(isDark)` 单点查表;为 dark mode 修复打基础 |
+| 5 | **dark mode contrast 修复** | `a4ae45f` + `789f601` | WCAG AA contrast 计算:muted-ash 4.83:1、border 1.97:1 等;暗色下不可见元素(border / icon-box)调亮;新增 dark-only `shadow-product` 与 `shadow-inner-highlight` |
+| 6 | **build hooks**(auto-build packages) | `3cfafcf` | `apps/server` + `apps/web` 的 `predev` / `pretest` / `prestart` / `prebuild` 加 `cd ../../ && pnpm -r --filter "./packages/*" build`,杜绝 stale dist 引起的"改了源码但行为是旧的"事故 |
+
+**Why 这一节不放 [P0 已修] / [Q 决策 - 已修]:** 那些节是"问题 + 修复";这一节是"演进 + commit",语义不同。但用户提问"还有哪些问题是需要我决策的"时,本节是答案"零"。
 
 ---
 
@@ -183,7 +207,9 @@ SPEC 修正说明:Q9(zod 接入)在 spec「背景」节中误标 OPEN,实施时�
 
 ### 3.2 Token counting 统一 — 不引入新库,自建单例
 
-**现状:** `js-tiktoken` 在 **7 个** `package.json` 装(根、`apps/server`、`apps/web`、4 个 `packages/*`),`PromptAssembler` 在 `packages/prompt-runtime` 有一套完整 budget 实现,`combined-extractor.computeContentCharBudget` 走自己的简化版。事实上的"三套并存" — 详见 [P0 待办 - 重复依赖 + 三套 token 实现](#p0-待办)。
+**状态:** **部分应用 (2026-06-22)**。统一入口 + 7 处重复装收口 + 一处迁移已完成(`bd62a21` / `792b533` / `412030a` / `4ccfb32`),详见 [P0 待办 #1 进展](#p0-待办)。剩余内部估算逻辑收口留作下一轮 P0。候选库仍全部拒掉,新引入库 = 0。
+
+**现状:** `js-tiktoken` 从 **7 个** `package.json` 收口到 `packages/ai-provider` 1 处直接装 + 6 处 transitive 依赖;`PromptAssembler` 已迁 `countTokens`;`apps/server` call sites 已切到 `countTokens`。`combined-extractor.computeContentCharBudget` 与 `graph-organizer` 的**内联 token 估算**(字符除以 4 之类)尚未精确化。事实上的"两套简化估算"还在,精确入口已就位。
 
 **候选:**
 
@@ -243,6 +269,17 @@ SPEC 修正说明:Q9(zod 接入)在 spec「背景」节中误标 OPEN,实施时�
 |------|------|------|
 | 2026-06-17 | `e077407` | [P0 #2] 段落感知内容截断,替代 `slice(0, 8000)` |
 | 2026-06-17 | `4def263` | [Bonus] cytoscape null `isHeadless` 修复 |
+| 2026-06-17 | `bd62a21` | [P0 #8 partial] `js-tiktoken` 7 处重复装收口到 `packages/ai-provider` 1 处 |
+| 2026-06-17 | `792b533` | [P0 #8 partial] `packages/ai-provider` re-export `countTokens` |
+| 2026-06-17 | `412030a` | [P0 #8 partial] `prompt-runtime` `estimateTokens` → `countTokens`,旧 alias 移除 |
+| 2026-06-17 | `4ccfb32` | [P0 #8 partial] `apps/server` 各 service call sites 切到 `countTokens` |
+| 2026-06-18 | `18fdd45` | [Bonus/P5] `Graph.vue` 拆 `GraphView` + `EditableGraph` + `useCytoscapeLifecycle` hook,4def263 修复路径迁入共享 hook |
+| 2026-06-18 | `4434cb3` | [Bonus/P5 review] 死 import + hook style/layout dedup + `GraphData` 复用 |
+| 2026-06-19 | `789f601` | [Dark mode] `--text-on-accent` / `--text-on-dark` 暗色下变暗灰修复 |
+| 2026-06-19 | `a4ae45f` | [Dark mode] 4 AA contrast failures + 不可见 border / icon-box 修复 |
+| 2026-06-21 | `43077f7` | [Bug] URL 直进设计页时 sider 标题显示"未知小说" |
+| 2026-06-21 | `6951a83` | [Bug] ReviewingPanel 4 个 delete action 加 confirm 弹窗 |
+| 2026-06-21 | `27b3cff` | [Bug] novel-design sider collapse UX |
 | 2026-06-16 | `c98d582` | [P0 #1 / Q4] 移除 `buildData` 的 `user-edited` 注入 |
 | 2026-06-16 | `dba2ba1` | [P0 #3 + P0 #4 / Q5] 统一 `JSON.parse` → `safeJsonParse`(graph 路由 + useChapterEditor) |
 | 2026-06-16 | `09092ae` | [P0 #5 / Q7] `prepare-archive` 加 try/catch + 状态回滚 |
