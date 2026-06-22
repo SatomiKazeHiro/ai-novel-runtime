@@ -63,13 +63,19 @@
           <div class="row-title">
             <span class="row-title__text">{{ node.title }}</span>
             <span v-if="node.isSideStory" class="row-tag row-tag--branch">番外</span>
+            <span class="row-title__spacer" />
+            <ChapterStatusBadge :status="node.status" />
           </div>
           <div class="row-meta">
-            <span class="row-status" :data-status="node.status">
-              <span class="row-status__dot" />
-              {{ statusLabel(node.status) }}
-            </span>
-            <span v-if="node.runtimeProfile" class="row-meta__sep">·</span>
+            <template v-if="node.status === 'archived' && archivedPreview(node)">
+              <n-tooltip placement="top" :delay="400">
+                <template #trigger>
+                  <span class="row-preview">{{ truncate(archivedPreview(node), 80) }}</span>
+                </template>
+                <div class="row-preview-tooltip">{{ truncate(archivedPreview(node), 300) }}</div>
+              </n-tooltip>
+              <span v-if="node.runtimeProfile" class="row-meta__sep">·</span>
+            </template>
             <span v-if="node.runtimeProfile" class="row-meta__profile">{{ node.runtimeProfile.name }}</span>
           </div>
         </div>
@@ -104,7 +110,10 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { NTooltip } from 'naive-ui'
 import { COLOR } from '../styles/tokens'
+import { getChapterPreview } from '../styles/chapter-status'
+import ChapterStatusBadge from './ChapterStatusBadge.vue'
 
 const ITEM_HEIGHT = 64
 const GAP = 10
@@ -134,6 +143,9 @@ interface TreeNode {
   status: string
   isSideStory?: boolean
   runtimeProfile?: { name: string } | null
+  /** 摘要 / 大纲, 仅 archived 状态在列表行展示 1 行预览 + 悬浮 tooltip 全文 300 字 */
+  summary?: string | null
+  outline?: string | null
   createdAt: string
   parentChapterId?: string | null
   children?: TreeNode[]
@@ -292,7 +304,7 @@ function getSpineColor(node: FlatNode) {
   if (node.status === 'generating') return COLOR.chapterGenerating
   if (node.status === 'generated') return COLOR.chapterGenerated
   if (node.status === 'reviewing') return COLOR.chapterReviewing
-  if (node.status === 'failed') return COLOR.chapterFailed
+  if (node.status === 'rejected') return COLOR.chapterFailed
   return getRowColor(node)
 }
 
@@ -350,25 +362,20 @@ const svgLines = computed(() => {
   return lines
 })
 
-function statusLabel(status?: string) {
-  switch (status) {
-    case 'archived': return 'archived · 已归档'
-    case 'selected': return 'selected · 已选'
-    case 'reviewing': return 'reviewing · 审阅中'
-    case 'generated': return 'generated · 待选'
-    case 'generating': return 'generating · 生成中'
-    case 'draft': return 'draft · 草稿'
-    case 'failed': return 'failed · 失败'
-    case 'rejected': return 'rejected · 驳回'
-    default: return status || 'unknown'
-  }
-}
-
 function formatNumberShort(n: number) {
   if (Number.isInteger(n)) {
     return n.toString().padStart(2, '0')
   }
   return n.toFixed(2)
+}
+
+function archivedPreview(node: TreeNode): string {
+  return getChapterPreview(node)
+}
+
+function truncate(text: string, max: number): string {
+  if (!text) return ''
+  return text.length > max ? text.slice(0, max) + '…' : text
 }
 
 function canDevelop(node: FlatNode) {
@@ -498,90 +505,56 @@ function canDelete(node: FlatNode) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex-shrink: 0;
+  max-width: 60%;
 }
 .list-row[data-mainline="false"] .row-title__text {
   color: var(--color-graphite);
   font-weight: var(--weight-medium);
+}
+.row-title__spacer {
+  flex: 1;
+  min-width: var(--space-2);
 }
 
 .row-meta {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  font-size: 12px;
   color: var(--text-tertiary);
   white-space: nowrap;
   overflow: hidden;
+  min-width: 0;
 }
-.row-meta__sep { opacity: 0.5; }
+.row-meta__sep { opacity: 0.5; flex-shrink: 0; }
 .row-meta__profile {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
   color: var(--color-graphite);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* === Status badge — boords 6px-radius chip with leading dot === */
-.row-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 1px 8px 1px 6px;
-  border-radius: var(--radius-badge);
-  background: var(--color-stone-gray);
-  border: 1px solid transparent;
-  color: var(--text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
-  line-height: 1.5;
-  flex-shrink: 0;
-  font-weight: var(--weight-semibold);
-}
-.row-status__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
   flex-shrink: 0;
 }
-.row-status[data-status="archived"] {
-  color: var(--accent);
-  background: var(--color-warm-accent-tint);
-}
-.row-status[data-status="selected"] {
-  color: var(--accent-link);
-  background: var(--accent-info-tint);
-}
-.row-status[data-status="reviewing"] {
-  color: var(--color-review);
-  background: var(--color-review-tint);
-}
-.row-status[data-status="generated"] {
-  color: var(--color-positive);
-  background: var(--color-positive-tint);
-}
-.row-status[data-status="generating"] {
-  color: var(--accent);
-  background: var(--color-warm-accent-tint);
-}
-.row-status[data-status="generating"] .row-status__dot {
-  animation: row-pulse 1.05s ease-in-out infinite;
-}
-.row-status[data-status="draft"] {
-  color: var(--text-tertiary);
-}
-.row-status[data-status="failed"],
-.row-status[data-status="rejected"] {
-  color: var(--color-error);
-  background: var(--color-error-tint);
-}
 
-@keyframes row-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
+.row-preview {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.row-preview-tooltip {
+  max-width: 360px;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: normal;
+  color: inherit;
 }
 
 .row-tag {
@@ -617,6 +590,7 @@ function canDelete(node: FlatNode) {
 @media (max-width: 760px) {
   .row-id { width: 72px; padding: 0 var(--space-2); }
   .row-main { padding: 0 var(--space-3); }
+  .row-title__text { max-width: 50%; }
   .row-actions { padding-right: var(--space-2); gap: 4px; }
   .row-actions .cap-pill { height: 26px; padding: 0 8px; font-size: 11px; }
 }

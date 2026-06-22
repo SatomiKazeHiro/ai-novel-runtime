@@ -14,6 +14,7 @@ import WorkerTask from '../views/WorkerTask.vue'
 import StoryWorkerTask from '../views/StoryWorkerTask.vue'
 import ModelManager from '../views/ModelManager.vue'
 import PromptLogs from '../views/PromptLogs.vue'
+import ChapterReader from '../views/ChapterReader.vue'
 
 const routes = [
   {
@@ -34,6 +35,7 @@ const routes = [
       { path: 'characters', name: 'Characters', component: Characters },
       { path: 'lore', name: 'LoreBook', component: LoreBook },
       { path: 'chapters', name: 'Chapters', component: Chapters },
+      { path: 'reader', name: 'ChapterReader', component: ChapterReader },
       { path: 'graph', name: 'Graph', component: Graph },
       { path: 'memory', name: 'Memory', component: Memory },
       { path: 'timeline', name: 'Timeline', component: Timeline },
