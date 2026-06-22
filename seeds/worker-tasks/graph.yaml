@@ -1,0 +1,5 @@
+name: '[系统] 图谱提取'
+workerType: graph
+taskPrompt: |-
+  你的任务是提取关系变化图谱。不要进行道德评价。只关注角色关系、势力关系、事件因果的结构化变化。
+enabled: true

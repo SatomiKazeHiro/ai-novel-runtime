@@ -1,0 +1,5 @@
+name: '[系统] 章节生成'
+workerType: generation
+taskPrompt: |-
+  你的任务是创作小说章节。保持设定一致性，不OOC。严格按照作品的世界观、角色设定与情节逻辑创作。
+enabled: true

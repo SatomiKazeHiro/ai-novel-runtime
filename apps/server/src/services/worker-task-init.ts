@@ -1,48 +1,47 @@
-import { HARDCODED_TASK_DEFAULTS } from '../setting.js'
+import { readdirSync, readFileSync } from 'fs'
+import { resolve } from 'path'
 import type { FastifyInstance } from 'fastify'
+import { loadYaml, WorkerTaskYamlSchema } from '@novel-runtime/shared'
 
+const TASKS_DIR = resolve(process.cwd(), '../../seeds/worker-tasks')
 
-interface WorkerTaskSeed {
-  name: string
-  workerType: string
-  taskPrompt: string
-}
+/**
+ * 从 docs/worker-tasks/*.yaml 启动导入 WorkerTask 到 DB (type='system').
+ *
+ * 与 runtime-profile-init 行为对称: fail-fast, 已存在 skip (改 YAML 后
+ * 需手动删 DB 行才能重新导入, 防止 DB 编辑被 YAML 静默覆盖).
+ *
+ * workerType 枚举由 WorkerTaskYamlSchema 的 z.enum 钉死, YAML 写错直接抛.
+ */
+export async function initWorkerTasks(app: FastifyInstance): Promise<void> {
+  let files: string[]
 
-const DEFAULT_WORKER_TASKS: WorkerTaskSeed[] = [
-  {
-    name: '[系统] 章节生成',
-    workerType: 'generation',
-    taskPrompt: HARDCODED_TASK_DEFAULTS.generation
-  },
-  {
-    name: '[系统] 内容评分',
-    workerType: 'scoring',
-    taskPrompt: HARDCODED_TASK_DEFAULTS.scoring
-  },
-  {
-    name: '[系统] 记忆提取',
-    workerType: 'memory',
-    taskPrompt: HARDCODED_TASK_DEFAULTS.memory
-  },
-  {
-    name: '[系统] 图谱提取',
-    workerType: 'graph',
-    taskPrompt: HARDCODED_TASK_DEFAULTS.graph
-  },
-  {
-    name: '[系统] 时间线提取',
-    workerType: 'timeline',
-    taskPrompt: HARDCODED_TASK_DEFAULTS.timeline
-  },
-  {
-    name: '[系统] 改写润色',
-    workerType: 'rewrite',
-    taskPrompt: HARDCODED_TASK_DEFAULTS.rewrite
+  try {
+    files = readdirSync(TASKS_DIR).filter(f => f.endsWith('.yaml'))
+  } catch (err: any) {
+    throw new Error(
+      `WorkerTasks directory not found: ${TASKS_DIR}. ` +
+      `Create seeds/worker-tasks/*.yaml first.`
+    )
   }
-]
 
-export async function initWorkerTasks(app: FastifyInstance) {
-  for (const seed of DEFAULT_WORKER_TASKS) {
+  if (files.length === 0) {
+    throw new Error(
+      `No worker-task YAML files found in ${TASKS_DIR}. ` +
+      `At least one seeds/worker-tasks/*.yaml is required.`
+    )
+  }
+
+  for (const file of files) {
+    const filePath = resolve(TASKS_DIR, file)
+    const raw = readFileSync(filePath, 'utf-8')
+
+    const seed = loadYaml({
+      text: raw,
+      schema: WorkerTaskYamlSchema,
+      source: file
+    })
+
     const existing = await app.prisma.workerTask.findFirst({
       where: {
         storyId: null,
@@ -51,7 +50,7 @@ export async function initWorkerTasks(app: FastifyInstance) {
     })
 
     if (existing) {
-      // 迁移：旧名称前缀从 "默认-" 改为 "[系统] "
+      // 兼容旧名称: "默认-xxx" → "[系统] xxx"
       if (existing.name && existing.name.startsWith('默认-')) {
         await app.prisma.workerTask.update({
           where: { id: existing.id },
@@ -71,10 +70,10 @@ export async function initWorkerTasks(app: FastifyInstance) {
         name: seed.name,
         workerType: seed.workerType,
         taskPrompt: seed.taskPrompt,
-        enabled: true
+        enabled: seed.enabled
       }
     })
 
-    app.log.info(`WorkerTask "${seed.name}" (${seed.workerType}) initialized`)
+    app.log.info(`WorkerTask "${seed.name}" (${seed.workerType}) initialized from ${file}`)
   }
 }

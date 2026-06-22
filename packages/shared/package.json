@@ -18,11 +18,13 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@types/yaml": "^1.9.7",
     "typescript": "^5.7.0"
   },
   "dependencies": {
     "es-toolkit": "^1.47.0",
     "js-tiktoken": "^1.0.21",
+    "yaml": "^2.9.0",
     "zod": "^3.25.76"
   }
 }

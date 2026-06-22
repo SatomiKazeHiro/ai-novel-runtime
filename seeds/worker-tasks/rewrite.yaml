@@ -1,0 +1,7 @@
+name: '[系统] 改写润色'
+workerType: rewrite
+taskPrompt: |-
+  你的任务是改写/润色指定段落。
+  保持原有风格、人设和情绪不变。
+  只优化表达，不改变剧情走向。
+enabled: true
