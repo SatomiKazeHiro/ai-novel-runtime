@@ -1,5 +1,5 @@
 <!-- From: D:\MGit-Projects\ai-novel-runtime\AGENTS.md -->
-# AI Novel Runtime — Agent Guide
+# AI 小说工坊 — Agent Guide
 
 > 本文档面向 AI Coding Agent。如果你对该项目一无所知，请从本文件开始阅读。
 
@@ -9,7 +9,7 @@
 
 ## 1. 项目概述
 
-**AI Novel Runtime** 是一个「AI 小说工程化 Runtime 系统」。
+**AI 小说工坊** 是一个「AI 小说工程化 Runtime 系统」。
 
 目标不是让 AI 自动写小说，而是让用户可以**稳定、高质量、可控地**开发长篇小说。
 

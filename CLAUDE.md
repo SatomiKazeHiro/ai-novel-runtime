@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**AI Novel Runtime** is a pnpm monorepo for engineering long-form novels with AI assistance. It is not an autonomous writer: the human directs, the AI generates, and the runtime maintains consistency across chapters.
+**AI 小说工坊** is a pnpm monorepo for engineering long-form novels with AI assistance. It is not an autonomous writer: the human directs, the AI generates, and the runtime maintains consistency across chapters.
 
 - `apps/server` — Fastify + Prisma + BullMQ backend
 - `apps/web` — Vue 3 + Vite + Pinia + Naive UI frontend
