@@ -29,42 +29,39 @@
     </div>
 
     <div class="cap-nav__actions">
-      <button class="cap-nav__link" @click="showSettings = true">
-        设置
-      </button>
+      <n-tooltip :delay="300">
+        <template #trigger>
+          <button
+            class="cap-nav__icon-btn"
+            :aria-label="`主题: ${themeLabel}`"
+            @click="cycleTheme"
+          >
+            <n-icon size="20">
+              <component :is="themeIcon" />
+            </n-icon>
+          </button>
+        </template>
+        主题: {{ themeLabel }} (点击切换)
+      </n-tooltip>
     </div>
-
-    <n-modal v-model:show="showSettings" title="设置" preset="card" style="width: 480px">
-      <n-form label-placement="left" label-width="100">
-        <n-form-item label="主题">
-          <n-radio-group v-model:value="themeStore.mode" @update:value="themeStore.setMode">
-            <n-radio-button value="light">白天</n-radio-button>
-            <n-radio-button value="dark">黑暗</n-radio-button>
-            <n-radio-button value="system">系统</n-radio-button>
-          </n-radio-group>
-        </n-form-item>
-        <n-form-item label="关于">
-          <n-text>AI 小说工坊 v0.1.0</n-text>
-        </n-form-item>
-      </n-form>
-    </n-modal>
   </n-layout-header>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  NLayoutHeader, NText,
-  NModal, NForm, NFormItem, NRadioGroup, NRadioButton
+  NLayoutHeader, NIcon, NTooltip
 } from 'naive-ui'
-import { useThemeStore } from '../stores/theme'
+import {
+  SunnyOutline, MoonOutline, DesktopOutline
+} from '@vicons/ionicons5'
+import { useThemeStore, type ThemeMode } from '../stores/theme'
 import { COLOR } from '../styles/tokens'
 
 const route = useRoute()
 const router = useRouter()
 const themeStore = useThemeStore()
-const showSettings = ref(false)
 
 // SVG fill/stroke attributes do not resolve var() — bind literal hex from tokens.
 const markBg = COLOR.inkBlack
@@ -81,6 +78,23 @@ const links = [
 function isActive(path: string) {
   if (path === '/') return route.path === '/'
   return route.path.startsWith(path)
+}
+
+// 主题切换: 三态循环 light -> dark -> system -> light, 图标随当前模式变。
+const THEME_CYCLE: ThemeMode[] = ['light', 'dark', 'system']
+const themeIcon = computed(() => {
+  if (themeStore.mode === 'light') return SunnyOutline
+  if (themeStore.mode === 'dark') return MoonOutline
+  return DesktopOutline
+})
+const themeLabel = computed(() => {
+  if (themeStore.mode === 'light') return '白天'
+  if (themeStore.mode === 'dark') return '黑暗'
+  return '系统'
+})
+function cycleTheme() {
+  const i = THEME_CYCLE.indexOf(themeStore.mode)
+  themeStore.setMode(THEME_CYCLE[(i + 1) % THEME_CYCLE.length])
 }
 </script>
 
@@ -197,5 +211,25 @@ function isActive(path: string) {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+/* 主题切换图标按钮 — 跟 nav link 同字号 / 同节奏, 但只占 32x32 圆角块, hover 时显底色 */
+.cap-nav__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.cap-nav__icon-btn:hover {
+  background: var(--color-stone-gray);
+  color: var(--color-ink-black);
 }
 </style>
