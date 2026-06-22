@@ -4,12 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "cd ../../ && pnpm -r --filter \"./packages/*\" build",
     "dev": "vite",
+    "pretest": "cd ../../ && pnpm -r --filter \"./packages/*\" build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prebuild": "cd ../../ && pnpm -r --filter \"./packages/*\" build",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "vue-tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
     "@novel-runtime/shared": "workspace:*",
