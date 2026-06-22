@@ -11,18 +11,18 @@
 ## 核心特性
 
 - **长篇小说工程化开发** — 多小说工程管理，工业化章节流水线
-- **线性章节设计** — 一本小说一条时间线，章节顺序排列，分叉则开新小说
+- **主线 + 番外分支设计** — 主线严格线性（1 → 2 → 3），番外（`isSideStory`）可挂在任意已归档章节下（`1.01`、`2.03`），一个小说承载多条叙事支线
 - **结构化世界观管理** — LoreBook 系统化维护境界、地图、功法、势力、物品、规则
 - **角色卡系统** — 静态属性（性格、外貌、说话风格）+ 历史快照动态状态（按 `fromChapterNumber` 记录，删除章节自动回退）
-- **章节状态机** — Draft → Generated → Selected → Archived，废案自动归档为创意资产
+- **章节状态机** — `Draft → Generating → Generated → Scored → Selected → Reviewing → Archived`(+ `Rejected`)，`Reviewing` 是 2026-06 新加的人工审查环节（见 `Chapter.pendingArchiveData`）
 - **多候选生成** — 一次生成多个候选版本，支持不同 temperature 采样策略
 - **AI 评分** — 7 维度评分（文风接近度、大纲符合度、场景符合度、写作人格一致性、文笔质量、情感张力、节奏把控）
 - **Prompt Pipeline** — Pipeline 式 Prompt 组装，Token 预算控制，动态裁剪，Stateless Generation
-- **多模型兼容** — OpenAI / DeepSeek / Claude / Gemini 等统一接口
-- **知识图谱** — 人物关系图、势力图、事件图、物品图的可视化与管理（全局工作表）
+- **多模型兼容** — `AIProvider` 统一接口；当前 `DeepSeekProvider` 完整实现，`OpenAIProvider` 是 stub（其它 Provider 按同一接口实现即可接入）
+- **知识图谱** — 人物关系图、势力图、事件图、物品图的可视化与管理（全局工作表，Cytoscape）
 - **分层记忆** — Global / Chapter / Scene / Temporary 四层记忆系统，语义检索 + 近似去重 + AI 记忆优化（每章归档后自动融合新旧记忆）
 - **剧情弧线追踪** — 追踪主线/支线剧情进展，标注未解悬念
-- **任务队列** — 生成/评分异步化（BullMQ + Redis，开发环境自动回退内存队列）
+- **任务队列** — 生成异步化（BullMQ + Redis，开发环境自动回退内存队列）
 
 ---
 
@@ -37,10 +37,11 @@
 | Vite | 构建工具，开发端口 5173，代理 `/api` 到后端 3000 |
 | Pinia | 状态管理 |
 | Vue Router | 路由，双 Layout：SimpleLayout / NovelDesignLayout |
-| Naive UI | 组件库 |
+| Naive UI | 组件库；主题色走 boords design system（light/dark/system 三模式切换） |
 | Axios | HTTP 请求 |
 | Cytoscape | 知识图谱可视化 |
-| @vueuse/core | 组合式工具库 |
+| @vueuse/core | 组合式工具库（含 `useIntervalFn` 用于轮询生成状态） |
+| es-toolkit | 现代化工具库（lodash 替代） |
 
 ### 后端
 
@@ -53,8 +54,8 @@
 | BullMQ | 任务队列（Redis 可用时使用） |
 | IORedis | Redis 客户端 |
 | graphology | 图引擎 |
-| js-tiktoken | Token 计算 |
-| zod | 运行时校验 |
+| js-tiktoken | Token 计算（cl100k_base；P1 收口后仅 `packages/ai-provider` 直接装，其它包 transitive 依赖；`packages/{shared,memory-engine,prompt-runtime}` 因结构性原因保留直接装） |
+| zod | 运行时校验（Q9 已接入前后端） |
 
 ### 数据库
 
@@ -76,13 +77,17 @@ novel-runtime/
 │   │       ├── app.ts       # Fastify 应用构建（注册插件、路由、队列处理器）
 │   │       ├── plugins/
 │   │       │   └── prisma.ts
-│   │       ├── routes/      # API 路由（按领域划分）
+│   │       ├── routes/      # API 路由（18 个模块；P3 把 chapters.ts 拆为 5 文件）
 │   │       │   ├── health.ts
 │   │       │   ├── stories.ts
 │   │       │   ├── characters.ts
 │   │       │   ├── lore.ts
 │   │       │   ├── timeline.ts
-│   │       │   ├── chapters.ts        # 章节核心路由
+│   │       │   ├── chapters-crud.ts         # 章节 CRUD（基础）
+│   │       │   ├── chapters-generate.ts     # preview / generate / select / develop
+│   │       │   ├── chapters-archive.ts      # prepare-archive / archive 确认（含事务）
+│   │       │   ├── chapters-tree.ts         # chapter-tree
+│   │       │   ├── _helpers.ts              # 共享 helper（状态机 / 锁 / 异常）
 │   │       │   ├── drafts.ts
 │   │       │   ├── graph.ts
 │   │       │   ├── memories.ts
@@ -91,22 +96,22 @@ novel-runtime/
 │   │       │   ├── worker-task.ts
 │   │       │   ├── ai-provider.ts
 │   │       │   └── prompt-logs.ts
-│   │       ├── services/    # 业务处理器
-│   │       │   ├── ai-provider-init.ts
-│   │       │   ├── runtime-profile-init.ts
-│   │       │   ├── runtime-loader.ts
-│   │       │   ├── generate-processor.ts
-│   │       │   ├── ai-call-logger.ts
-│   │       │   ├── combined-extractor.ts    # 归档时合并提取记忆+图谱+弧线
-│   │       │   ├── memory-extractor.ts
-│   │       │   ├── graph-extractor.ts
-│   │       │   ├── plot-extractor.ts
-│   │       │   ├── graph-snapshot.ts
-│   │       │   ├── memory-compressor.ts     # @deprecated，已被 memory-optimizer 取代
-│   │       │   ├── memory-organizer.ts      # @deprecated，已被 memory-optimizer 取代
-│   │       │   └── memory-optimizer.ts      # 每章归档后优化 global 层记忆
-│   │       └── queue/
-│   │           └── index.ts
+│   │       └── services/    # 业务处理器（15 个）
+│   │           ├── ai-provider-init.ts      # 启动时从 env 初始化默认 AI Provider
+│   │           ├── runtime-profile-init.ts  # 启动时扫描 seeds/profiles/*.yaml 导入
+│   │           ├── worker-task-init.ts      # 启动时扫描 seeds/worker-tasks/*.yaml 导入
+│   │           ├── runtime-loader.ts        # 加载 RuntimeBase / WorkerTask（Story→默认→fallback）
+│   │           ├── generate-processor.ts    # BullMQ 队列处理器：循环生成 draft
+│   │           ├── ai-call-logger.ts        # **强制** AI 调用包装：自动写 PromptLog
+│   │           ├── combined-extractor.ts    # 归档核心：一次 AI 提取记忆+图谱+弧线
+│   │           ├── graph-extractor.ts       # legacy（已被 combined-extractor 取代，保留死代码）
+│   │           ├── graph-organizer.ts       # 归档阶段 2：合并全局图谱 + 本章新增
+│   │           ├── graph-snapshot.ts        # 扩展邻域 / 图谱快照数据结构
+│   │           ├── memory-extractor.ts      # legacy（保留死代码）
+│   │           ├── memory-organizer.ts      # AI 整理：merge/update/delete/keep + Jaccard 校验
+│   │           ├── memory-optimizer.ts      # 归档阶段 4：全局记忆融合（失败不阻塞归档）
+│   │           ├── memory-compressor.ts     # @deprecated，未被路由调用
+│   │           └── plot-extractor.ts        # 提取/更新剧情弧线
 │   └── web/                 # Vue 3 前端
 │       └── src/
 │           ├── main.ts
@@ -120,31 +125,57 @@ novel-runtime/
 │           │   ├── Characters.vue
 │           │   ├── LoreBook.vue
 │           │   ├── Chapters.vue
+│           │   ├── ChapterReader.vue          # 章节独立阅读页（d253ac0）
 │           │   ├── Timeline.vue
-│           │   ├── Graph.vue
+│           │   ├── Graph.vue                  # view shell（P5 拆为 GraphView + EditableGraph）
 │           │   ├── Memory.vue
+│           │   ├── ReviewingPanel.vue         # reviewing 状态的人工审查页
 │           │   ├── RuntimeProfile.vue
 │           │   ├── WorkerTask.vue
 │           │   ├── StoryWorkerTask.vue
 │           │   ├── ModelManager.vue
 │           │   ├── PromptLogs.vue
 │           │   ├── SimpleLayout.vue
-│           │   └── NovelDesignLayout.vue
+│           │   ├── NovelDesignLayout.vue
+│           │   └── chapters/                  # P4：Chapters.vue 拆为 4 子组件
+│           │       ├── ChapterToolbar.vue
+│           │       ├── ChapterList.vue
+│           │       ├── ChapterEditor.vue
+│           │       └── ChapterPreview.vue
 │           ├── components/    # 共享组件
-│           ├── composables/   # 组合式函数
+│           │   ├── ChapterBranchTree.vue
+│           │   ├── ChapterStatusBadge.vue
+│           │   ├── DynamicTags.vue
+│           │   ├── NavBar.vue
+│           │   └── graph/                     # P5：Graph 拆分后的 display + editable 组件
+│           │       ├── GraphView.vue
+│           │       ├── EditableGraph.vue
+│           │       ├── ChapterReel.vue
+│           │       └── GraphLegend.vue
+│           ├── composables/   # 组合式函数（editor / draft / tree / prompt + graph 子目录）
+│           │   ├── graph/useCytoscapeLifecycle.ts    # P5 抽出的共享 hook（407 行）
+│           │   ├── useChapterEditor.ts
+│           │   ├── useChapterTree.ts
+│           │   ├── useDraftManager.ts
+│           │   └── usePromptManager.ts
 │           └── utils/
 │               └── api.ts
-├── packages/                  # 共享包（Monorepo）
-│   ├── shared/                # 类型、常量、工具函数
-│   ├── ai-provider/           # AI Provider 统一封装
-│   ├── prompt-runtime/        # Prompt Pipeline / Token 预算控制
-│   ├── memory-engine/         # 分层记忆管理 + 语义检索
+├── packages/                  # 共享包（Monorepo；6 个包）
+│   ├── shared/                # 类型、常量、工具函数 + zod schema
+│   ├── ai-provider/           # AI Provider 统一封装 + Runtime Prompt 编译器 + countTokens
+│   ├── prompt-runtime/        # Prompt Pipeline / Token 预算控制（model-aware）
+│   ├── memory-engine/         # 分层记忆管理 + 语义检索 + Jaccard 去重
 │   ├── knowledge-graph/       # graphology 图引擎封装
-│   ├── scoring-engine/        # 评分引擎接口
-│   └── warning-engine/        # 已移除（占位包）
+│   └── scoring-engine/        # 规则评分引擎
 ├── docs/
-│   ├── profiles/              # 预设写作人格（11 种类型）
-│   └── sql-reference.md
+│   ├── DESIGN.md              # boords 设计系统参考
+│   ├── ISSUES.md              # P0 + Q 决策 + 工程化决策 + 库选型 + 修复时间线
+│   ├── LOGIC.md               # 15 分钟架构速览
+│   ├── sql-reference.md       # 数据模型 + 关系 + 迁移历史
+│   └── superpowers/           # 设计文档（specs/*）+ 实施计划（plans/ 保留 P1/P5 作模板）
+├── seeds/                     # 注意：在仓库根目录，不在 docs/ 下
+│   ├── profiles/              # RuntimeProfile YAML 预设（启动时自动导入）
+│   └── worker-tasks/          # WorkerTask YAML 预设（启动时自动导入）
 ├── prisma/
 │   ├── schema.prisma          # 数据库模型定义
 │   ├── migrations/            # SQL 迁移文件
@@ -246,11 +277,12 @@ http://localhost:3000/documentation
 | `/api/stories/:id` | GET/PUT/DELETE | 小说详情/更新/删除 |
 | `/api/stories/:id/chapters` | GET/POST | 章节列表/创建 |
 | `/api/chapters/:id` | GET/PUT/DELETE | 章节详情/更新/删除 |
-| `/api/chapters/:id/develop` | POST | 发展下一章/番外（主线仅限最新章节） |
-| `/api/chapters/:id/preview` | POST | 预览 Prompt |
-| `/api/chapters/:id/generate` | POST | 提交生成任务 |
-| `/api/chapters/:id/select` | POST | 采用候选 |
-| `/api/chapters/:id/archive` | POST | 归档章节（触发记忆/图谱/弧线提取） |
+| `/api/chapters/:id/develop` | POST | 发展下一章/番外（主线仅限最新章节；状态机独占锁 Q10） |
+| `/api/chapters/:id/preview` | POST | 预览 Prompt（不写入 DB） |
+| `/api/chapters/:id/generate` | POST | 提交生成任务（状态机独占锁） |
+| `/api/chapters/:id/select` | POST | 采用候选（事务内校验 draft.chapterId === chapterId） |
+| `/api/chapters/:id/prepare-archive` | POST | **阶段 1+2**：合并提取 + 图谱整理 → 写 `Chapter.pendingArchiveData` → 状态变 `reviewing` |
+| `/api/chapters/:id/archive` | POST | **确认归档**：从 `pendingArchiveData` 读出 → 事务写入全部派生数据 + `status='archived'` → 阶段 4 全局记忆融合 |
 
 ### 其他领域 API
 
@@ -268,20 +300,24 @@ http://localhost:3000/documentation
 
 ## 核心系统设计
 
-### 线性章节设计
+### 章节分支设计
 
-一本小说只有一条明确的时间线，所有章节顺序排列。如需剧情分叉，应创建新小说。
+一本小说承载**一条主线 + 任意条番外支线**：
+
+- **主线**严格线性（`1 → 2 → 3 → 4`），只能从最新章节继续发展；序号为整数
+- **番外**（`isSideStory = true`）可挂在任意已归档章节下，序号为小数（`1.01` 从第 1 章分出，`2.03` 从第 2 章分出）
+- 番外有完整的章节生命周期（draft → archived），但归档时**不触发**主线的全局记忆融合（只在自己的 snapshot 上扩展）
+- 无版本分支概念 — 所有数据全局共享（同一小说的番外与主线共享角色 / 世界观 / 记忆）
 
 ```
-第1章 → 第2章 → 第3章 → 第4章
-            ↓
-         番外·2.01
+第1章 → 第2章 → 第3章 → 第4章（主线）
+  │        │
+  ↓        ↓
+番外·1.01  番外·2.01（支线，可独立或并列发展）
 ```
 
-- 无版本分支概念 — 所有数据全局共享
-- 主线只能从最新章节继续发展
-- 番外可挂在任意已归档章节，番外归档不触发提取
-- 删除末尾章节时自动回退派生数据（记忆、时间线、角色状态）
+- 删除已归档章节时级联清理同 `fromChapterNumber` 的派生数据（记忆、时间线、角色状态）并从上一章 snapshot 重建图谱
+- `parentChapterId` 字段记录分支父节点；`ChapterBranchTree.vue` 渲染树形视图
 
 ### Prompt Pipeline
 
@@ -328,10 +364,15 @@ Temporary Memory → 临时上下文
 ### 章节状态机
 
 ```
-Draft → Generated → Selected → Archived
-  ↓         ↓          ↓              ↑
-Rejected  (无)      (无)      合并提取（记忆+图谱+弧线）+ 图谱整理 + 记忆优化 + graphSnapshot
+   Draft → Generating → Generated → Scored → Selected → Reviewing → Archived
+     ↓         ↓             ↓          ↓       ↓           ↓              ↑
+  Rejected  Rejected     Rejected  (保留)  Rejected   (取消 = 删除章节)   阶段 1+2: 合并提取 + 图谱整理
+                                                                              → 写 pendingArchiveData → reviewing
+                                                                  阶段 3: prisma.$transaction 提交
+                                                                  阶段 4: optimizeMemories 全局融合（失败不阻塞）
 ```
+
+8 个状态值见 `prisma/schema.prisma` 的 `enum ChapterStatus`。`reviewing` 是 2026-06 新加的关键环节，AI 提取完不直接写库，等用户在 `ReviewingPanel.vue` 编辑后再 commit。
 
 ---
 
@@ -381,7 +422,7 @@ pnpm build
 
 ### 添加新的预设写作人格
 
-在 `docs/profiles/` 下新建 JSON 文件，后端启动时自动扫描并导入数据库。
+在 `seeds/profiles/` 下新建 YAML 文件（带 Zod schema 校验，`packages/shared/src/profile-schema.ts`），后端启动时自动扫描并导入数据库。YAML 解析失败会立即报错（无 silent fallback），便于调试。
 
 ---
 
