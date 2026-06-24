@@ -10,6 +10,17 @@ export const api = axios.create({
   }
 })
 
+// FormData 透传: 删除默认 Content-Type,让浏览器/XHR 自行加 multipart boundary
+api.interceptors.request.use((config) => {
+  if (config.data instanceof FormData) {
+    if (config.headers) {
+      delete (config.headers as any)['Content-Type']
+      delete (config.headers as any)['content-type']
+    }
+  }
+  return config
+})
+
 api.interceptors.response.use(
   (response) => response,
   (error) => {
