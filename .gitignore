@@ -9,3 +9,6 @@ prisma/dev.db-journal
 
 # 运行时上传的封面
 apps/server/uploads/
+
+# superpowers plugin 内部状态目录
+.superpowers/
