@@ -5,6 +5,7 @@ import swaggerUi from '@fastify/swagger-ui'
 import { prismaPlugin } from './plugins/prisma.js'
 import { healthRoutes } from './routes/health.js'
 import { storyRoutes } from './routes/stories.js'
+import { coverRoutes } from './routes/covers.js'
 import { characterRoutes } from './routes/characters.js'
 import { loreRoutes } from './routes/lore.js'
 import { timelineRoutes } from './routes/timeline.js'
@@ -57,6 +58,7 @@ export async function buildApp() {
   // Routes
   await app.register(healthRoutes, { prefix: '/api/health' })
   await app.register(storyRoutes, { prefix: '/api/stories' })
+  await app.register(coverRoutes)
   await app.register(characterRoutes)
   await app.register(loreRoutes)
   await app.register(timelineRoutes)
