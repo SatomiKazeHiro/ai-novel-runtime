@@ -5,6 +5,7 @@ import swaggerUi from '@fastify/swagger-ui'
 import staticPlugin from '@fastify/static'
 import { UPLOADS_ROOT } from './config/paths.js'
 import { prismaPlugin } from './plugins/prisma.js'
+import { uploadPlugin } from './plugins/upload.js'
 import { healthRoutes } from './routes/health.js'
 import { storyRoutes } from './routes/stories.js'
 import { coverRoutes } from './routes/covers.js'
@@ -44,6 +45,7 @@ export async function buildApp() {
   })
   await app.register(swaggerUi, { routePrefix: '/documentation' })
   await app.register(prismaPlugin)
+  await app.register(uploadPlugin)
 
   // 暴露上传的封面图片
   await app.register(staticPlugin, {
