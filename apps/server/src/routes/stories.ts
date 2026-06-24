@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { UPLOADS_ROOT } from '../config/paths.js'
-import { saveCover, deleteCover } from '../lib/cover-storage.js'
+import { saveCover, deleteCover, deleteCoversByStoryId } from '../lib/cover-storage.js'
 
 const MIME_TO_EXT: Record<string, 'jpg' | 'png' | 'webp'> = {
   'image/jpeg': 'jpg',
@@ -185,8 +185,13 @@ export async function storyRoutes(app: FastifyInstance) {
 
   // DELETE /stories/:id
   app.delete('/:id', async (request, reply) => {
-    const { id } = request.params as any
+    const { id } = request.params as { id: string }
     await app.prisma.story.delete({ where: { id } })
+    try {
+      await deleteCoversByStoryId(UPLOADS_ROOT, id)
+    } catch (err) {
+      app.log.warn({ err, storyId: id }, 'cascade cover cleanup failed')
+    }
     return { success: true }
   })
 }
