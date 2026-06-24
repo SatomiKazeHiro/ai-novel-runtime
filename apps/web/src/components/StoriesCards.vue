@@ -9,9 +9,9 @@
       <div class="stories-cards__cover">
         <StoryCover :story="story" />
         <n-dropdown
-          :options="menuOptions(story)"
+          :options="menuOptions"
           trigger="click"
-          @click.stop
+          @select="(key) => onMenuSelect(story, key)"
         >
           <button class="stories-cards__menu" @click.stop aria-label="操作菜单">⋯</button>
         </n-dropdown>
@@ -62,18 +62,15 @@ function onDesign(id: string) {
   router.push(`/novel-design/${id}/characters`)
 }
 
-function menuOptions(story: Story): DropdownOption[] {
-  return [
-    { label: '编辑', key: 'edit' },
-    { type: 'divider', key: 'd1' },
-    { label: '删除', key: 'remove' }
-  ].map(opt => ({
-    ...opt,
-    onSelect: () => {
-      if (opt.key === 'edit') emit('edit', story)
-      if (opt.key === 'remove') emit('remove', story)
-    }
-  })) as DropdownOption[]
+const menuOptions: DropdownOption[] = [
+  { label: '编辑', key: 'edit' },
+  { type: 'divider', key: 'd1' },
+  { label: '删除', key: 'remove' }
+]
+
+function onMenuSelect(story: Story, key: string | number) {
+  if (key === 'edit') emit('edit', story)
+  else if (key === 'remove') emit('remove', story)
 }
 </script>
 
