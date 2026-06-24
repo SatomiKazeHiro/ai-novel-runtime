@@ -21,7 +21,9 @@ const updateStorySchema = z.object({
   description: z.string().optional(),
   status: z.enum(['active', 'archived', 'deleted']).optional(),
   runtimeProfileId: z.string().nullable().optional(),
-  aiProviderConfigId: z.string().nullable().optional()
+  aiProviderConfigId: z.string().nullable().optional(),
+  // accept boolean (JSON body) or string 'true'/'false' (multipart FormData field)
+  removeCover: z.union([z.boolean(), z.string()]).optional()
 })
 
 export async function storyRoutes(app: FastifyInstance) {
@@ -99,7 +101,6 @@ export async function storyRoutes(app: FastifyInstance) {
     // 解析 body: multipart 或 JSON
     const body: Record<string, any> = {}
     let coverFile: { mimetype: string; content: Buffer } | undefined
-    let removeCover = false
 
     if (typeof (request as any).isMultipart === 'function' && (request as any).isMultipart()) {
       const parts = (request as any).parts()
@@ -110,12 +111,8 @@ export async function storyRoutes(app: FastifyInstance) {
             mimetype: part.mimetype,
             content: await part.toBuffer()
           }
-        } else if (part.type === 'field') {
-          if (part.fieldname === 'removeCover') {
-            removeCover = part.value === 'true'
-          } else {
-            body[part.fieldname] = part.value
-          }
+        } else {
+          body[part.fieldname] = part.value
         }
       }
     } else {
@@ -127,6 +124,8 @@ export async function storyRoutes(app: FastifyInstance) {
       return reply.status(400).send({ success: false, error: parseResult.error.errors.map((e: any) => e.message).join('; ') })
     }
     const data: Record<string, any> = { ...parseResult.data }
+    const removeCover = data.removeCover === true || data.removeCover === 'true'
+    delete data.removeCover
 
     // 拉一次当前 coverUrl, 用于旧文件清理和 removeCover 单独使用
     const previous = await app.prisma.story.findUnique({
@@ -142,8 +141,8 @@ export async function storyRoutes(app: FastifyInstance) {
       }
       const newUrl = await saveCover(UPLOADS_ROOT, id, Date.now(), ext, coverFile.content)
       data.coverUrl = newUrl
-      // 新文件成功保存后再清旧文件,顺序保证: 如果 saveCover 抛错则不会删旧
-      if (removeCover || previousCoverUrl) {
+      // 有新文件就一定清旧 (即使 saveCover 后才 deleteCover, 顺序保证旧文件被替换)
+      if (previousCoverUrl) {
         await deleteCover(UPLOADS_ROOT, previousCoverUrl)
       }
     } else if (removeCover) {
