@@ -2,6 +2,8 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import swagger from '@fastify/swagger'
 import swaggerUi from '@fastify/swagger-ui'
+import staticPlugin from '@fastify/static'
+import { UPLOADS_ROOT } from './config/paths.js'
 import { prismaPlugin } from './plugins/prisma.js'
 import { healthRoutes } from './routes/health.js'
 import { storyRoutes } from './routes/stories.js'
@@ -42,6 +44,13 @@ export async function buildApp() {
   })
   await app.register(swaggerUi, { routePrefix: '/documentation' })
   await app.register(prismaPlugin)
+
+  // 暴露上传的封面图片
+  await app.register(staticPlugin, {
+    root: UPLOADS_ROOT,
+    prefix: '/uploads/',
+    decorateReply: false
+  })
 
   // Init AI Provider config from env
   await initAiProviderConfig(app)
