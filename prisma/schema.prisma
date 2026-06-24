@@ -13,6 +13,7 @@ model Story {
   id                 String   @id @default(uuid())
   title              String
   description        String?
+  coverUrl           String?  // 相对路径,如 /uploads/covers/{storyId}-{ts}.{ext}
   status             String   @default("active") // active, completed, archived
   aiProviderConfigId String?  // 小说默认运行模型
   createdAt          DateTime @default(now())
