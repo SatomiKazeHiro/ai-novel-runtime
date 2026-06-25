@@ -119,12 +119,12 @@
                     <n-input v-model:value="arc.name" placeholder="弧线名称" />
                   </n-form-item>
                   <n-grid cols="2" x-gap="12" :show-divider="false">
-                    <n-gi>
+                    <NGridItem>
                       <n-select v-model:value="arc.type" :options="arcTypeOptions" />
-                    </n-gi>
-                    <n-gi>
+                    </NGridItem>
+                    <NGridItem>
                       <n-select v-model:value="arc.status" :options="arcStatusOptions" />
-                    </n-gi>
+                    </NGridItem>
                   </n-grid>
                   <n-form-item label="进度" label-placement="left">
                     <n-slider v-model:value="arc.progress" :min="0" :max="100" :step="1" />
@@ -179,7 +179,7 @@
 import { ref, computed, watch } from 'vue'
 import {
   NCard, NSpace, NTabs, NTabPane, NCollapse, NCollapseItem,
-  NInput, NInputNumber, NButton, NEmpty, NDivider, NFormItem, NGrid, NText,
+  NInput, NInputNumber, NButton, NEmpty, NDivider, NFormItem, NGrid, NGridItem, NText,
   NSelect, NSlider,
   useDialog
 } from 'naive-ui'
