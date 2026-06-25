@@ -139,20 +139,20 @@ const columns: DataTableColumns<AiProviderConfig> = [
   },
   { title: '模型商', key: 'name', width: 120 },
   { title: '模型', key: 'model', width: 160 },
-  { title: 'API Key', key: 'apiKey', width: 160, render(row) {
+  { title: 'API Key', key: 'apiKey', width: 120, render(row) {
     return h(NTag, { size: 'small', type: 'default' }, { default: () => maskKey(row.apiKey) })
   }},
   { title: '上下文长度', key: 'contextLength', width: 120 },
-  { title: '最大输出', key: 'maxTokens', width: 100 },
-  { title: '温度', key: 'temperature', width: 80 },
-  { title: '备注', key: 'remarks', ellipsis: { tooltip: true } },
+  { title: '最大输出', key: 'maxTokens', width: 96 },
+  { title: '温度', key: 'temperature', width: 60 },
+  { title: '备注', key: 'remarks', width: 120, ellipsis: { tooltip: true } },
   { title: '默认', key: 'isDefault', width: 80, render(row) {
     return row.isDefault ? h(NTag, { type: 'success', size: 'small' }, { default: () => '是' }) : '-'
   }},
   {
     title: '操作',
     key: 'actions',
-    width: 240,
+    width: 160,
     render(row) {
       if (row.type === 'system') {
         return h(NTag, { size: 'small', type: 'info' }, { default: () => '来自 .env' })

@@ -62,6 +62,12 @@ export async function callHandler(
     params: params || {},
     query: query || {}
   }
+  // If body looks like a fake multipart request (has isMultipart fn), merge its
+  // fields onto the top-level request — Fastify's @fastify/multipart decorates
+  // the request object itself, not request.body.
+  if (body && typeof body.isMultipart === 'function') {
+    Object.assign(request, body)
+  }
   const ret = await handler(request, reply)
   const sent = reply.send.mock.calls[0]?.[0]
   return {

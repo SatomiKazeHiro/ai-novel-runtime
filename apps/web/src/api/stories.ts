@@ -15,10 +15,21 @@ export interface StoryUpdate {
   aiProviderConfigId?: string | null
 }
 
+export interface Story {
+  id: string
+  title: string
+  description: string | null
+  status: string
+  coverUrl?: string | null
+  [key: string]: any
+}
+
 export const storiesApi = {
-  list: () => api.get('/api/stories'),
-  get: (id: string) => api.get(`/api/stories/${id}`),
-  create: (data: StoryCreate) => api.post('/api/stories', data),
-  update: (id: string, data: StoryUpdate) => api.put(`/api/stories/${id}`, data),
-  remove: (id: string) => api.delete(`/api/stories/${id}`)
+  list: () => api.get<{ success: true; data: Story[] }>('/api/stories'),
+  get: (id: string) => api.get<{ success: true; data: Story }>(`/api/stories/${id}`),
+  create: (data: StoryCreate) => api.post<{ success: true; data: Story }>('/api/stories', data),
+  update: (id: string, data: StoryUpdate | FormData) =>
+    api.put<{ success: true; data: Story }>(`/api/stories/${id}`, data),
+  remove: (id: string) => api.delete<{ success: true }>(`/api/stories/${id}`),
+  removeCover: (id: string) => api.delete<{ success: true }>(`/api/stories/${id}/cover`)
 }

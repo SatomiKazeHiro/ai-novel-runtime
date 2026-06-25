@@ -1,5 +1,13 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import { UPLOADS_ROOT } from '../config/paths.js'
+import { saveCover, deleteCover, deleteCoversByStoryId } from '../lib/cover-storage.js'
+
+const MIME_TO_EXT: Record<string, 'jpg' | 'png' | 'webp'> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp'
+}
 
 const createStorySchema = z.object({
   title: z.string().min(1, '标题不能为空'),
@@ -13,7 +21,9 @@ const updateStorySchema = z.object({
   description: z.string().optional(),
   status: z.enum(['active', 'archived', 'deleted']).optional(),
   runtimeProfileId: z.string().nullable().optional(),
-  aiProviderConfigId: z.string().nullable().optional()
+  aiProviderConfigId: z.string().nullable().optional(),
+  // accept boolean (JSON body) or string 'true'/'false' (multipart FormData field)
+  removeCover: z.union([z.boolean(), z.string()]).optional()
 })
 
 export async function storyRoutes(app: FastifyInstance) {
@@ -87,26 +97,76 @@ export async function storyRoutes(app: FastifyInstance) {
   // PUT /stories/:id
   app.put('/:id', async (request, reply) => {
     const { id } = request.params as any
-    const parseResult = updateStorySchema.safeParse(request.body)
-    if (!parseResult.success) {
-      return reply.status(400).send({ success: false, error: parseResult.error.errors.map(e => e.message).join('; ') })
-    }
-    const body = parseResult.data
-    const story = await app.prisma.story.update({
-      where: { id },
-      data: {
-        title: body.title,
-        description: body.description,
-        status: body.status,
-        runtimeProfileId: body.runtimeProfileId !== undefined ? body.runtimeProfileId : undefined,
-        aiProviderConfigId: body.aiProviderConfigId !== undefined ? body.aiProviderConfigId : undefined
-      },
-      include: {
-        _count: { select: { chapters: true, characters: true } },
-        runtimeProfile: { select: { id: true, name: true } }
+
+    // 解析 body: multipart 或 JSON
+    const body: Record<string, any> = {}
+    let coverFile: { mimetype: string; content: Buffer } | undefined
+
+    if (typeof (request as any).isMultipart === 'function' && (request as any).isMultipart()) {
+      const parts = (request as any).parts()
+      for await (const part of parts) {
+        if (part.type === 'file') {
+          if (part.fieldname !== 'cover') continue
+          coverFile = {
+            mimetype: part.mimetype,
+            content: await part.toBuffer()
+          }
+        } else {
+          body[part.fieldname] = part.value
+        }
       }
+    } else {
+      Object.assign(body, request.body || {})
+    }
+
+    const parseResult = updateStorySchema.safeParse(body)
+    if (!parseResult.success) {
+      return reply.status(400).send({ success: false, error: parseResult.error.errors.map((e: any) => e.message).join('; ') })
+    }
+    const data: Record<string, any> = { ...parseResult.data }
+    const removeCover = data.removeCover === true || data.removeCover === 'true'
+    delete data.removeCover
+
+    // 拉一次当前 coverUrl, 用于旧文件清理和 removeCover 单独使用
+    const previous = await app.prisma.story.findUnique({
+      where: { id },
+      select: { coverUrl: true }
     })
-    return { success: true, data: story }
+    const previousCoverUrl = previous?.coverUrl ?? null
+
+    if (coverFile) {
+      const ext = MIME_TO_EXT[coverFile.mimetype]
+      if (!ext) {
+        return reply.status(415).send({ success: false, error: `不支持的图片格式: ${coverFile.mimetype}` })
+      }
+      const newUrl = await saveCover(UPLOADS_ROOT, id, Date.now(), ext, coverFile.content)
+      data.coverUrl = newUrl
+      // 有新文件就一定清旧 (即使 saveCover 后才 deleteCover, 顺序保证旧文件被替换)
+      if (previousCoverUrl) {
+        await deleteCover(UPLOADS_ROOT, previousCoverUrl)
+      }
+    } else if (removeCover) {
+      await deleteCover(UPLOADS_ROOT, previousCoverUrl)
+      data.coverUrl = null
+    }
+
+    try {
+      const story = await app.prisma.story.update({
+        where: { id },
+        data,
+        include: {
+          _count: { select: { chapters: true, characters: true } },
+          runtimeProfile: { select: { id: true, name: true } }
+        }
+      })
+      return { success: true, data: story }
+    } catch (err: any) {
+      // DB 写失败: 如果刚刚 saveCover 写入过新文件, 立即 unlink 避免孤儿
+      if (data.coverUrl && data.coverUrl !== previousCoverUrl) {
+        await deleteCover(UPLOADS_ROOT, data.coverUrl).catch(() => undefined)
+      }
+      return reply.status(500).send({ success: false, error: err.message || 'Internal Server Error' })
+    }
   })
 
   // GET /stories/:id/plot-arcs
@@ -124,8 +184,13 @@ export async function storyRoutes(app: FastifyInstance) {
 
   // DELETE /stories/:id
   app.delete('/:id', async (request, reply) => {
-    const { id } = request.params as any
+    const { id } = request.params as { id: string }
     await app.prisma.story.delete({ where: { id } })
+    try {
+      await deleteCoversByStoryId(UPLOADS_ROOT, id)
+    } catch (err) {
+      app.log.warn({ err, storyId: id }, 'cascade cover cleanup failed')
+    }
     return { success: true }
   })
 }

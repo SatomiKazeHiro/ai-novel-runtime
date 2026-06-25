@@ -2,9 +2,13 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import swagger from '@fastify/swagger'
 import swaggerUi from '@fastify/swagger-ui'
+import staticPlugin from '@fastify/static'
+import { UPLOADS_ROOT } from './config/paths.js'
 import { prismaPlugin } from './plugins/prisma.js'
+import { uploadPlugin } from './plugins/upload.js'
 import { healthRoutes } from './routes/health.js'
 import { storyRoutes } from './routes/stories.js'
+import { coverRoutes } from './routes/covers.js'
 import { characterRoutes } from './routes/characters.js'
 import { loreRoutes } from './routes/lore.js'
 import { timelineRoutes } from './routes/timeline.js'
@@ -41,6 +45,14 @@ export async function buildApp() {
   })
   await app.register(swaggerUi, { routePrefix: '/documentation' })
   await app.register(prismaPlugin)
+  await app.register(uploadPlugin)
+
+  // 暴露上传的封面图片
+  await app.register(staticPlugin, {
+    root: UPLOADS_ROOT,
+    prefix: '/uploads/',
+    decorateReply: false
+  })
 
   // Init AI Provider config from env
   await initAiProviderConfig(app)
@@ -57,6 +69,7 @@ export async function buildApp() {
   // Routes
   await app.register(healthRoutes, { prefix: '/api/health' })
   await app.register(storyRoutes, { prefix: '/api/stories' })
+  await app.register(coverRoutes)
   await app.register(characterRoutes)
   await app.register(loreRoutes)
   await app.register(timelineRoutes)
