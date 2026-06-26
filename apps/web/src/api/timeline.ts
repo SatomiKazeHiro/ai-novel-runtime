@@ -1,12 +1,12 @@
 import { api } from '../utils/api'
 
 export interface TimelineEventCreate {
-  day: number
+  position: number
   events: string[]
 }
 
 export interface TimelineEventUpdate {
-  day?: number
+  position?: number
   events?: string[]
 }
 

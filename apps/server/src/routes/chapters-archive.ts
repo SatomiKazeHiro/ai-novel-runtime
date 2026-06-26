@@ -181,13 +181,20 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
         // 1. 写入记忆、角色状态、时间线
         await commitMemoryWrites(tx, chapterId, chapter.storyId, pending.memories)
 
-        // 2. 更新章节摘要
-        if (pending.memories.summary) {
-          await tx.chapter.update({
-            where: { id: chapterId },
-            data: { summary: pending.memories.summary }
-          })
+        // 2. 更新章节摘要 + timelinePosition (本章开篇时间锚点)
+        //    把两个相关字段放在同一次 UPDATE: 都是 chapter 本章级元数据,
+        //    都在 prepare-archive 阶段确定, 一起原子落库。
+        //    timelinePosition 可能为 null — 显式置 NULL (Prisma unset 不会写 NULL, 要赋值 null)。
+        const chapterMetaUpdate: { summary?: string; timelinePosition: number | null } = {
+          timelinePosition: pending.memories.timelinePosition
         }
+        if (pending.memories.summary) {
+          chapterMetaUpdate.summary = pending.memories.summary
+        }
+        await tx.chapter.update({
+          where: { id: chapterId },
+          data: chapterMetaUpdate
+        })
 
         // 3. 写入剧情弧线
         await commitPlotArcWrites(tx, pending.plotArcs)

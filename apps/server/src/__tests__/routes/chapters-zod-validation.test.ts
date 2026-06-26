@@ -343,7 +343,7 @@ describe('POST /chapters/:chapterId/prepare-archive — PrepareArchiveRequestSch
     })
     const { prepareArchiveData } = await import('../../services/combined-extractor.js')
     ;(prepareArchiveData as any).mockResolvedValue({
-      memories: { memories: [], characterStates: [], timelineEvents: [], summary: null },
+      memories: { memories: [], characterStates: [], timelineEvents: [], summary: null, timelinePosition: null },
       graph: {
         mergedGraph: { nodes: [], edges: [], timestamp: '2026-06-18T00:00:00.000Z' },
         chapterGraph: { nodes: [], edges: [], timestamp: '2026-06-18T00:00:00.000Z' }

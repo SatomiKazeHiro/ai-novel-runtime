@@ -1,7 +1,13 @@
 import type { FastifyInstance } from 'fastify'
 import { randomBytes } from 'crypto'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
-import { cleanJsonBlock, tokenSet, jaccardSimilarity, safeJsonParse } from '@novel-runtime/shared'
+import {
+  cleanJsonBlock,
+  tokenSet,
+  jaccardSimilarity,
+  safeJsonParse,
+  validateTimelinePosition
+} from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
 
@@ -69,7 +75,7 @@ export interface MemoryExtractionResult {
   foreshadowing: string[]
   relationshipChanges: string[]
   characterStatusChanges: Record<string, Record<string, string>>
-  timelineDay: number | null
+  timelinePosition: number | null
   summary: string
   scenes: SceneMemory[]       // 推动剧情发展的地点/场景
 }
@@ -123,7 +129,7 @@ importance 评分标准（必须返回 4-8 范围的整数）：
 - foreshadowing: 新埋下的伏笔（字符串数组）
 - relationshipChanges: 角色关系变化（字符串数组）
 - characterStatusChanges: 角色状态变化（对象，如 {"张三": {"rank": "初级", "location": "北京", "relationships": {"李四": "兄弟", "王五": "敌对"}}}）。其中 relationships 子键可选，用于表达该角色与其他角色的关系变化。
-- timelineDay: 本章发生在第几天（数字或 null —— 能确定则返回数字, 完全无法判断则返回 null; 不要用 -1 作为占位符）
+- timelinePosition: 本章开篇时间锚点 (Y.DDDHH 实数编码, 能确定则返回数字, 完全无法判断则返回 null; 不要用 -1 / 0 作为占位符)。编码规则: 整数位 = 年 (负号代表纪元前), 小数位 5 位 DDDHH (年内第 1-365 天 + 0-23 时)。例: 1.00106 = 第1年第1天 06时; -2.05018 = 前2年第50天 18时
 - summary: 本章一句话摘要（50字以内）
 - scenes: 场景记忆数组（见下方说明）
 
@@ -166,7 +172,7 @@ ${content.slice(0, 8000)}`
     const result: MemoryExtractionResult = JSON.parse(cleanJsonBlock(raw))
 
     const totalEvents = (result.mainEvents?.length || 0) + (result.sideEvents?.length || 0)
-    app.log.info(`[MemoryExtractor] Extracted: ${totalEvents} events (${result.mainEvents?.length || 0} main, ${result.sideEvents?.length || 0} side), day=${result.timelineDay}`)
+    app.log.info(`[MemoryExtractor] Extracted: ${totalEvents} events (${result.mainEvents?.length || 0} main, ${result.sideEvents?.length || 0} side), position=${result.timelinePosition}`)
     return result
   } catch (err: any) {
     app.log.error(`[MemoryExtractor] Failed: ${err.message}`)
@@ -195,7 +201,7 @@ export interface CharacterStateWrite {
 export interface TimelineEventWrite {
   storyId: string
   fromChapterNumber: number
-  day: number
+  position: number
   events: string
 }
 
@@ -204,6 +210,7 @@ export interface ArchiveMemoryData {
   characterStates: CharacterStateWrite[]
   timelineEvents: TimelineEventWrite[]
   summary: string | null
+  timelinePosition: number | null
 }
 
 /**
@@ -221,6 +228,7 @@ export function prepareMemoryWrites(
   const characterStates: CharacterStateWrite[] = []
   let timelineEvents: TimelineEventWrite[] = []
   let summary: string | null = null
+  let timelinePosition: number | null = null
 
   // 1. 主要事件记忆
   for (const event of result.mainEvents || []) {
@@ -284,9 +292,24 @@ export function prepareMemoryWrites(
   }
 
   // 6. 时间线
-  if (result.timelineDay && typeof result.timelineDay === 'number') {
-    const dayEvents = (result.mainEvents || []).map(e => e.description)
-    timelineEvents.push({ storyId, fromChapterNumber: chNum, day: result.timelineDay, events: JSON.stringify(dayEvents) })
+  //    AI 偶尔会返回格式不对的 position (e.g. 负 day、hour > 23),
+  //    validateTimelinePosition 在写库前兜底, 非法值丢弃, 保留 summary/timelinePosition 顶层字段
+  if (typeof result.timelinePosition === 'number') {
+    const validation = validateTimelinePosition(result.timelinePosition)
+    if (validation.ok) {
+      timelinePosition = result.timelinePosition
+      const eventDescs = (result.mainEvents || []).map(e => e.description)
+      timelineEvents.push({
+        storyId,
+        fromChapterNumber: chNum,
+        position: result.timelinePosition,
+        events: JSON.stringify(eventDescs)
+      })
+    } else {
+      // 不抛 — 让 archive 流程继续, 仅忽略本条 timeline event
+      // 上层 caller 看 log 即可诊断
+      timelinePosition = null
+    }
   }
 
   // 7. 摘要
@@ -294,7 +317,7 @@ export function prepareMemoryWrites(
     summary = result.summary
   }
 
-  return { memories, characterStates, timelineEvents, summary }
+  return { memories, characterStates, timelineEvents, summary, timelinePosition }
 }
 
 /**
@@ -352,10 +375,10 @@ export async function commitMemoryWrites(
     }
   }
 
-  // 3. 写入 TimelineEvent
+  // 3. 写入 TimelineEvent (compound key: storyId + position)
   for (const te of data.timelineEvents) {
     const existing = await tx.timelineEvent.findUnique({
-      where: { storyId_day: { storyId: te.storyId, day: te.day } }
+      where: { storyId_position: { storyId: te.storyId, position: te.position } }
     })
     if (existing) {
       const oldEvents = safeJsonParse(existing.events, [])
@@ -448,10 +471,10 @@ export async function saveExtractedMemory(
     })
   }
 
-  // 写入 TimelineEvent
+  // 写入 TimelineEvent (compound key: storyId + position)
   for (const te of data.timelineEvents) {
     const existing = await prisma.timelineEvent.findUnique({
-      where: { storyId_day: { storyId: te.storyId, day: te.day } }
+      where: { storyId_position: { storyId: te.storyId, position: te.position } }
     })
     if (existing) {
       const oldEvents = safeJsonParse(existing.events, [])

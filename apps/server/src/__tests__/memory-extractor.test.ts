@@ -30,7 +30,7 @@ function buildExtraction(overrides: Partial<MemoryExtractionResult> = {}): Memor
     foreshadowing: [],
     relationshipChanges: [],
     characterStatusChanges: {},
-    timelineDay: null,
+    timelinePosition: null,
     summary: '',
     scenes: [],
     ...overrides
@@ -173,25 +173,55 @@ describe('prepareMemoryWrites — emotions/foreshadowing/relationships/character
   })
 })
 
-describe('prepareMemoryWrites — timelineDay 正常通路', () => {
+describe('prepareMemoryWrites — timelinePosition 正常通路', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('timelineDay 数字 → 进入 timelineEvents (commit 写入 TimelineEvent 表)', () => {
+  it('timelinePosition 合法 Y.DDDHH → 进入 timelineEvents + timelinePosition 顶层字段', () => {
     const result = buildExtraction({
-      timelineDay: 7
+      timelinePosition: 1.00700  // 第1年第7天 00时
     })
     const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
     expect(out.timelineEvents).toHaveLength(1)
-    expect(out.timelineEvents[0].day).toBe(7)
+    expect(out.timelineEvents[0].position).toBe(1.007)
+    expect(out.timelinePosition).toBe(1.007)
   })
 
-  it('timelineDay = null → 不产生 timelineEvents (commit 跳过 TimelineEvent 写入)', () => {
+  it('timelinePosition = null → 不产生 timelineEvents', () => {
     const result = buildExtraction({
-      timelineDay: null
+      timelinePosition: null
     })
     const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
     expect(out.timelineEvents).toEqual([])
+    expect(out.timelinePosition).toBeNull()
+  })
+
+  it('timelinePosition 非法值 (负 day, decode 后越界) → validate 兜底丢弃, 顶层 timelinePosition 置 null', () => {
+    const result = buildExtraction({
+      timelinePosition: 1.99999  // decode clamp: day=365 hour=23 — 实际仍合法
+    })
+    const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
+    // 99999 → decoder clamp 到 day=365 hour=23, 合法
+    expect(out.timelineEvents).toHaveLength(1)
+    expect(out.timelinePosition).toBe(1.99999)
+  })
+
+  it('timelinePosition = NaN → validate 拒绝, 不写入', () => {
+    const result = buildExtraction({
+      timelinePosition: NaN
+    })
+    const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
+    expect(out.timelineEvents).toEqual([])
+    expect(out.timelinePosition).toBeNull()
+  })
+
+  it('timelinePosition 负年 → 透传', () => {
+    const result = buildExtraction({
+      timelinePosition: -2.05018
+    })
+    const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
+    expect(out.timelineEvents).toHaveLength(1)
+    expect(out.timelinePosition).toBe(-2.05018)
   })
 })

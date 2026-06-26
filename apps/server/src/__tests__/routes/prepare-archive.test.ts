@@ -13,7 +13,7 @@ vi.mock('../../services/combined-extractor.js', () => ({
 import { prepareArchiveData } from '../../services/combined-extractor.js'
 
 const VALID_PENDING = {
-  memories: { memories: [], characterStates: [], timelineEvents: [], summary: null },
+  memories: { memories: [], characterStates: [], timelineEvents: [], summary: null, timelinePosition: null },
   graph: {
     mergedGraph: { nodes: [], edges: [], timestamp: '2026-06-17T00:00:00.000Z' },
     chapterGraph: { nodes: [], edges: [], timestamp: '2026-06-17T00:00:00.000Z' }

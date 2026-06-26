@@ -36,11 +36,12 @@ export interface PendingCharacterStateWrite {
 
 /**
  * A timeline event write. `events` is a JSON-encoded string array.
+ * `position` is the YYYY.MMDD.HH 实数编码 (整数位=年, 小数位依次为月/日/时).
  */
 export interface PendingTimelineEventWrite {
   storyId: string
   fromChapterNumber: number
-  day: number
+  position: number
   events: string
 }
 
@@ -53,6 +54,7 @@ export interface PendingMemories {
   characterStates: PendingCharacterStateWrite[]
   timelineEvents: PendingTimelineEventWrite[]
   summary: string | null
+  timelinePosition: number | null
 }
 
 /**
@@ -180,7 +182,7 @@ export const PendingCharacterStateWriteSchema = z.object({
 export const PendingTimelineEventWriteSchema = z.object({
   storyId: z.string(),
   fromChapterNumber: z.number(),
-  day: z.number(),
+  position: z.number(),
   events: z.string()
 })
 
@@ -188,7 +190,8 @@ export const PendingMemoriesSchema = z.object({
   memories: z.array(PendingMemoryWriteSchema),
   characterStates: z.array(PendingCharacterStateWriteSchema),
   timelineEvents: z.array(PendingTimelineEventWriteSchema),
-  summary: z.string().nullable()
+  summary: z.string().nullable(),
+  timelinePosition: z.number().nullable()
 })
 
 export const PendingGraphNodeSchema = z.object({

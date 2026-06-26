@@ -13,7 +13,7 @@
 
     <n-spin :show="loading">
       <n-timeline v-if="events.length > 0">
-        <n-timeline-item v-for="evt in events" :key="evt.id" type="default" :title="`第 ${evt.day} 天`">
+        <n-timeline-item v-for="evt in events" :key="evt.id" type="default" :title="formatPosition(evt.position)">
           <n-ul>
             <n-li v-for="(desc, idx) in JSON.parse(evt.events)" :key="idx">{{ desc }}</n-li>
           </n-ul>
@@ -28,8 +28,8 @@
 
     <n-modal v-model:show="showModal" :title="editingId ? '编辑事件' : '添加事件'" preset="card" style="width: 500px">
       <n-form :model="form" label-placement="left" label-width="80">
-        <n-form-item label="天数" required>
-          <n-input-number v-model:value="form.day" :min="1" />
+        <n-form-item label="时间位置" required>
+          <n-input-number v-model:value="form.position" :step="0.0001" placeholder="如 1.00106 表示第1年第1天 06时" />
         </n-form-item>
         <n-form-item label="事件">
           <DynamicTags v-model="form.events" />
@@ -62,7 +62,7 @@ const events = ref<any[]>([])
 const loading = ref(false)
 const showModal = ref(false)
 const editingId = ref<string | null>(null)
-const form = ref({ day: 1, events: [] as string[] })
+const form = ref({ position: 1.00106, events: [] as string[] })
 
 async function loadTimeline() {
   if (!route.params.storyId) {
@@ -78,29 +78,40 @@ async function loadTimeline() {
   }
 }
 
+function formatPosition(p: number): string {
+  const sign = p < 0 ? '前' : ''
+  const abs = Math.abs(p)
+  const [intPart, decPart = ''] = abs.toString().split('.')
+  const year = parseInt(intPart, 10)
+  const padded = (decPart + '00000').slice(0, 5)
+  const day = parseInt(padded.slice(0, 3), 10)
+  const hh = parseInt(padded.slice(3, 5), 10)
+  return `${sign}第${year}年第${day}天 ${String(hh).padStart(2, '0')}时`
+}
+
 function startEdit(evt: any) {
   editingId.value = evt.id
-  form.value = { day: evt.day, events: JSON.parse(evt.events) }
+  form.value = { position: evt.position, events: JSON.parse(evt.events) }
   showModal.value = true
 }
 
 async function handleSave() {
   if (!route.params.storyId) return
   if (editingId.value) {
-    await timelineApi.update(editingId.value, { day: form.value.day, events: form.value.events })
+    await timelineApi.update(editingId.value, { position: form.value.position, events: form.value.events })
   } else {
-    await timelineApi.create(route.params.storyId as string, { day: form.value.day, events: form.value.events })
+    await timelineApi.create(route.params.storyId as string, { position: form.value.position, events: form.value.events })
   }
   showModal.value = false
   editingId.value = null
-  form.value = { day: 1, events: [] }
+  form.value = { position: 1.00106, events: [] }
   await loadTimeline()
 }
 
 function handleDelete(evt: any) {
   dialog.warning({
     title: '确认删除',
-    content: `确定要删除第 ${evt.day} 天的时间线事件吗？删除后不可恢复。`,
+    content: `确定要删除 ${formatPosition(evt.position)} 的时间线事件吗？删除后不可恢复。`,
     positiveText: '删除',
     negativeText: '取消',
     positiveButtonProps: { type: 'error' },

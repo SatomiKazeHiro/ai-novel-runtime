@@ -233,7 +233,8 @@ describe('PendingArchiveDataSchema', () => {
       ],
       characterStates: [],
       timelineEvents: [],
-      summary: 'chapter summary'
+      summary: 'chapter summary',
+      timelinePosition: 1.00106
     },
     graph: {
       mergedGraph: { nodes: [], edges: [], timestamp: '2026-06-18T00:00:00Z' },

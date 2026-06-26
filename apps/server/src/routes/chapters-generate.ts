@@ -18,6 +18,24 @@ import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { parseBody, getLastChapter, getOrThrowChapter } from './_helpers.js'
 
 /**
+ * 把 Y.DDDHH 单小数点浮点数 position 渲染为人类可读文本。
+ * 编码:整数位=年(故事第N年,前史用负数),小数位必须 5 位 DDDHH 拼接(强制 5 位,不足补 0)。
+ * 例:1.00106 → "第1年第1天 06时";1.10012 → "第1年第100天 12时";
+ *     1.36522 → "第1年第365天 22时";-2.05018 → "前2年第50天 18时"。
+ */
+function formatTimelinePosition(position: number): string {
+  const sign = position < 0 ? '前' : ''
+  const abs = Math.abs(position)
+  const [intPart, decPart = ''] = abs.toString().split('.')
+  const year = parseInt(intPart, 10)
+  // 小数位恰好 5 位:DDD(3) + HH(2),不足补 0
+  const padded = (decPart + '00000').slice(0, 5)
+  const day = parseInt(padded.slice(0, 3), 10)
+  const hh = parseInt(padded.slice(3, 5), 10)
+  return `${sign}第${year}年第${day}天 ${String(hh).padStart(2, '0')}时`
+}
+
+/**
  * Generate 流：prompt preview / 多候选 generate / 选 candidate。
  *
  * 内部 helper：getCharactersWithLatestState（仅 preview + generate 用，保留在文件内闭包）。
@@ -69,7 +87,7 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     const charactersWithBranchState = await getCharactersWithLatestState(prisma, storyId)
 
     const loreItems = await prisma.loreItem.findMany({ where: { storyId } })
-    const timelineEvents = await prisma.timelineEvent.findMany({ where: { storyId }, orderBy: { day: 'asc' } })
+    const timelineEvents = await prisma.timelineEvent.findMany({ where: { storyId }, orderBy: { position: 'asc' } })
 
     // 获取 checkpoint（最后一个归档章节号）
     const checkpointChapter = await prisma.chapter.findFirst({
@@ -98,7 +116,7 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
       lore: loreItems.map(l => `【${l.name}】${l.content}`).join('\n') || '无世界观设定信息',
       scene: `标题：${chapter.title || '未设定'}\n地点：${chapter.sceneLocation || '未设定'}\n氛围：${chapter.sceneMood || '未设定'}\n目标：${chapter.sceneGoal || '未设定'}`,
       memory: memoryManager.formatForPrompt(relevantMemories),
-      timeline: timelineEvents.map(t => `第${t.day}天：${safeJsonParse<string[]>(t.events, []).join('；')}`).join('\n'),
+      timeline: timelineEvents.map(t => `[${formatTimelinePosition(t.position)}] ${safeJsonParse<string[]>(t.events, []).join('；')}`).join('\n'),
       plotArc: plotArcText || undefined,
       output: `请根据以下大纲生成本章正文：\n\n${chapter.outline || '无大纲'}`
     })
@@ -182,7 +200,7 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     const charactersWithBranchState = await getCharactersWithLatestState(prisma, storyId)
 
     const loreItems = await prisma.loreItem.findMany({ where: { storyId } })
-    const timelineEvents = await prisma.timelineEvent.findMany({ where: { storyId }, orderBy: { day: 'asc' } })
+    const timelineEvents = await prisma.timelineEvent.findMany({ where: { storyId }, orderBy: { position: 'asc' } })
 
     const checkpointChapter = await prisma.chapter.findFirst({
       where: { storyId, status: 'archived' },
@@ -225,7 +243,7 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
         lore: loreItems.map(l => `【${l.name}】${l.content}`).join('\n') || '无世界观设定信息',
         scene: `标题：${chapter.title || '未设定'}\n地点：${chapter.sceneLocation || '未设定'}\n氛围：${chapter.sceneMood || '未设定'}\n目标：${chapter.sceneGoal || '未设定'}`,
         memory: memoryManager.formatForPrompt(relevantMemories),
-        timeline: timelineEvents.map(t => `第${t.day}天：${safeJsonParse<string[]>(t.events, []).join('；')}`).join('\n'),
+        timeline: timelineEvents.map(t => `[${formatTimelinePosition(t.position)}] ${safeJsonParse<string[]>(t.events, []).join('；')}`).join('\n'),
         plotArc: plotArcText || undefined,
         output: `请根据以下大纲生成本章正文（约2000-4000字）：\n\n${chapter.outline || '无大纲'}`
       })

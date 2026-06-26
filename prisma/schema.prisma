@@ -83,6 +83,9 @@ model Chapter {
   // 归档审查：AI 预提取后、用户确认前的中间数据
   pendingArchiveData String?
 
+  // 时间线：本章开篇时间锚点（YYYY.MMDD.HH 实数编码）
+  timelinePosition  Float?
+
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -211,14 +214,14 @@ model TimelineEvent {
   id                String   @id @default(uuid())
   storyId           String
   fromChapterNumber Float?   // 来源章节序号（archive 时标记）
-  day               Int
+  position          Float    // 实数时间编码 YYYY.MMDD.HH（整数位=年，依次为月/日/时；缺位=0）
   events            String   @default("[]") // JSON string array of event descriptions
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   story             Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
 
-  @@unique([storyId, day])
+  @@unique([storyId, position])
 }
 
 // 候选/废案

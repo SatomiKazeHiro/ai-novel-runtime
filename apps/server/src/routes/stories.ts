@@ -87,7 +87,7 @@ export async function storyRoutes(app: FastifyInstance) {
         chapters: { orderBy: { number: 'asc' } },
         characters: true,
         loreItems: true,
-        timelineEvents: { orderBy: { day: 'asc' } }
+        timelineEvents: { orderBy: { position: 'asc' } }
       }
     })
     if (!story) return reply.status(404).send({ success: false, error: 'Story not found' })

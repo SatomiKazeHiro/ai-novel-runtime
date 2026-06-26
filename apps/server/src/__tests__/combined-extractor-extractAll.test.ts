@@ -45,7 +45,8 @@ const validJsonPayload = {
     foreshadowing: [],
     relationshipChanges: [],
     characterStatusChanges: {},
-    timelineDay: 1,
+    timelinePosition: 1,
+    timelineEvents: [],
     summary: '',
     scenes: []
   },

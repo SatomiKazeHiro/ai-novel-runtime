@@ -90,7 +90,7 @@
             <n-empty v-if="timelineEvents.length === 0" description="暂无时间线事件" />
             <n-space v-for="(te, idx) in timelineEvents" :key="`te-${idx}`" vertical style="width: 100%; margin-bottom: 12px">
               <n-space justify="space-between" style="width: 100%">
-                <n-input-number v-model:value="te.day" :min="1" placeholder="第几天" />
+                <n-input-number v-model:value="te.position" :step="0.0001" placeholder="时间位置(如1.0101)" />
                 <n-button size="small" type="error" @click="removeTimelineEvent(idx)">删除</n-button>
               </n-space>
               <n-input v-model:value="te.events" type="textarea" :rows="3" placeholder='事件 JSON 数组，如 ["事件1", "事件2"]' />
@@ -223,7 +223,8 @@ function normalizePendingData(data: any): PendingArchiveData {
       memories: Array.isArray(safe.memories?.memories) ? safe.memories.memories : [],
       characterStates: Array.isArray(safe.memories?.characterStates) ? safe.memories.characterStates : [],
       timelineEvents: Array.isArray(safe.memories?.timelineEvents) ? safe.memories.timelineEvents : [],
-      summary: safe.memories?.summary || null
+      summary: safe.memories?.summary || null,
+      timelinePosition: typeof safe.memories?.timelinePosition === 'number' ? safe.memories.timelinePosition : null
     },
     graph: {
       mergedGraph: {
@@ -373,7 +374,7 @@ function addTimelineEvent() {
   timelineEvents.value.push({
     storyId: props.chapter.storyId,
     fromChapterNumber: chNum,
-    day: 1,
+    position: 1.0101,
     events: '[]'
   })
 }

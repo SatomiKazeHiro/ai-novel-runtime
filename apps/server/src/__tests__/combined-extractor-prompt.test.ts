@@ -22,7 +22,7 @@ import { extractAll } from '../services/combined-extractor.js'
 const emptyPayload = {
   memories: { mainEvents: [], sideEvents: [], emotions: [], foreshadowing: [],
               relationshipChanges: [], characterStatusChanges: {},
-              timelineDay: 1, summary: '', scenes: [] },
+              timelinePosition: 1, timelineEvents: [], summary: '', scenes: [] },
   graph: { nodes: [], edges: [] },
   plotArcs: { arcs: [] }
 }
