@@ -13,9 +13,10 @@ import { callAIWithLog } from './ai-call-logger.js'
 import { resolveProvider } from './ai-provider-init.js'
 import { type MemoryExtractionResult, extractMemoryFromChapter, prepareMemoryWrites, type ArchiveMemoryData } from './memory-extractor.js'
 import { type GraphExtractionResult } from './graph-extractor.js'
-import { type PlotArcAnalysis, extractPlotArcs, preparePlotArcWrites, type PlotArcWrite } from './plot-extractor.js'
+import { type PlotArcAnalysis, extractPlotArcs } from './plot-extractor.js'
 import { organizeGraph } from './graph-organizer.js'
 import { type GraphSnapshot } from './graph-snapshot.js'
+import { consolidatePlotArcs } from './plot-consolidator.js'
 
 export interface CombinedExtractionData {
   memories: MemoryExtractionResult | null
@@ -363,9 +364,15 @@ export async function prepareArchiveData(
   // 4. 准备记忆写入数据
   const memoryData = prepareMemoryWrites(storyId, chapterId, extraction.memories, fromChapterNumber)
 
-  // 5. 准备剧情弧线写入数据
+  // 5. 跨章融合剧情弧线 (P1 bug fix: plot arc 不增长)
+  //    slim prompt 不喂 existingArcs, AI 返回的名字不连续;
+  //    这里 code fast path (name 精确匹配) + AI reconcile (语义同名) + carry-forward (未推进 arc 保留)
+  //    替代旧的 preparePlotArcWrites 直接按 name 匹配 → 全部 isNew=true 的回归路径。
+  //    注: 这里查全量 arc (不限于 active), 因为 carry-forward 需要看到 completed 之外的
+  //       所有状态才能正确判断"是否被本章节推进过"。
+  const allExistingArcs = await prisma.plotArc.findMany({ where: { storyId } })
   const plotArcWrites = extraction.plotArcs
-    ? await preparePlotArcWrites(prisma, storyId, extraction.plotArcs.arcs)
+    ? await consolidatePlotArcs(app, storyId, chapterId, allExistingArcs, extraction.plotArcs.arcs)
     : []
 
   return {
