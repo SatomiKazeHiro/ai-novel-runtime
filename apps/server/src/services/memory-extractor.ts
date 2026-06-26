@@ -11,6 +11,31 @@ function generateOriginUid(chapterNumber: number): string {
 }
 
 /**
+ * 把 AI 返回的 importance 数字夹到 [1, 10] 合法范围。
+ * AI 偶尔返回 -1 / 0 / 11 / NaN 等非法值, 写库前必须兜底, 否则 DB 出现非法 importance
+ * 会污染 memory-engine 的评分排序。
+ *
+ * 边界策略:
+ *   - < 1 / NaN / 非 number → 5 (prompt 约定默认值)
+ *   - > 10 → 10 (上限截断)
+ *   - 合法范围 [1, 10] → 保留原值 (Math.floor 防止小数)
+ *
+ * 纯函数: 不写日志, 不读 DB, 不依赖 Fastify。便于单测。
+ */
+function sanitizeImportance(raw: unknown): number {
+  if (typeof raw !== 'number' || isNaN(raw)) {
+    return 5
+  }
+  if (raw < 1) {
+    return 5
+  }
+  if (raw > 10) {
+    return 10
+  }
+  return Math.floor(raw)
+}
+
+/**
  * 检查新记忆是否与最近已有记忆近似重复（Jaccard > 0.82）
  */
 async function checkDuplicateMemory(
@@ -78,11 +103,14 @@ export async function extractMemoryFromChapter(
 3. 【主角加成】如果事件有主角参与，请在 importance 基础上自行 +1，最终 importance 范围为 5~8。
 4. 【去重过滤】只提取对剧情有实质推动作用的事件，路人提及、环境描写、过渡段落不要提取。
 
-importance 评分标准：
+importance 评分标准（必须返回 4-8 范围的整数）：
 - 7: 本章核心转折/高潮，占大量篇幅
 - 6: 重要推进，占中等篇幅
 - 5: 有一定作用，占少量篇幅
 - 4: 过渡/铺垫，篇幅很短
+- 8: 主角参与 + 重要性 7 时（主角加成上限），可达 8
+
+主角参与的事件，自行 +1（4 → 5、5 → 6、6 → 7、7 → 8）；最终 importance 必须在 5~8 范围。
 
 主角参与且最终达到 8 分的事件视为"主要事件"，放入 mainEvents；其他放入 sideEvents。
 
@@ -95,7 +123,7 @@ importance 评分标准：
 - foreshadowing: 新埋下的伏笔（字符串数组）
 - relationshipChanges: 角色关系变化（字符串数组）
 - characterStatusChanges: 角色状态变化（对象，如 {"张三": {"rank": "初级", "location": "北京", "relationships": {"李四": "兄弟", "王五": "敌对"}}}）。其中 relationships 子键可选，用于表达该角色与其他角色的关系变化。
-- timelineDay: 本章发生在第几天（数字，不确定则返回 null）
+- timelineDay: 本章发生在第几天（数字或 null —— 能确定则返回数字, 完全无法判断则返回 null; 不要用 -1 作为占位符）
 - summary: 本章一句话摘要（50字以内）
 - scenes: 场景记忆数组（见下方说明）
 
@@ -198,14 +226,14 @@ export function prepareMemoryWrites(
   for (const event of result.mainEvents || []) {
     const content = `${event.description} | 参与者：${event.participants.join('、')}`
     const originUid = generateOriginUid(chNum)
-    memories.push({ storyId, chapterId, fromChapterNumber: chNum, layer: 'chapter', content, tags: JSON.stringify(['auto-extracted', 'main-plot']), importance: event.importance, originUid })
+    memories.push({ storyId, chapterId, fromChapterNumber: chNum, layer: 'chapter', content, tags: JSON.stringify(['auto-extracted', 'main-plot']), importance: sanitizeImportance(event.importance), originUid })
   }
 
   // 2. 次要事件记忆
   for (const event of result.sideEvents || []) {
     const content = `${event.description} | 参与者：${event.participants.join('、')}`
     const originUid = generateOriginUid(chNum)
-    memories.push({ storyId, chapterId, fromChapterNumber: chNum, layer: 'chapter', content, tags: JSON.stringify(['auto-extracted']), importance: event.importance, originUid })
+    memories.push({ storyId, chapterId, fromChapterNumber: chNum, layer: 'chapter', content, tags: JSON.stringify(['auto-extracted']), importance: sanitizeImportance(event.importance), originUid })
   }
 
   // 3. 情绪/伏笔/关系变化
@@ -230,7 +258,7 @@ export function prepareMemoryWrites(
     const sceneContent = scene.description
       ? `【${scene.location}】${scene.description} | 事件：${scene.event}`
       : `【${scene.location}】事件：${scene.event}`
-    memories.push({ storyId, chapterId, fromChapterNumber: chNum, layer: 'scene', content: sceneContent, tags: JSON.stringify(['auto-extracted', 'scene-memory']), importance: scene.importance ?? 7 })
+    memories.push({ storyId, chapterId, fromChapterNumber: chNum, layer: 'scene', content: sceneContent, tags: JSON.stringify(['auto-extracted', 'scene-memory']), importance: sanitizeImportance(scene.importance) })
   }
 
   // 5. 全局记忆（角色状态变化）
