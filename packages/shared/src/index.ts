@@ -113,6 +113,8 @@ export function cleanJsonBlock(raw: string): string {
       .trim()
       // 同样修复 AI 在值位置写的"裸 &"（见下方注释）
       .replace(/([:,\[]\s*?)&(\s*?[,\]}])/g, '$1"&"$2')
+      // 修复 value 位置的 HTML entity (e.g. &nbsp; / &amp; / &nbsp;7)
+      .replace(/([:,\[]\s*?)&([a-zA-Z][a-zA-Z0-9;]*)/g, '$1"&$2"')
   }
 
   // 多对 fence / 无 fence → 兼容旧实现语义：全局剥 ```json，尾部剥 ```
@@ -124,7 +126,15 @@ export function cleanJsonBlock(raw: string): string {
   // 是 : 或 , 或 [ 加空白，& 后面是 , 或 } 或 ] 加空白）包裹成字符串 "&"，
   // 让 JSON 仍可解析。字符串内部的 &（如 "Tom & Jerry"）前后是字母/数字，
   // 不在正则范围内，不会被破坏；合法 HTML entity（&amp; &lt; 等）也保留原样。
-  return cleaned.replace(/([:,\[]\s*?)&(\s*?[,\]}])/g, '$1"&"$2')
+  //
+  // 扩展：覆盖 value 位置的多字符 HTML entity（e.g. "&nbsp;" / "&amp;" /
+  // "&amp" / "&nbsp;7" — LLM 把 entity 当作数字的格式化前缀）。正则扩展为
+  // `&` 后跟字母开头、含字母数字分号的整段 entity（含 entity 后的数字
+  // 当作 entity 的一部分），包裹成字符串。字符串内的 entity 前面是引号
+  // 不是 : / , / [，不在范围，安全。
+  return cleaned
+    .replace(/([:,\[]\s*?)&(\s*?[,\]}])/g, '$1"&"$2')
+    .replace(/([:,\[]\s*?)&([a-zA-Z][a-zA-Z0-9;]*)/g, '$1"&$2"')
 }
 
 /**
