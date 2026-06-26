@@ -113,7 +113,7 @@ function cycleTheme() {
 
 /* Subtle terracotta underline on the left of the nav — a single thin
    stroke that hints "this is a working storyboard tool" without shouting. */
-.cap-nav::after {
+/*.cap-nav::after {
   content: '';
   position: absolute;
   bottom: -1px;
@@ -122,7 +122,7 @@ function cycleTheme() {
   height: 2px;
   background: var(--accent);
   border-radius: 1px 1px 0 0;
-}
+}*/
 
 .cap-nav__brand-group {
   display: flex;

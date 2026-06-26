@@ -573,6 +573,16 @@ a:hover { color: var(--accent-link-hover); }
   flex: 1 1 auto;
   min-width: 200px;
 }
+.chapter-reel__select .n-base-selection > div {
+  height: 32px;
+  margin-top: -0.7px;
+}
+.chapter-reel__select .n-base-selection .n-base-selection__border {
+  border-width: 0;
+}
+.chapter-reel__select .n-base-selection .n-base-selection-input {
+  padding-left: 8px;
+}
 /* 抹掉 n-select 自带的 border / radius, 嵌入 pill 中部 */
 .chapter-reel .n-select {
   border-left: 1px solid var(--border-subtle);

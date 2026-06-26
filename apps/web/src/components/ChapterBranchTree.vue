@@ -63,7 +63,7 @@
           <div class="row-title">
             <span class="row-title__text">{{ node.title }}</span>
             <span v-if="node.isSideStory" class="row-tag row-tag--branch">番外</span>
-            <span class="row-title__spacer" />
+            <!-- <span class="row-title__spacer" /> -->
             <ChapterStatusBadge :status="node.status" />
           </div>
           <div class="row-meta">
@@ -495,7 +495,7 @@ function canDelete(node: FlatNode) {
 .row-title {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-4);
   min-width: 0;
 }
 .row-title__text {

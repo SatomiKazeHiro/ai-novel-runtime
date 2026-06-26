@@ -161,7 +161,7 @@ function statusLabel(status: string): string {
 </script>
 
 <style scoped>
-.chapter-reel__option {
+:deep(.chapter-reel__option) {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -169,7 +169,7 @@ function statusLabel(status: string): string {
   line-height: 1.2;
   max-width: 100%;
 }
-.chapter-reel__num {
+:deep(.chapter-reel__num) {
   font-size: 10px;
   font-weight: var(--weight-semibold);
   letter-spacing: 0.08em;
@@ -177,7 +177,7 @@ function statusLabel(status: string): string {
   color: var(--text-tertiary);
   flex-shrink: 0;
 }
-.chapter-reel__title {
+:deep(.chapter-reel__title) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -115,24 +115,22 @@ function handleMenuSelect(key: string) {
 <style scoped>
 .novel-design-layout {
   height: 100vh;
+  background: var(--bg-canvas);
+  overflow: visible;
+}
+.novel-design-layout > :deep(.n-layout-scroll-container) {
   display: flex;
   flex-direction: column;
-  background: var(--bg-canvas);
-  /* 覆盖 .n-layout 默认 overflow: hidden, 让内容 min-width 能撑出
-     横向滚动条到底层 document, 防止窄屏挤压表格列 / 表单控件。 */
-  overflow: visible;
 }
 .novel-design-layout__body {
   flex: 1;
-  /* 同上: has-sider 内的 .n-layout 也需要 overflow visible 才能传递溢出 */
-  overflow: visible;
+  overflow: auto;
 }
-/* Naive UI 在 .n-layout 内部还套了一层 .n-layout-scroll-container,
-   默认 overflow-x: hidden 会再裁一次。三层全部 visible 才能让
-   content 的 min-width 一路溢出到 document 横向滚动条。 */
 .novel-design-layout :deep(.n-layout-scroll-container) {
   overflow: visible;
 }
+
+/* 左侧菜单 */
 .novel-design-layout__sider {
   background: var(--color-pure-white) !important;
   border-right: 1px solid var(--border-default) !important;
@@ -163,6 +161,16 @@ function handleMenuSelect(key: string) {
   flex: 1;
   min-height: 0;
 }
+.novel-design-layout__menu.n-menu--collapsed :deep(.n-menu-item-content) {
+  padding-left: 13px !important;
+}
+.novel-design-layout__menu :deep(.n-menu-item-content--selected) .n-menu-item-content__icon,
+.novel-design-layout__menu :deep(.n-menu-item-content--selected:hover) .n-menu-item-content__icon,
+.novel-design-layout__menu :deep(.n-menu-item-content--selected) .n-menu-item-content-header,
+.novel-design-layout__menu :deep(.n-menu-item-content--selected:hover) .n-menu-item-content-header {
+  color: var(--accent) !important;
+}
+
 /* Trigger 按钮: 默认垂直居中靠右, 这里放大一点 + 加上 pebble 边框,
    让它和菜单图标的视觉重量匹配 (默认 24px 太小、没边框). */
 .novel-design-layout :deep(.n-layout-toggle-button) {
@@ -179,11 +187,12 @@ function handleMenuSelect(key: string) {
   border-color: var(--color-mid-gray);
   background: var(--color-stone-gray);
 }
+
+/* 右侧内容 */
 .novel-design-layout__content {
-  overflow-y: auto;
-  /* min-width 必须放在 content 层(不会被 flex 父级 min-width: 0 压缩),
-     且外层 n-layout 必须 overflow: visible 才能把溢出传到底层 document。
-     整体下限 = 240 sider + 1440 内容 = 1680px。 */
-  min-width: var(--page-min-width);
+  overflow: auto;
+}
+.novel-design-layout__content > :deep(.n-layout-scroll-container) {
+  min-width: 1280px;
 }
 </style>
