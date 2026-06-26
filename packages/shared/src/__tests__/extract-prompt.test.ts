@@ -12,9 +12,6 @@ import { buildExtractPrompt, PREV_SNAPSHOT_INVENTORY_CAP } from '../extract-prom
 const baseInput = {
   protagonistNames: ['李凡', '赵若曦'],
   existingNodeKeys: ['character:zhangsan', 'faction:qingmeng'],
-  existingArcs: [
-    { name: '李凡修仙之路', type: 'main', status: 'active', progress: 35 }
-  ],
   previousSnapshotNodes: [] as Array<{ type: string; key: string; label: string }>,
   content: 'content',
   outline: 'outline'
@@ -60,15 +57,12 @@ describe('buildExtractPrompt — mode=full (cross-chapter injection)', () => {
     expect((prompt.match(/character:\w+_\d+/g) || []).length).toBe(PREV_SNAPSHOT_INVENTORY_CAP)
   })
 
-  it('injects existingArcsText block (cross-chapter arc context)', () => {
-    const prompt = buildExtractPrompt(
-      { ...baseInput, existingArcs: [
-        { name: '李凡修仙之路', type: 'main', status: 'active', progress: 35 }
-      ]},
-      { mode: 'full' }
-    )
-    expect(prompt).toContain('李凡修仙之路')
-    expect(prompt).toContain('(main, active, 进度35%)')
+  it('does NOT inject existing arcs (handled by plot-consolidator v2 worker)', () => {
+    // v2 设计: extractAll 不再喂 existing arcs 给 AI, 跨章弧线融合
+    // 由 plot-consolidator 自己读章节 + DB existing arcs 做语义级判断。
+    const prompt = buildExtractPrompt(baseInput, { mode: 'full' })
+    expect(prompt).not.toContain('现有弧线')
+    expect(prompt).not.toContain('李凡修仙之路')
   })
 })
 
@@ -81,16 +75,11 @@ describe('buildExtractPrompt — mode=slim (chapter-fact-only)', () => {
     expect(prompt).not.toContain('character:zhangsan (张三)')
   })
 
-  it('omits existingArcsText block (cross-chapter fusion is worker concern)', () => {
-    const prompt = buildExtractPrompt(
-      { ...baseInput, existingArcs: [
-        { name: '李凡修仙之路', type: 'main', status: 'active', progress: 35 }
-      ]},
-      { mode: 'slim' }
-    )
-    expect(prompt).not.toContain('(main, active, 进度35%)')
-    // slim 模式下提示 AI 不要分析已有 arc 整体进度
-    expect(prompt).toMatch(/不要分析已有 arc 的整体进度/)
+  it('omits existing arcs prompt section (cross-chapter fusion is worker concern)', () => {
+    const prompt = buildExtractPrompt(baseInput, { mode: 'slim' })
+    expect(prompt).not.toContain('现有弧线')
+    // slim 模式提示 AI: 剧情弧线分析由独立 worker 负责
+    expect(prompt).toMatch(/剧情弧线分析由独立的 plot-consolidator worker/)
   })
 
   it('omits existingNodeKeys line (no cross-chapter entity reuse hint)', () => {

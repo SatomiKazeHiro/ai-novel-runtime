@@ -196,7 +196,7 @@ POST /api/chapters/:id/prepare-archive
        ├─ extractAll
        ├─ organizeGraph (graph-organizer)
        ├─ prepareMemoryWrites (memory-extractor)
-       └─ preparePlotArcWrites (plot-extractor)
+       └─ consolidatePlotArcs (plot-consolidator, 直接读章节 + existing arcs 做语义级判断)
 
 POST /api/chapters/:id/archive
   └─ safeJsonParse (chapter.pendingArchiveData)
@@ -243,7 +243,7 @@ Prisma schema 把 `personality` / `metadata` / `params` / `settings` / `graphSna
 `prompt-runtime` 已统一从 `ai-provider` 导入。`shared` 的启发式仅作无 tiktoken 环境的 fallback（实际项目用 `ai-provider` 那套）。**修改 prompt 拼装时不要新增"自己估 token"的分支**。
 
 ### 5. `prepare*` / `commit*` 拆分
-归档流水线把"准备数据"和"事务写入"分开：`prepareMemoryWrites` / `commitMemoryWrites`、`preparePlotArcWrites` / `commitPlotArcWrites`、`prepareArchiveData`（合并准备）。这样路由层能控制事务边界——纯数据准备不进事务，事务只做 DB 写。
+归档流水线把"准备数据"和"事务写入"分开：`prepareMemoryWrites` / `commitMemoryWrites`、`prepareArchiveData`（合并准备）。剧情弧线由 `plot-consolidator` v2 直接读章节 + existing arcs 做语义判断后返回 `ConsolidatedArcWrite[]`，不需要再 prepare。这样路由层能控制事务边界——纯数据准备不进事务，事务只做 DB 写。
 
 ### 6. `Chapter.compiledPrompt` / `pendingArchiveData`
 都是 `String?` 字段存 JSON 文本。`compiledPrompt` 在 generate 路由里写（line 487-490），回溯用。`pendingArchiveData` 在 prepare-archive 写，archive 路由读出来再事务写入——**关键数据通道**，是 reviewing 状态机的载体。

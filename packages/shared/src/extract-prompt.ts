@@ -26,14 +26,6 @@ export interface ExtractPromptInput {
   /** 已有实体 type:key 列表 (来自 graphNode.findMany) */
   existingNodeKeys: string[]
 
-  /** 现有剧情弧线 (来自 plotArc.findMany) */
-  existingArcs: Array<{
-    name: string
-    type: string
-    status: string
-    progress: number
-  }>
-
   /** N-1 全局图谱节点 (来自上一章 Chapter.graphSnapshot) */
   previousSnapshotNodes: Array<{
     type: string
@@ -89,10 +81,6 @@ export function buildExtractPrompt(
 // ============================================================================
 
 function buildFullPrompt(input: ExtractPromptInput): string {
-  const existingArcsText = input.existingArcs.length > 0
-    ? input.existingArcs.map(a => `- ${a.name} (${a.type}, ${a.status}, 进度${a.progress}%)`).join('\n')
-    : '暂无已追踪的剧情弧线'
-
   let previousEntitiesBlock = ''
   if (input.previousSnapshotNodes.length > 0) {
     // 按 importance desc 排序, 高重要性节点优先进入 top-CAP; 无 importance 视为 0.
@@ -105,7 +93,7 @@ function buildFullPrompt(input: ExtractPromptInput): string {
     previousEntitiesBlock = `\n\n=== N-1 全局图谱中的实体清单（用于 key 复用） ===\n本故事 N-1 章后的图谱共有 ${input.previousSnapshotNodes.length} 个实体，请严格复用以下 type:key，禁止再造新 key：\n${lines.join('\n')}\n注意：N-1 没有出现的实体才允许创建新 key。新 key 必须用英文小写、下划线分隔。`
   }
 
-  return `请分析以下小说章节，同时完成【记忆提取】、【实体关系提取】和【剧情弧线分析】三个任务。返回严格 JSON 格式，不要 markdown 代码块，不要解释文字。
+  return `请分析以下小说章节，完成【记忆提取】和【实体关系提取】两个任务。返回严格 JSON 格式，不要 markdown 代码块，不要解释文字。
 
 === 严格 JSON 格式要求（不要违反，否则会解析失败）===
 - 所有字段值必须是合法 JSON 值（数字、字符串、布尔、null、数组、对象）。绝对不要用 "&" 或 "..." 或 "etc" 之类占位符
@@ -170,25 +158,13 @@ importance 评分标准：
 
 已有实体（不要重复提取，但可补充新属性）：${input.existingNodeKeys.join(', ') || '无'}${previousEntitiesBlock}
 
-=== 任务3：剧情弧线分析 ===
-分析已有弧线的推进，标注未解悬念：
-现有弧线：
-${existingArcsText}
-
-弧线数量与粒度约束（重要）：
-- 整个故事 **主线最多 1 条**，代表"主角当前核心目标/成长"
-- 支线不超过 2 条，仅当确实存在独立支线剧情时记录
-- 同一个角色/同一对关系的多个面向必须合并到同一条弧线（例如"李凡的成长"和"李凡的感情"应合并为一条主线；不要把同一对人物拆成"感情发展"和"内心矛盾"两条）
-- 如果一章推进的内容太少，宁可少返回、不要硬凑
-
-返回弧线列表：
-- arcs: [{ name, type: "main"|"side", status: "pending"|"active"|"resolving"|"completed", progress: 0-100, currentStage, nextGoal, unresolved: [], summary }]
+注：剧情弧线分析由独立的 plot-consolidator worker 负责（它直接读章节 + existing arcs 做语义级判断），
+本章不需要输出 plotArcs 字段。
 
 === 返回格式 ===
 {
   "memories": { mainEvents, sideEvents, emotions, foreshadowing, relationshipChanges, characterStatusChanges, timelinePosition, timelineEvents, summary, scenes },
-  "graph": { "nodes": [...], "edges": [...] },
-  "plotArcs": { "arcs": [...] }
+  "graph": { "nodes": [...], "edges": [...] }
 }
 
 章节大纲：${input.outline || '无大纲'}
@@ -215,12 +191,12 @@ ${input.content}`
 // progress=50 即可" — 跨章融合 worker 会重写这些字段。
 
 function buildSlimPrompt(input: ExtractPromptInput): string {
-  return `请分析以下小说章节，提取本章的事实信息（记忆、实体、剧情弧线），用于后续跨章融合。返回严格 JSON 格式，不要 markdown 代码块，不要解释文字。
+  return `请分析以下小说章节，提取本章的事实信息（记忆 + 实体关系），用于后续跨章融合。返回严格 JSON 格式，不要 markdown 代码块，不要解释文字。
 
 === 严格 JSON 格式要求（不要违反，否则会解析失败）===
 - 所有字段值必须是合法 JSON 值（数字、字符串、布尔、null、数组、对象）。绝对不要用 "&" 或 "..." 或 "etc" 之类占位符
 - 字符串里的 "&" 必须转义为 "&"（或者直接用"和"代替）
-- 数字字段（importance、progress 等）必须是 0-10 的整数或小数，不要用任何非数字字符
+- 数字字段（importance 等）必须是 0-10 的整数或小数，不要用任何非数字字符
 - 字段值如果不知道，请用 null 或空数组 []，不要用任何替代字符
 
 === 任务1：记忆提取 ===
@@ -277,34 +253,13 @@ importance 评分标准：
 - 事件：仅当本章明确发生或被揭示
 禁止提取：路人甲乙丙、纯环境描述、一次性对话提及、无后续影响的设定
 
-=== 任务3：剧情弧线推进 ===
-本章推进了哪些 arc？每条 arc 输出一条推进记录：
-
-弧线数量与粒度约束（重要）：
-- 整个故事 **主线最多 1 条**，代表"主角当前核心目标/成长"
-- 支线不超过 2 条，仅当确实存在独立支线剧情时记录
-- 同一个角色/同一对关系的多个面向必须合并到同一条弧线（例如"李凡的成长"和"李凡的感情"应合并为一条主线；不要把同一对人物拆成"感情发展"和"内心矛盾"两条）
-- 如果一章推进的内容太少，宁可少返回、不要硬凑
-
-返回弧线列表：
-- arcs: [{ name, type: "main"|"side", status, progress, currentStage, nextGoal, unresolved: [], summary }]
-  - name: arc 名称；如果本章开启新 arc，自由取名（但要考虑是否真的"新"——不是新就别开）
-  - status: status 字段保留 schema 兼容，但你不擅长跨章分析；填 "active" 即可（跨章融合 worker 会重写）
-  - progress: 进度字段同上，填 50 即可
-  - currentStage: 本章结束时 arc 处于什么阶段（不超过 30 字）
-  - nextGoal: 下一步要推进什么（不超过 30 字）
-  - unresolved: 本章新增的悬念（数组）
-  - summary: 本章 arc 推进的一句话总结
-
-不要分析已有 arc 的整体进度（跨章融合由独立 worker 负责）。
-不要把不同 arc 合并（合并也由跨章融合 worker 负责）。
-不要输出 N-1 章之前已存在但本章没推进的 arc（即使你"知道"它们）。
+注：剧情弧线分析由独立的 plot-consolidator worker 负责（它直接读章节 + existing arcs 做语义级判断），
+本章不需要输出 plotArcs 字段。
 
 === 返回格式 ===
 {
   "memories": { mainEvents, sideEvents, emotions, foreshadowing, relationshipChanges, characterStatusChanges, timelinePosition, timelineEvents, summary, scenes },
-  "graph": { "nodes": [...], "edges": [...] },
-  "plotArcs": { "arcs": [...] }
+  "graph": { "nodes": [...], "edges": [...] }
 }
 
 章节大纲：${input.outline || '无大纲'}

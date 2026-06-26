@@ -1,20 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 /**
- * plot-consolidator — P1 bug fix for "plot arc 不增长".
+ * plot-consolidator v2 — AI 跨章融合 worker (P1 bug 修复第二轮)
  *
- * 根因: slim 重构后 extractAll 用 mode='slim' prompt, AI 看不到现有 arc 名字,
- *       每章返回新名字的 arc。preparePlotArcWrites 按 name 精确匹配 existing,
- *       全部走 isNew=true 路径 → 6 章 6 条互不关联的 arc 都卡在 50%。
+ * 设计意图 (用户 2026-06-26 明确指出):
+ *   "比对以往的剧情弧线, 相近的剧情主题则更新进度, 若是新的剧情弧线且
+ *    在文章中笔墨浓重的、有推动剧情发展的、情感强烈的等等则形成一个新的剧情弧线"
  *
- * 设计: 对齐 graph-organizer 模式 — Phase 2 跨章融合 worker:
- *   Step 1: code fast path — raw.name 精确匹配 existing.name → 更新进度
- *   Step 2: AI reconcile — unmatched raw + 已有 arcs 存在 → 一次小 AI 调用
- *           判断"是否同一条(重命名/别名)" vs "真正新弧线"
- *   Step 3: carry-forward — 未推进的 existing arc 保留 (不被本章节的"未提及"抹掉)
+ * 关键变化 (vs v1):
+ *   - v1: 输入 raw arcs (slim prompt 产物) → AI 机械问"rawName 是不是 existingName 的别名"
+ *   v2: 输入 chapterContent + existingArcs → AI 自己读章节做语义级判断:
+ *        * existing 推进: AI 看 existing + 章节, 决定"笔墨浓重地推进了"的 existing
+ *        * 新 arc 识别: AI 看章节, 决定"笔墨浓重 / 推动主线 / 情感强烈"的独立新事件线
+ *        * 不要把过渡 / 路人 / 一次性对话做成新 arc (这是 AI 擅长的价值判断)
  *
- * 此处只测 consolidatePlotArcs 的纯逻辑。AI reconcile 走 ai-call-logger mock,
- * 不依赖真实 provider。
+ *   - v2 不再依赖 extractAll 的 plotArcs 字段, 因为 slim prompt 没让 AI 看 existing,
+ *     raw arcs 已经"歪了"。consolidator 自己读章节 + existing 才能做正确判断。
+ *
+ * AI 返回 contract:
+ *   {
+ *     "updates": [{ "existingId": "<id>", "progress": 45, "currentStage": "...", ... }],
+ *     "newArcs":  [{ "name": "...", "type": "main"|"side", "progress": 0-15, ... }]
+ *   }
  */
 
 const mockCallAIWithLog = vi.fn()
@@ -58,406 +65,439 @@ function setupRuntimeMocks() {
   mockLoadWorkerTask.mockResolvedValue({ workerType: 'memory', taskPrompt: '' })
 }
 
-describe('consolidatePlotArcs — code fast path (exact name match)', () => {
+const SAMPLE_CHAPTER = '李凡清晨在山脚采药, 偶遇玄天宗外门长老张伯。张伯见他根骨极佳, 决定收他为徒...'
+const SAMPLE_OUTLINE = '李凡遇张伯, 拜入玄天宗'
+
+// ============================================================================
+// AI 推进已有弧线 (核心价值: AI 决定哪条 existing 被本章推进)
+// ============================================================================
+
+describe('consolidatePlotArcs v2 — AI 推进已有弧线 (核心场景)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setupRuntimeMocks()
   })
 
-  it('raw.name matches existing.name → isNew=false, existingId set, no AI call', async () => {
-    const existing = buildExistingArc('李凡修仙之路', { progress: 35 })
+  it('AI 判断推进 1 条 existing arc → 输出 updates', async () => {
+    const existing = buildExistingArc('李凡修仙之路', { progress: 30 })
     const app = buildApp()
 
-    const result = await consolidatePlotArcs(
-      app, 's1', 'c1',
-      [existing],
-      [{
-        name: '李凡修仙之路',
-        type: 'main',
-        status: 'active',
-        progress: 45,
-        currentStage: 'stageB',
-        nextGoal: 'goalB',
-        unresolved: ['悬念1'],
-        summary: '推进了'
-      }]
-    )
-
-    // No AI reconcile needed when all matched
-    expect(mockCallAIWithLog).not.toHaveBeenCalled()
-
-    expect(result).toHaveLength(1)
-    expect(result[0].isNew).toBe(false)
-    expect(result[0].existingId).toBe('existing-李凡修仙之路')
-    expect(result[0].progress).toBe(45)  // 用了 raw 的进度
-    expect(result[0].currentStage).toBe('stageB')
-  })
-
-  it('no existing arcs → all raws become new (isNew=true), no AI call', async () => {
-    const app = buildApp()
-
-    const result = await consolidatePlotArcs(
-      app, 's1', 'c1',
-      [],
-      [{
-        name: '全新主线',
-        type: 'main',
-        status: 'pending',
-        progress: 0,
-        currentStage: 'start',
-        nextGoal: 'next',
-        unresolved: [],
-        summary: '新章开始'
-      }]
-    )
-
-    expect(mockCallAIWithLog).not.toHaveBeenCalled()
-    expect(result).toHaveLength(1)
-    expect(result[0].isNew).toBe(true)
-    expect(result[0].existingId).toBeUndefined()
-    expect(result[0].name).toBe('全新主线')
-  })
-
-  it('existing arc NOT in raws → carry forward unchanged (id+name+progress保留)', async () => {
-    // 关键: 本章没推进的 arc 不能丢 — 用户在 ReviewingPanel 应该看到它们还在
-    const existing1 = buildExistingArc('李凡修仙之路', { progress: 35 })
-    const existing2 = buildExistingArc('李凡与赵若曦的感情', { progress: 20 })
-    const app = buildApp()
-
-    const result = await consolidatePlotArcs(
-      app, 's1', 'c1',
-      [existing1, existing2],
-      [{
-        // 只推进了 existing1
-        name: '李凡修仙之路',
-        type: 'main',
-        status: 'active',
-        progress: 50,
-        currentStage: 'stageC',
-        nextGoal: 'goalC',
-        unresolved: [],
-        summary: '推进'
-      }]
-    )
-
-    expect(mockCallAIWithLog).not.toHaveBeenCalled()  // 没 unmatched raw
-
-    expect(result).toHaveLength(2)
-
-    const updated = result.find(r => r.name === '李凡修仙之路')!
-    expect(updated.isNew).toBe(false)
-    expect(updated.existingId).toBe('existing-李凡修仙之路')
-    expect(updated.progress).toBe(50)
-
-    const carried = result.find(r => r.name === '李凡与赵若曦的感情')!
-    expect(carried.isNew).toBe(false)
-    expect(carried.existingId).toBe('existing-李凡与赵若曦的感情')
-    expect(carried.progress).toBe(20)  // 保留原进度, 不被吞掉
-  })
-})
-
-describe('consolidatePlotArcs — AI reconcile (semantic rename detection)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    setupRuntimeMocks()
-  })
-
-  it('raw.name 不匹配 → 调用 AI reconcile 一次, 决定归属', async () => {
-    const existing = buildExistingArc('李凡修仙之路', { progress: 35 })
-    const app = buildApp()
-
-    // AI 返回: raw "修行主线推进" 是 existing "李凡修仙之路" 的重命名
     mockCallAIWithLog.mockResolvedValue(JSON.stringify({
-      decisions: [
-        { rawName: '修行主线推进', matchExistingName: '李凡修仙之路' }
-      ]
+      updates: [
+        {
+          existingId: 'existing-李凡修仙之路',
+          progress: 45,
+          currentStage: '李凡拜入玄天宗',
+          nextGoal: '入门修行',
+          unresolved: ['张伯为何主动收徒'],
+          summary: '本章李凡偶遇张伯, 被收为徒, 正式开启修行之路'
+        }
+      ],
+      newArcs: []
     }))
 
     const result = await consolidatePlotArcs(
       app, 's1', 'c1',
       [existing],
-      [{
-        name: '修行主线推进',
-        type: 'main',
-        status: 'active',
-        progress: 45,
-        currentStage: 'stageB',
-        nextGoal: 'goalB',
-        unresolved: [],
-        summary: 'AI 视角下的别名'
-      }]
+      SAMPLE_CHAPTER,
+      SAMPLE_OUTLINE
     )
 
     expect(mockCallAIWithLog).toHaveBeenCalledTimes(1)
-    // reconcile 用独立 callType 方便区分日志
-    expect(mockCallAIWithLog.mock.calls[0][1].callType).toBe('plot_reconcile')
+    expect(mockCallAIWithLog.mock.calls[0][1].callType).toBe('plot_consolidate')
 
     expect(result).toHaveLength(1)
-    expect(result[0].isNew).toBe(false)
-    expect(result[0].existingId).toBe('existing-李凡修仙之路')
-    expect(result[0].name).toBe('李凡修仙之路')  // 用 existing 的名字 (归一化)
-    expect(result[0].progress).toBe(45)
+    const updated = result[0]
+    expect(updated.existingId).toBe('existing-李凡修仙之路')
+    expect(updated.isNew).toBe(false)
+    expect(updated.progress).toBe(45)
+    expect(updated.currentStage).toBe('李凡拜入玄天宗')
+    expect(updated.summary).toContain('正式开启修行之路')
   })
 
-  it('AI reconcile 返回 null → 新弧线 (isNew=true)', async () => {
-    const existing = buildExistingArc('李凡修仙之路', { progress: 35 })
+  it('AI 判断不推进任何 existing → 全部 carry forward', async () => {
+    // 章节是日常过渡, 没有任何 existing 被推进
+    // existing 1 main + 1 side, 符合粒度 (主线 ≤ 1, 支线 ≤ 2)
+    const existing1 = buildExistingArc('李凡修仙之路', { progress: 30, type: 'main' })
+    const existing2 = buildExistingArc('李凡与赵若曦的感情', { progress: 20, type: 'side' })
     const app = buildApp()
 
     mockCallAIWithLog.mockResolvedValue(JSON.stringify({
-      decisions: [
-        { rawName: '魔道余孽浮现', matchExistingName: null }  // 真正新弧线
-      ]
-    }))
-
-    const result = await consolidatePlotArcs(
-      app, 's1', 'c1',
-      [existing],
-      [{
-        name: '魔道余孽浮现',
-        type: 'side',
-        status: 'pending',
-        progress: 0,
-        currentStage: 'start',
-        nextGoal: 'next',
-        unresolved: [],
-        summary: '真正新弧线'
-      }]
-    )
-
-    // 关键: 现有 arc 没被推进 (AI 说 raw 是 new) → 也被 carry-forward
-    const newArc = result.find(r => r.name === '魔道余孽浮现')!
-    expect(newArc.isNew).toBe(true)
-    expect(newArc.existingId).toBeUndefined()
-    expect(newArc.progress).toBe(0)
-    const carried = result.find(r => r.existingId === 'existing-李凡修仙之路')!
-    expect(carried.isNew).toBe(false)
-    expect(carried.progress).toBe(35)
-    expect(result).toHaveLength(2)
-  })
-
-  it('AI reconcile 混合: 部分 rename 部分新弧线, 同时推进同名 arc', async () => {
-    // 真实场景: 3 个 raw + 2 个 existing
-    //   - raw1 与 existing1 同名 (fast path)
-    //   - raw2 是 existing2 的 rename (AI reconcile)
-    //   - raw3 真正新 (AI reconcile returns null)
-    const existing1 = buildExistingArc('李凡修仙之路', { progress: 35 })
-    const existing2 = buildExistingArc('李凡与赵若曦的感情', { progress: 20 })
-    const app = buildApp()
-
-    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
-      decisions: [
-        { rawName: '感情线发展', matchExistingName: '李凡与赵若曦的感情' },
-        { rawName: '魔道余孽浮现', matchExistingName: null }
-      ]
+      updates: [],
+      newArcs: []
     }))
 
     const result = await consolidatePlotArcs(
       app, 's1', 'c1',
       [existing1, existing2],
-      [
-        {
-          name: '李凡修仙之路',
-          type: 'main',
-          status: 'active',
-          progress: 50,
-          currentStage: 'stageC',
-          nextGoal: 'goalC',
-          unresolved: [],
-          summary: '推进'
-        },
-        {
-          name: '感情线发展',
-          type: 'side',
-          status: 'active',
-          progress: 25,
-          currentStage: 'b',
-          nextGoal: 'c',
-          unresolved: [],
-          summary: 'rename'
-        },
+      '本章为日常过渡, 无重要进展',
+      '日常过渡'
+    )
+
+    expect(result).toHaveLength(2)
+    expect(result.every(r => r.isNew === false)).toBe(true)
+    expect(result.every(r => r.progress >= 20)).toBe(true)  // 保留原进度
+  })
+
+  it('AI 推进多条 existing → 每条都生成 update', async () => {
+    // 1 main + 1 side, 符合粒度
+    const e1 = buildExistingArc('李凡修仙之路', { progress: 30, type: 'main' })
+    const e2 = buildExistingArc('李凡与赵若曦的感情', { progress: 20, type: 'side' })
+    const app = buildApp()
+
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [
+        { existingId: 'existing-李凡修仙之路', progress: 45, currentStage: 'A', nextGoal: 'B', unresolved: [], summary: '推进 1' },
+        { existingId: 'existing-李凡与赵若曦的感情', progress: 30, currentStage: 'C', nextGoal: 'D', unresolved: [], summary: '推进 2' }
+      ],
+      newArcs: []
+    }))
+
+    const result = await consolidatePlotArcs(
+      app, 's1', 'c1',
+      [e1, e2],
+      '本章既推进了修行也推进了感情线',
+      ''
+    )
+
+    expect(result).toHaveLength(2)
+    expect(result.find(r => r.existingId === 'existing-李凡修仙之路')?.progress).toBe(45)
+    expect(result.find(r => r.existingId === 'existing-李凡与赵若曦的感情')?.progress).toBe(30)
+  })
+})
+
+// ============================================================================
+// AI 识别新弧线 (核心价值: 笔墨浓重 / 推动主线 / 情感强烈)
+// ============================================================================
+
+describe('consolidatePlotArcs v2 — AI 识别新弧线 (笔墨浓重)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupRuntimeMocks()
+  })
+
+  it('AI 在章节中识别"笔墨浓重"的新事件线 → 创建新 arc', async () => {
+    const existing = buildExistingArc('李凡修仙之路', { progress: 30 })
+    const app = buildApp()
+
+    // 章节末尾出现重大事件: 魔道余孽首次现身, 章节花了大量篇幅渲染紧张气氛
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [
+        { existingId: 'existing-李凡修仙之路', progress: 35, currentStage: 'A', nextGoal: 'B', unresolved: [], summary: '小幅推进' }
+      ],
+      newArcs: [
         {
           name: '魔道余孽浮现',
           type: 'side',
           status: 'pending',
-          progress: 0,
-          currentStage: 'start',
-          nextGoal: 'next',
-          unresolved: [],
-          summary: 'new'
+          progress: 5,
+          currentStage: '本章末尾首次暗示',
+          nextGoal: '主角查明魔道身份',
+          unresolved: ['魔道余孽的真实身份', '其与玄天宗的渊源'],
+          summary: '本章末尾, 一道黑影在玄天宗主峰掠过, 留下诡异符号 — 魔道余孽的首次登场'
         }
-      ]
-    )
-
-    expect(mockCallAIWithLog).toHaveBeenCalledTimes(1)
-    // fast path 处理了 1 条, AI reconcile 处理了 2 条
-    expect(result).toHaveLength(3)
-
-    const updated1 = result.find(r => r.existingId === 'existing-李凡修仙之路')!
-    expect(updated1.isNew).toBe(false)
-    expect(updated1.progress).toBe(50)
-
-    const updated2 = result.find(r => r.existingId === 'existing-李凡与赵若曦的感情')!
-    expect(updated2.isNew).toBe(false)
-    expect(updated2.name).toBe('李凡与赵若曦的感情')  // 归一化到 existing name
-    expect(updated2.progress).toBe(25)
-
-    const newArc = result.find(r => r.name === '魔道余孽浮现')!
-    expect(newArc.isNew).toBe(true)
-  })
-
-  it('AI reconcile 失败 → 兜底把 unmatched 当 new, 不抛错阻塞归档', async () => {
-    const existing = buildExistingArc('李凡修仙之路', { progress: 35 })
-    const app = buildApp()
-
-    mockCallAIWithLog.mockRejectedValue(new Error('AI provider unavailable'))
-
-    const result = await consolidatePlotArcs(
-      app, 's1', 'c1',
-      [existing],
-      [{
-        name: '未知主线',
-        type: 'main',
-        status: 'active',
-        progress: 50,
-        currentStage: 'b',
-        nextGoal: 'c',
-        unresolved: [],
-        summary: '可能 rename 也可能 new'
-      }]
-    )
-
-    // 兜底: 当作 new (避免阻塞归档; ReviewingPanel 可人工修正)
-    // 关键: 现有 arc 没被推进 → 也被 carry-forward (2 条 total)
-    const newArc = result.find(r => r.name === '未知主线')!
-    expect(newArc.isNew).toBe(true)
-    const carried = result.find(r => r.existingId === 'existing-李凡修仙之路')!
-    expect(carried.isNew).toBe(false)
-    expect(carried.progress).toBe(35)
-    expect(result).toHaveLength(2)
-  })
-
-  it('AI reconcile 返回未知的 rawName → 忽略该决策, 其它正常处理', async () => {
-    const existing = buildExistingArc('李凡修仙之路', { progress: 35 })
-    const app = buildApp()
-
-    // AI 返回了 2 个 decision, 但只有 rawName="感情线发展" 在输入 raws 里
-    // rawName="伪造的弧线" 在输入里没有 → 忽略
-    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
-      decisions: [
-        { rawName: '感情线发展', matchExistingName: null },
-        { rawName: '伪造的弧线', matchExistingName: null }  // 幻觉
       ]
     }))
 
     const result = await consolidatePlotArcs(
       app, 's1', 'c1',
       [existing],
-      [{
-        name: '感情线发展',
-        type: 'side',
-        status: 'active',
-        progress: 25,
-        currentStage: 'b',
-        nextGoal: 'c',
-        unresolved: [],
-        summary: 'AI 决定'
-      }]
+      '... 章节末尾, 一道黑影掠过玄天宗主峰...',
+      '李凡开启修行, 魔道余孽首次登场'
     )
 
-    // 关键: 现有 arc 没被推进 (AI 决定 null → 新弧线) → 也被 carry-forward
-    const newArc = result.find(r => r.name === '感情线发展')!
-    expect(newArc.isNew).toBe(true)
-    const carried = result.find(r => r.existingId === 'existing-李凡修仙之路')!
-    expect(carried.isNew).toBe(false)
-    expect(carried.progress).toBe(35)
     expect(result).toHaveLength(2)
+
+    const updated = result.find(r => r.existingId === 'existing-李凡修仙之路')!
+    expect(updated.isNew).toBe(false)
+
+    const newArc = result.find(r => r.isNew === true)!
+    expect(newArc.name).toBe('魔道余孽浮现')
+    expect(newArc.type).toBe('side')
+    expect(newArc.progress).toBe(5)  // 新 arc 开篇, progress 应低
+  })
+
+  it('AI 判断章节没有"笔墨浓重"的新事件线 → 不创建新 arc (即使章节里有事件)', async () => {
+    // 用户原始 bug 的真正修复: AI 不应该把"过渡 / 路人 / 一次性对话"做成 arc
+    const existing = buildExistingArc('李凡修仙之路', { progress: 30 })
+    const app = buildApp()
+
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [
+        { existingId: 'existing-李凡修仙之路', progress: 35, currentStage: 'A', nextGoal: 'B', unresolved: [], summary: '小幅推进' }
+      ],
+      newArcs: []  // AI 判断无新事件线值得开 arc
+    }))
+
+    const result = await consolidatePlotArcs(
+      app, 's1', 'c1',
+      [existing],
+      '李凡在山脚采药, 与路人闲聊几句, 遇到一只野兔...',
+      '日常过渡'
+    )
+
+    expect(result).toHaveLength(1)
+    expect(result[0].isNew).toBe(false)
   })
 })
 
-describe('consolidatePlotArcs — progress monotonic (regression guard)', () => {
+// ============================================================================
+// 完整流程: 推进 + 新增 + carry-forward 三类并存
+// ============================================================================
+
+describe('consolidatePlotArcs v2 — 推进 + 新增 + carry-forward 三类并存', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setupRuntimeMocks()
   })
 
-  it('existing arc 35% + raw 返回 25% → 不回退, 取 max(35, 25)=35', async () => {
-    // 用户真实痛点: AI 不擅长算进度, 可能返回低于现有的进度。
-    // 我们保证 progress 单调不减 — 不会让 arc 倒退。
-    const existing = buildExistingArc('李凡修仙之路', { progress: 35 })
+  it('推进 1 条 + 新增 1 条 + carry-forward 1 条 → 3 条 writes', async () => {
+    // 1 main + 1 side 符合粒度, AI 新增 1 side → 仍 1 main + 2 side
+    const e1 = buildExistingArc('李凡修仙之路', { progress: 30, type: 'main' })
+    const e2 = buildExistingArc('李凡与赵若曦的感情', { progress: 20, type: 'side' })  // 本章没推进
     const app = buildApp()
+
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [
+        { existingId: 'existing-李凡修仙之路', progress: 50, currentStage: 'A', nextGoal: 'B', unresolved: [], summary: '推进' }
+      ],
+      newArcs: [
+        { name: '魔道余孽浮现', type: 'side', status: 'pending', progress: 5, currentStage: '首现', nextGoal: '查明身份', unresolved: ['真实身份'], summary: '新' }
+      ]
+    }))
 
     const result = await consolidatePlotArcs(
       app, 's1', 'c1',
-      [existing],
-      [{
-        name: '李凡修仙之路',
-        type: 'main',
-        status: 'active',
-        progress: 25,  // 倒退!
-        currentStage: 'b',
-        nextGoal: 'c',
-        unresolved: [],
-        summary: 'AI 看走眼了'
-      }]
+      [e1, e2],
+      '本章推进了修行, 末尾出现魔道...',
+      ''
     )
 
-    expect(result).toHaveLength(1)
-    expect(result[0].progress).toBe(35)  // 取 max, 不倒退
-  })
+    expect(result).toHaveLength(3)
 
-  it('existing arc 35% + raw 返回 50% → 50 (正常推进)', async () => {
-    const existing = buildExistingArc('李凡修仙之路', { progress: 35 })
-    const app = buildApp()
+    const updated = result.find(r => r.existingId === 'existing-李凡修仙之路')!
+    expect(updated.isNew).toBe(false)
+    expect(updated.progress).toBe(50)
 
-    const result = await consolidatePlotArcs(
-      app, 's1', 'c1',
-      [existing],
-      [{
-        name: '李凡修仙之路',
-        type: 'main',
-        status: 'active',
-        progress: 50,
-        currentStage: 'b',
-        nextGoal: 'c',
-        unresolved: [],
-        summary: '推进'
-      }]
-    )
+    const carried = result.find(r => r.existingId === 'existing-李凡与赵若曦的感情')!
+    expect(carried.isNew).toBe(false)
+    expect(carried.progress).toBe(20)  // 保留原进度
 
-    expect(result[0].progress).toBe(50)
+    const newArc = result.find(r => r.isNew === true)!
+    expect(newArc.name).toBe('魔道余孽浮现')
   })
 })
 
-describe('consolidatePlotArcs — completed arcs (boundary)', () => {
+// ============================================================================
+// 边界保护: 进度单调 / AI 失败 / 幻觉 / 粒度约束
+// ============================================================================
+
+describe('consolidatePlotArcs v2 — 进度单调不减', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setupRuntimeMocks()
   })
 
-  it('existing arc status=completed → carry forward 跳过 (不重复写入)', async () => {
-    // 已完成的弧线不需要在推进章节里再 carry forward — 用户已经看到它 completed。
-    // 携带它会污染 ReviewingPanel 视图, 且 commitPlotArcWrites 会再做 update (no-op 但浪费)。
-    const existingActive = buildExistingArc('李凡修仙之路', { progress: 35 })
-    const existingDone = buildExistingArc('已完结支线', { progress: 100, status: 'completed' })
+  it('existing progress 35%, AI 返回 progress 25% → 取 max=35 (不回退)', async () => {
+    const existing = buildExistingArc('李凡修仙之路', { progress: 35 })
     const app = buildApp()
 
-    const result = await consolidatePlotArcs(
-      app, 's1', 'c1',
-      [existingActive, existingDone],
-      [{
-        name: '李凡修仙之路',
-        type: 'main',
-        status: 'active',
-        progress: 50,
-        currentStage: 'b',
-        nextGoal: 'c',
-        unresolved: [],
-        summary: '推进'
-      }]
-    )
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [
+        { existingId: 'existing-李凡修仙之路', progress: 25, currentStage: 'A', nextGoal: 'B', unresolved: [], summary: 'AI 推算偏低' }
+      ],
+      newArcs: []
+    }))
 
-    // 只有 active 被更新, completed 不出现
+    const result = await consolidatePlotArcs(app, 's1', 'c1', [existing], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+
+    expect(result[0].progress).toBe(35)
+  })
+
+  it('new arc progress 限制 0-15 (开篇不应超过 15%)', async () => {
+    const app = buildApp()
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [],
+      newArcs: [
+        { name: '新主线', type: 'main', status: 'pending', progress: 50, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'AI 给了 50 但开篇不该这么高' }
+      ]
+    }))
+
+    const result = await consolidatePlotArcs(app, 's1', 'c1', [], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+
+    // 截到 15, 避免新 arc 凭空 50% (用户 bug 现象)
+    expect(result[0].progress).toBeLessThanOrEqual(15)
+  })
+})
+
+describe('consolidatePlotArcs v2 — AI 失败兜底', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupRuntimeMocks()
+  })
+
+  it('AI 调用失败 → 兜底 carry-forward 全部 existing, 不创建新 arc', async () => {
+    const e1 = buildExistingArc('李凡修仙之路', { progress: 30 })
+    const e2 = buildExistingArc('李凡与赵若曦的感情', { progress: 20 })
+    const app = buildApp()
+
+    mockCallAIWithLog.mockRejectedValue(new Error('AI provider unavailable'))
+
+    const result = await consolidatePlotArcs(app, 's1', 'c1', [e1, e2], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+
+    // 兜底: 全部 carry-forward, 不创建新 arc (避免污染)
+    expect(result).toHaveLength(2)
+    expect(result.every(r => r.isNew === false)).toBe(true)
+    expect(result.find(r => r.existingId === 'existing-李凡修仙之路')?.progress).toBe(30)
+    expect(result.find(r => r.existingId === 'existing-李凡与赵若曦的感情')?.progress).toBe(20)
+  })
+})
+
+describe('consolidatePlotArcs v2 — AI 幻觉保护', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupRuntimeMocks()
+  })
+
+  it('AI 返回不存在的 existingId → 忽略该 update, 其它正常处理', async () => {
+    const existing = buildExistingArc('李凡修仙之路', { progress: 30 })
+    const app = buildApp()
+
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [
+        { existingId: 'existing-李凡修仙之路', progress: 45, currentStage: 'A', nextGoal: 'B', unresolved: [], summary: '合法' },
+        { existingId: 'existing-不存在的弧线', progress: 50, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: '幻觉' }
+      ],
+      newArcs: []
+    }))
+
+    const result = await consolidatePlotArcs(app, 's1', 'c1', [existing], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+
+    // 幻觉被忽略, 只有 1 个有效 update
     expect(result).toHaveLength(1)
-    expect(result[0].name).toBe('李凡修仙之路')
+    expect(result[0].progress).toBe(45)
+  })
+})
+
+describe('consolidatePlotArcs v2 — 粒度约束 (Zod schema 校验)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupRuntimeMocks()
+  })
+
+  it('AI 超额返回 3 main + 2 side → 抛错 (主线 ≤ 1, 支线 ≤ 2)', async () => {
+    // 现有 arc 已占用 1 main + 1 side, AI 又加 2 main + 1 side → 共 3 main + 2 side
+    const e1 = buildExistingArc('主线A', { type: 'main', progress: 30 })
+    const e2 = buildExistingArc('支线A', { type: 'side', progress: 20 })
+    const app = buildApp()
+
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [
+        { existingId: 'existing-主线A', progress: 35, currentStage: 'A', nextGoal: 'B', unresolved: [], summary: 'x' }
+      ],
+      newArcs: [
+        { name: '主线B', type: 'main', status: 'pending', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' },
+        { name: '主线C', type: 'main', status: 'pending', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' },
+        { name: '支线B', type: 'side', status: 'pending', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' }
+      ]
+    }))
+
+    await expect(
+      consolidatePlotArcs(app, 's1', 'c1', [e1, e2], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+    ).rejects.toThrow(/粒度|主线|支线|granularity/i)
+  })
+
+  it('AI 返回 1 main + 2 side → 通过 (符合粒度)', async () => {
+    const e1 = buildExistingArc('主线A', { type: 'main', progress: 30 })
+    const e2 = buildExistingArc('支线A', { type: 'side', progress: 20 })
+    const app = buildApp()
+
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [
+        { existingId: 'existing-主线A', progress: 35, currentStage: 'A', nextGoal: 'B', unresolved: [], summary: 'x' }
+      ],
+      newArcs: [
+        { name: '支线B', type: 'side', status: 'pending', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' }
+      ]
+    }))
+
+    const result = await consolidatePlotArcs(app, 's1', 'c1', [e1, e2], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+
+    expect(result.length).toBeGreaterThanOrEqual(2)
+    expect(result.every(r => !r.isNew || r.type === 'side')).toBe(true)
+  })
+})
+
+describe('consolidatePlotArcs v2 — completed arc 跳过 carry-forward', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupRuntimeMocks()
+  })
+
+  it('existing completed arc 不出现 (避免 ReviewingPanel 污染)', async () => {
+    const active = buildExistingArc('主线A', { progress: 30 })
+    const done = buildExistingArc('已完结', { progress: 100, status: 'completed' })
+    const app = buildApp()
+
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [{ existingId: 'existing-主线A', progress: 35, currentStage: 'A', nextGoal: 'B', unresolved: [], summary: 'x' }],
+      newArcs: []
+    }))
+
+    const result = await consolidatePlotArcs(app, 's1', 'c1', [active, done], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('主线A')
+  })
+})
+
+describe('consolidatePlotArcs v2 — stages 合并 (新 arc 自动初始化 stages)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupRuntimeMocks()
+  })
+
+  it('AI update existing → stages 追加新阶段 (若不重复)', async () => {
+    const existing = buildExistingArc('李凡修仙之路', {
+      progress: 30,
+      stages: JSON.stringify([{ stage: '山脚采药', completed: false, description: '初始' }])
+    })
+    const app = buildApp()
+
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [
+        {
+          existingId: 'existing-李凡修仙之路',
+          progress: 50,
+          currentStage: '拜入玄天宗',
+          nextGoal: '入门修行',
+          unresolved: [],
+          summary: '推进'
+        }
+      ],
+      newArcs: []
+    }))
+
+    const result = await consolidatePlotArcs(app, 's1', 'c1', [existing], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+
+    const stages = JSON.parse(result[0].stages)
+    expect(stages).toHaveLength(2)
+    expect(stages.map((s: any) => s.stage)).toEqual(['山脚采药', '拜入玄天宗'])
+  })
+
+  it('AI new arc → stages 包含初始阶段', async () => {
+    const app = buildApp()
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [],
+      newArcs: [
+        { name: '魔道浮现', type: 'side', status: 'pending', progress: 5, currentStage: '首现', nextGoal: '查明', unresolved: ['身份'], summary: 'x' }
+      ]
+    }))
+
+    const result = await consolidatePlotArcs(app, 's1', 'c1', [], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+
+    const stages = JSON.parse(result[0].stages)
+    expect(stages).toHaveLength(1)
+    expect(stages[0].stage).toBe('首现')
   })
 })

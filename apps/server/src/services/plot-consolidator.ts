@@ -1,29 +1,53 @@
 import type { FastifyInstance } from 'fastify'
+import { z } from 'zod'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
 import { cleanJsonBlock } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
-import type { PlotArcAnalysis } from './plot-extractor.js'
 import type { PendingPlotArcWrite } from '@novel-runtime/shared'
 
 /**
- * plot-consolidator — P1 bug 修复: plot arc 不增长
+ * plot-consolidator v2 — AI 跨章融合 worker (P1 bug 修复第二轮)
  *
- * 根因: slim 重构后 extractAll prompt 不再喂 existingArcs, AI 每章返回
- *       新名字的 arc, preparePlotArcWrites 按 name 精确匹配 existing, 全部
- *       走 isNew=true → 6 章 6 条互不关联的 arc 都卡在 50%。
+ * 设计意图 (用户 2026-06-26 明确指出):
+ *   "比对以往的剧情弧线, 相近的剧情主题则更新进度, 若是新的剧情弧线且
+ *    在文章中笔墨浓重的、有推动剧情发展的、情感强烈的等等则形成一个新的剧情弧线"
  *
- * 设计: 对齐 graph-organizer 模式 — Phase 2 跨章融合 worker:
- *   Step 1: code fast path — raw.name 精确匹配 existing.name → 更新进度
- *   Step 2: AI reconcile — unmatched raw + 已有 arcs 存在 → 一次小 AI 调用
- *           判断"是否同一条(重命名/别名)" vs "真正新弧线"
- *   Step 3: carry-forward — 未推进的 existing arc 保留 (不被本章节的"未提及"抹掉)
+ * 与 v1 的关键区别:
+ *   - v1: 把 extractAll 输出的 raw arcs 喂给 consolidator, AI 机械地问
+ *         "rawName 是不是 existingName 的别名"。slim prompt 没让 AI 看 existing,
+ *         raw arcs 已经过度生成 (6 条 50% prog), consolidator 在症状上做别名
+ *         匹配, 永远救不回来。
  *
- * 不做的事:
- *   - 不直接调用 prisma 写库 (这是 preparePlotArcWrites + commitPlotArcWrites 的职责)
- *   - 不持有 AI 调用以外的隐式状态
- *   - 不修改现有 arc 的 id/name (归一化只在 AI 决策层做)
+ *   - v2: consolidator 自己读章节内容 + existingArcs, AI 做真正的语义级判断:
+ *         * existing 推进: AI 看 existing + 章节, 决定"笔墨浓重地推进了"的 existing
+ *         * 新 arc 识别: AI 看章节, 决定"笔墨浓重 / 推动主线 / 情感强烈"的独立新事件线
+ *         * 不把过渡 / 路人 / 一次性对话做成新 arc (AI 擅长的价值判断)
+ *
+ *   - v2 不再依赖 extractAll 的 plotArcs 字段, slim prompt 删掉 plot 任务3。
+ *     plot 是 consolidator 的唯一入口, 读章节 + existing 做判断。
+ *
+ * AI 返回 contract:
+ *   {
+ *     "updates": [{ "existingId": "<id>", "progress": 45, ... }],
+ *     "newArcs": [{ "name": "...", "type": "main"|"side", "progress": 0-15, ... }]
+ *   }
+ *
+ * 粒度约束 (Zod schema 校验):
+ *   - 主线 (type=main) 总数 ≤ 1
+ *   - 支线 (type=side) 总数 ≤ 2
+ *   - 总 active arc (推进的 existing + 新建) ≤ 3
+ *
+ * 兜底:
+ *   - AI 调用失败 → carry-forward 全部 active existing, 不创建新 arc (避免污染)
+ *   - AI 返回幻觉 existingId → 忽略该 update
+ *   - 进度单调不减 (AI 推算偏低时取 max)
+ *   - 新 arc progress 上限 15 (开篇不应凭空 50%)
  */
+
+// ---------------------------------------------------------------------------
+// Types & Zod schemas
+// ---------------------------------------------------------------------------
 
 export interface ExistingArcView {
   id: string
@@ -33,131 +57,289 @@ export interface ExistingArcView {
   progress: number
   currentStage: string | null
   nextGoal: string | null
-  /** JSON-encoded unresolved array (matches Prisma schema) */
-  unresolved: string
+  unresolved: string  // JSON-encoded
   summary: string | null
-  /** JSON-encoded stages array */
-  stages: string
+  stages: string  // JSON-encoded
   createdAt: Date
   updatedAt: Date
 }
 
 export type ConsolidatedArcWrite = PendingPlotArcWrite
 
+/** AI 返回的单条 update: 对某条 existing arc 的字段更新 */
+const UpdateSchema = z.object({
+  existingId: z.string(),
+  progress: z.number().min(0).max(100).optional(),
+  status: z.enum(['pending', 'active', 'resolving', 'completed']).optional(),
+  currentStage: z.string().optional(),
+  nextGoal: z.string().optional(),
+  unresolved: z.array(z.string()).optional(),
+  summary: z.string().optional()
+})
+
+/** AI 返回的单条新 arc: 章节中识别的新事件线 */
+const NewArcSchema = z.object({
+  name: z.string(),
+  type: z.enum(['main', 'side']),
+  status: z.enum(['pending', 'active', 'resolving', 'completed']),
+  progress: z.number().min(0).max(100),
+  currentStage: z.string(),
+  nextGoal: z.string(),
+  unresolved: z.array(z.string()),
+  summary: z.string()
+})
+
+/** AI 返回的顶层结构 */
+const ConsolidateResponseSchema = z.object({
+  updates: z.array(UpdateSchema),
+  newArcs: z.array(NewArcSchema)
+})
+
+type ConsolidateResponse = z.infer<typeof ConsolidateResponseSchema>
+
+/** 粒度约束常量 */
+const MAX_MAIN_ARCS = 1
+const MAX_SIDE_ARCS = 2
+
+// ---------------------------------------------------------------------------
+// Main entry
+// ---------------------------------------------------------------------------
+
 /**
- * 跨章融合主入口。返回 PlotArcWrite 列表 (含 isNew / existingId),
- * 可直接喂给 preparePlotArcWrites / commitPlotArcWrites。
+ * 跨章融合剧情弧线: 比对已有弧线 + 阅读章节, AI 决定推进哪些 / 新增哪些。
  *
  * @param app Fastify app (含 prisma + log)
  * @param storyId 当前故事 id
- * @param chapterId 当前章节 id (用于 ai-call-logger 关联)
- * @param existingArcs 数据库中已有弧线 (按 updatedAt desc 取的活跃 + 近期更新)
- * @param rawArcs extractAll 从 AI 拿到的"本章事实" arc 列表 (mode=slim)
+ * @param chapterId 当前章节 id
+ * @param existingArcs 数据库中已有弧线 (全部, 不限状态 — completed 由内部分流跳过)
+ * @param chapterContent 章节正文 (已被 truncateByParagraph 处理过的截断版也可)
+ * @param chapterOutline 章节大纲 (可选)
  */
 export async function consolidatePlotArcs(
   app: FastifyInstance,
   storyId: string,
   chapterId: string,
   existingArcs: ExistingArcView[],
-  rawArcs: PlotArcAnalysis['arcs']
+  chapterContent: string,
+  chapterOutline?: string
 ): Promise<ConsolidatedArcWrite[]> {
-  // Step 1: code fast path — 按 raw.name 精确匹配 existing.name
-  const existingByName = new Map(existingArcs.map(e => [e.name, e]))
-  const matched: ConsolidatedArcWrite[] = []
-  const matchedExistingIds = new Set<string>()
-  const unmatchedRaws: PlotArcAnalysis['arcs'] = []
+  const storyId_ = storyId
 
-  for (const raw of rawArcs || []) {
-    const existing = existingByName.get(raw.name)
-    if (existing) {
-      matched.push(mergeRawIntoExisting(storyId, existing, raw))
-      matchedExistingIds.add(existing.id)
-    } else {
-      unmatchedRaws.push(raw)
-    }
+  // 兜底: 没有 existing 且 没有内容 → 直接返回 []
+  if (existingArcs.length === 0 && !chapterContent.trim()) {
+    return []
   }
 
-  // Step 2: AI reconcile — 仅在 unmatched 非空 且 已有 arc 非空时触发
-  let reconciled: ConsolidatedArcWrite[] = []
-  if (unmatchedRaws.length > 0 && existingArcs.length > 0) {
-    try {
-      reconciled = await reconcileUnmatchedWithAI(
-        app, storyId, chapterId, existingArcs, unmatchedRaws, matchedExistingIds
-      )
-    } catch (err: any) {
-      // 兜底: AI 失败不阻塞归档 — 把所有 unmatched 当作 new, ReviewingPanel 可人工修正
-      // 关键: fallback 路径下 existing arc 没被推进, 应被 carry-forward (matchedExistingIds 不变)
-      app.log.warn(
-        `[PlotConsolidator] AI reconcile failed: ${err.message}, ` +
-        `treating ${unmatchedRaws.length} unmatched raw(s) as new arcs`
-      )
-      reconciled = unmatchedRaws.map(r => newArcFromRaw(storyId, r))
-    }
-  } else if (unmatchedRaws.length > 0) {
-    // 没有 existing → 全部 new
-    reconciled = unmatchedRaws.map(r => newArcFromRaw(storyId, r))
+  let response: ConsolidateResponse
+  try {
+    response = await callConsolidateAI(app, storyId_, chapterId, existingArcs, chapterContent, chapterOutline)
+  } catch (err: any) {
+    // AI 失败兜底: carry-forward 全部 active existing, 不创建新 arc (避免污染)
+    app.log.warn(
+      `[PlotConsolidator] AI consolidate failed: ${err.message}, ` +
+      `falling back to carry-forward ${existingArcs.length} existing arc(s)`
+    )
+    return existingArcs
+      .filter(e => e.status !== 'completed')
+      .map(e => carryForwardArc(storyId_, e))
   }
 
-  // Step 3: carry-forward — 未推进的 existing active arc (不被本章节的"未提及"抹掉)
-  const carryForwarded: ConsolidatedArcWrite[] = []
+  // 应用响应 → 写库格式
+  const existingById = new Map(existingArcs.map(e => [e.id, e]))
+  const writes: ConsolidatedArcWrite[] = []
+  const advancedExistingIds = new Set<string>()
+
+  // 1. 处理 updates
+  for (const update of response.updates) {
+    const existing = existingById.get(update.existingId)
+    if (!existing) continue  // AI 幻觉, 忽略
+    writes.push(mergeUpdateIntoExisting(storyId_, existing, update))
+    advancedExistingIds.add(existing.id)
+  }
+
+  // 2. 处理 newArcs
+  for (const newArc of response.newArcs) {
+    writes.push(newArcFromAI(storyId_, newArc))
+  }
+
+  // 3. carry-forward 未推进的 active existing
   for (const existing of existingArcs) {
-    if (matchedExistingIds.has(existing.id)) continue  // 已被推进
-    if (existing.status === 'completed') continue       // 已完结不重复写入
-    carryForwarded.push(carryForwardArc(storyId, existing))
+    if (advancedExistingIds.has(existing.id)) continue
+    if (existing.status === 'completed') continue
+    writes.push(carryForwardArc(storyId_, existing))
   }
 
-  const total = matched.length + reconciled.length + carryForwarded.length
+  // 4. 粒度约束校验
+  validateGranularity(writes, app)
+
   app.log.info(
     `[PlotConsolidator] chapter ${chapterId}: ` +
-    `${matched.length} updated (code fast path), ` +
-    `${reconciled.length} reconciled (${unmatchedRaws.length} unmatched input), ` +
-    `${carryForwarded.length} carried forward, ` +
-    `${total} total writes`
+    `${response.updates.length} AI updates, ` +
+    `${response.newArcs.length} AI new arcs, ` +
+    `${writes.length - response.updates.length - response.newArcs.length} carried forward, ` +
+    `${writes.length} total writes`
   )
 
-  return [...matched, ...reconciled, ...carryForwarded]
+  return writes
 }
 
 // ---------------------------------------------------------------------------
-// Step 1 helpers — code fast path
+// AI call + parsing
 // ---------------------------------------------------------------------------
 
-function mergeRawIntoExisting(
+async function callConsolidateAI(
+  app: FastifyInstance,
+  storyId: string,
+  chapterId: string,
+  existingArcs: ExistingArcView[],
+  chapterContent: string,
+  chapterOutline?: string
+): Promise<ConsolidateResponse> {
+  const prisma = app.prisma
+  const base = await loadRuntimeBase(storyId, prisma)
+  const task = await loadWorkerTask(storyId, 'memory', prisma)
+
+  const prompt = buildConsolidatePrompt(existingArcs, chapterContent, chapterOutline)
+  const compiler = new RuntimePromptCompiler()
+  const compiled = compiler.compile(base, task, prompt)
+
+  const raw = await callAIWithLog(app, {
+    storyId, chapterId, callType: 'plot_consolidate',
+    compiled, temperature: 0.2, maxTokens: 4096
+  })
+  if (!raw) throw new Error('AI consolidate 返回为空')
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(cleanJsonBlock(raw))
+  } catch (parseErr: any) {
+    throw new Error(`AI consolidate JSON parse failed: ${parseErr.message}`)
+  }
+
+  const result = ConsolidateResponseSchema.safeParse(parsed)
+  if (!result.success) {
+    throw new Error(`AI consolidate schema 校验失败: ${result.error.message}`)
+  }
+  return result.data
+}
+
+function buildConsolidatePrompt(
+  existingArcs: ExistingArcView[],
+  chapterContent: string,
+  chapterOutline?: string
+): string {
+  const existingList = existingArcs.map(a =>
+    `- id: ${a.id} | name: ${a.name} | type: ${a.type} | status: ${a.status} | progress: ${a.progress} | currentStage: ${a.currentStage || '(无)'} | nextGoal: ${a.nextGoal || '(无)'} | summary: ${a.summary || '(无)'}`
+  ).join('\n')
+
+  return `你是小说剧情弧线整理助手。
+
+【任务】
+阅读"章节大纲 + 章节内容", 比对"已有剧情弧线", 完成两项判断:
+
+1. 【推进已有弧线】对每条已有弧线, 判断本章是否"笔墨浓重地推进了"它:
+   - 推进的标志: 章节中有该弧线的实质性新进展 (重要事件 / 阶段转折 / 关系演变)
+   - 如果推进: 在 updates 数组里输出一条, 包含 existingId + 新的 progress/currentStage/nextGoal/unresolved/summary
+   - 如果没推进: 不在 updates 里出现, 系统会自动保留原状
+
+2. 【识别新弧线】基于章节内容, 判断是否有"笔墨浓重 / 推动剧情 / 情感强烈"的全新事件线值得开成新弧线。
+   开新弧线的标准:
+   - 笔墨浓重: 章节中花了显著篇幅描写
+   - 推动剧情: 直接影响主线进展或核心冲突
+   - 情感强烈: 涉及主角重要情感 / 关系 / 内心变化
+   - 独立主线: 不是已有弧线的延续, 而是新的事件线
+   - 在 newArcs 数组里输出, progress 限制 0-15 (开篇不应过高)
+
+   不要把以下做成新弧线:
+   - 一次性对话 / 路人提及
+   - 纯环境描写 / 过渡铺垫
+   - 已有弧线的小进展 (应该走 updates)
+
+3. 【粒度约束】整个故事主线 (type=main) 最多 1 条, 支线 (type=side) 最多 2 条。
+   已有弧线已经占用配额时, 新弧线必须替换/放弃, 不要硬凑。
+
+【已有剧情弧线 (数据库 N-1 状态)】
+${existingList || '(暂无, 这是故事开篇)'}
+
+【章节大纲】
+${chapterOutline || '(无大纲)'}
+
+【章节内容】
+${chapterContent}
+
+【返回格式】严格 JSON, 不要 markdown 代码块:
+{
+  "updates": [
+    {
+      "existingId": "<id>",
+      "progress": 0-100,
+      "currentStage": "本章结束时该弧线处于什么阶段 (≤30字)",
+      "nextGoal": "下一步要推进什么 (≤30字)",
+      "unresolved": ["本章新增的悬念"],
+      "summary": "本章该弧线推进的一句话总结"
+    }
+  ],
+  "newArcs": [
+    {
+      "name": "新弧线名称",
+      "type": "main" | "side",
+      "status": "pending" | "active",
+      "progress": 0-15,
+      "currentStage": "本章结束时该弧线处于什么阶段 (≤30字)",
+      "nextGoal": "下一步要推进什么 (≤30字)",
+      "unresolved": ["悬念列表"],
+      "summary": "本章该弧线开启的一句话总结"
+    }
+  ]
+}`
+}
+
+// ---------------------------------------------------------------------------
+// Write format conversion
+// ---------------------------------------------------------------------------
+
+function mergeUpdateIntoExisting(
   storyId: string,
   existing: ExistingArcView,
-  raw: NonNullable<PlotArcAnalysis['arcs']>[number]
+  update: z.infer<typeof UpdateSchema>
 ): ConsolidatedArcWrite {
+  const mergedProgress = monotonicMax(existing.progress, update.progress ?? existing.progress)
+
   return {
     storyId,
-    name: existing.name,  // 沿用 existing.name (raw.name 一致才能进 fast path, 所以保留现有名)
-    type: raw.type || existing.type,
-    status: raw.status || existing.status,
-    progress: monotonicMax(existing.progress, raw.progress),
-    stages: mergeStages(existing.stages, raw),
-    currentStage: raw.currentStage || existing.currentStage || '',
-    nextGoal: raw.nextGoal || existing.nextGoal || '',
-    unresolved: raw.unresolved ? JSON.stringify(raw.unresolved) : existing.unresolved,
-    summary: raw.summary || existing.summary || '',
+    name: existing.name,
+    type: update.status ? (existing.type) : existing.type,  // type 不通过 update 改
+    status: update.status ?? existing.status,
+    progress: mergedProgress,
+    stages: mergeStages(existing.stages, update.currentStage || existing.currentStage || '', update.status ?? existing.status, update.summary || existing.summary || ''),
+    currentStage: update.currentStage ?? existing.currentStage ?? '',
+    nextGoal: update.nextGoal ?? existing.nextGoal ?? '',
+    unresolved: update.unresolved ? JSON.stringify(update.unresolved) : existing.unresolved,
+    summary: update.summary ?? existing.summary ?? '',
     isNew: false,
     existingId: existing.id
   }
 }
 
-function newArcFromRaw(
+function newArcFromAI(
   storyId: string,
-  raw: NonNullable<PlotArcAnalysis['arcs']>[number]
+  newArc: z.infer<typeof NewArcSchema>
 ): ConsolidatedArcWrite {
   return {
     storyId,
-    name: raw.name,
-    type: raw.type,
-    status: raw.status,
-    progress: raw.progress,
-    stages: initialStagesFromRaw(raw),
-    currentStage: raw.currentStage || '',
-    nextGoal: raw.nextGoal || '',
-    unresolved: JSON.stringify(raw.unresolved || []),
-    summary: raw.summary || '',
+    name: newArc.name,
+    type: newArc.type,
+    status: newArc.status,
+    progress: Math.min(newArc.progress, 15),  // 硬上限: 新 arc 开篇不应超 15%
+    stages: JSON.stringify([{
+      stage: newArc.currentStage,
+      completed: newArc.status === 'completed',
+      description: newArc.summary
+    }]),
+    currentStage: newArc.currentStage,
+    nextGoal: newArc.nextGoal,
+    unresolved: JSON.stringify(newArc.unresolved),
+    summary: newArc.summary,
     isNew: true
   }
 }
@@ -180,151 +362,40 @@ function carryForwardArc(storyId: string, existing: ExistingArcView): Consolidat
 }
 
 // ---------------------------------------------------------------------------
-// Step 2 helpers — AI reconcile (small prompt, only when needed)
+// Granularity validation (主线 ≤ 1, 支线 ≤ 2)
 // ---------------------------------------------------------------------------
 
-interface ReconcileDecision {
-  rawName: string
-  /** null = 真正新弧线; non-null = 与已有弧线同名/别名, 应归一化到该 existing.name */
-  matchExistingName: string | null
-}
+function validateGranularity(writes: ConsolidatedArcWrite[], app: FastifyInstance): void {
+  const mainCount = writes.filter(w => w.type === 'main' && w.status !== 'completed').length
+  const sideCount = writes.filter(w => w.type === 'side' && w.status !== 'completed').length
 
-interface ReconcileResult {
-  decisions: ReconcileDecision[]
-}
-
-async function reconcileUnmatchedWithAI(
-  app: FastifyInstance,
-  storyId: string,
-  chapterId: string,
-  existingArcs: ExistingArcView[],
-  unmatchedRaws: NonNullable<PlotArcAnalysis['arcs']>[number][],
-  matchedExistingIds: Set<string>
-): Promise<ConsolidatedArcWrite[]> {
-  const prisma = app.prisma
-  const base = await loadRuntimeBase(storyId, prisma)
-  const task = await loadWorkerTask(storyId, 'memory', prisma)  // 与 plot-extractor 保持一致
-
-  const prompt = buildReconcilePrompt(existingArcs, unmatchedRaws)
-  const compiler = new RuntimePromptCompiler()
-  const compiled = compiler.compile(base, task, prompt)
-
-  const raw = await callAIWithLog(app, {
-    storyId, chapterId, callType: 'plot_reconcile',
-    compiled, temperature: 0.1, maxTokens: 1024
-  })
-  if (!raw) throw new Error('AI reconcile 返回为空')
-
-  let result: ReconcileResult
-  try {
-    result = JSON.parse(cleanJsonBlock(raw)) as ReconcileResult
-  } catch (parseErr: any) {
-    throw new Error(`AI reconcile JSON parse failed: ${parseErr.message}`)
+  if (mainCount > MAX_MAIN_ARCS) {
+    const err = `粒度约束违反: 主线 (type=main) 总数 ${mainCount} 超过上限 ${MAX_MAIN_ARCS}。需调整 updates/newArcs, 合并主线或放弃次要主线。`
+    app.log.error(`[PlotConsolidator] ${err}`)
+    throw new Error(err)
   }
-
-  if (!result || !Array.isArray(result.decisions)) {
-    throw new Error('AI reconcile 返回格式错误 (缺少 decisions 数组)')
+  if (sideCount > MAX_SIDE_ARCS) {
+    const err = `粒度约束违反: 支线 (type=side) 总数 ${sideCount} 超过上限 ${MAX_SIDE_ARCS}。需调整 updates/newArcs, 合并支线或放弃次要支线。`
+    app.log.error(`[PlotConsolidator] ${err}`)
+    throw new Error(err)
   }
-
-  const existingByName = new Map(existingArcs.map(e => [e.name, e]))
-  const writes: ConsolidatedArcWrite[] = []
-  const decidedRawNames = new Set<string>()
-
-  for (const decision of result.decisions) {
-    const rawArc = unmatchedRaws.find(r => r.name === decision.rawName)
-    if (!rawArc) continue  // AI 幻觉, 忽略
-    decidedRawNames.add(decision.rawName)
-
-    const matchedExisting = decision.matchExistingName
-      ? existingByName.get(decision.matchExistingName)
-      : null
-
-    if (matchedExisting) {
-      // 归一化到 existing.name + 用 raw 的其他字段
-      // 关键: 记录 matchedExistingIds, 防止外层 carry-forward 重复加入
-      matchedExistingIds.add(matchedExisting.id)
-      writes.push(mergeRawIntoExisting(storyId, matchedExisting, rawArc))
-    } else {
-      writes.push(newArcFromRaw(storyId, rawArc))
-    }
-  }
-
-  // 兜底: AI 没给决策的 unmatched raw → 当 new 处理
-  for (const raw of unmatchedRaws) {
-    if (!decidedRawNames.has(raw.name)) {
-      writes.push(newArcFromRaw(storyId, raw))
-    }
-  }
-
-  return writes
-}
-
-function buildReconcilePrompt(
-  existingArcs: ExistingArcView[],
-  unmatchedRaws: NonNullable<PlotArcAnalysis['arcs']>[number][]
-): string {
-  const existingList = existingArcs.map(a =>
-    `- name: ${a.name} | type: ${a.type} | status: ${a.status} | progress: ${a.progress} | summary: ${a.summary}`
-  ).join('\n')
-
-  const rawList = unmatchedRaws.map(r =>
-    `- name: ${r.name} | type: ${r.type} | status: ${r.status} | progress: ${r.progress} | summary: ${r.summary}`
-  ).join('\n')
-
-  return `你是小说剧情弧线整理助手。
-
-【任务】
-判断下列"本章新提取的剧情弧线"中，每条是否与"已有剧情弧线"中的某一条是同一条弧线
-（重命名 / 别名 / 视角差异 / 合并自多条 earlier 弧线）。返回每条 raw 弧线的归属决策。
-
-【已有剧情弧线（数据库 N-1 状态）】
-${existingList}
-
-【本章新提取（未匹配）】
-${rawList}
-
-【判定规则】
-1. 如果 raw 与 existing 指代同一条弧线（同名 / 别名 / 同一主线的不同表述 / 视角不同但核心是同一事件线），返回 matchExistingName=该 existing.name
-2. 如果 raw 是真正的新弧线（已有列表里没有对应），返回 matchExistingName=null
-3. 不要捏造不存在于"已有剧情弧线"列表里的 matchExistingName
-4. 不要漏掉 raw — 每条 raw 必须对应一个 decision
-
-【返回格式】
-严格 JSON，不要 markdown：
-{
-  "decisions": [
-    { "rawName": "<raw.name>", "matchExistingName": "<existing.name 或 null>" }
-  ]
-}`
 }
 
 // ---------------------------------------------------------------------------
-// Pure helpers — 不依赖 AI / DB, 便于单测
+// Pure helpers
 // ---------------------------------------------------------------------------
 
-/**
- * 进度单调不减: existing=35, raw=25 → 返回 35 (不回退)。
- * 用户真实痛点: AI 不擅长算百分比, 经常返回低于现有的进度。
- */
 function monotonicMax(existingProgress: number, rawProgress: number): number {
   if (typeof rawProgress !== 'number' || isNaN(rawProgress)) return existingProgress
   if (typeof existingProgress !== 'number' || isNaN(existingProgress)) return rawProgress
   return Math.max(existingProgress, rawProgress)
 }
 
-/**
- * 合并 stages 列表: 已有 stages + 当前 new stage (若不重复)
- *
- * 与 plot-extractor.preparePlotArcWrites 逻辑一致 (line ~136-143):
- *   if (currentStage && !stages.some(s => s.stage === currentStage)) {
- *     stages.push({ stage, completed: status === 'completed', description: summary })
- *   }
- *
- * 抽出到这里因为 consolidator 需要在写库前合并 stages (现有 stages 不能丢)。
- */
 function mergeStages(
   existingStagesJson: string,
-  raw: NonNullable<PlotArcAnalysis['arcs']>[number]
+  newStage: string,
+  newStatus: string,
+  newDescription: string
 ): string {
   let stages: any[] = []
   try {
@@ -334,25 +405,13 @@ function mergeStages(
     stages = []
   }
 
-  if (raw.currentStage && !stages.some((s: any) => s.stage === raw.currentStage)) {
+  if (newStage && !stages.some((s: any) => s.stage === newStage)) {
     stages.push({
-      stage: raw.currentStage,
-      completed: raw.status === 'completed',
-      description: raw.summary
+      stage: newStage,
+      completed: newStatus === 'completed',
+      description: newDescription
     })
   }
 
   return JSON.stringify(stages)
-}
-
-/**
- * 新弧线初始 stages — 包含当前 stage (若存在)
- */
-function initialStagesFromRaw(raw: NonNullable<PlotArcAnalysis['arcs']>[number]): string {
-  if (!raw.currentStage) return '[]'
-  return JSON.stringify([{
-    stage: raw.currentStage,
-    completed: raw.status === 'completed',
-    description: raw.summary
-  }])
 }

@@ -2,31 +2,27 @@
 // verify-extract-prompt-split.mjs
 //
 // 验证目标: 把 extractAll (apps/server/src/services/combined-extractor.ts)
-// 的 prompt 拆成"纯事实提取"slim version, 删除以下三段注入:
+// 的 prompt 拆成"纯事实提取"slim version, 删除以下注入:
 //   1. existingKeys - 已有实体清单
 //   2. previousEntitiesBlock - N-1 全局图谱节点清单
-//   3. existingArcsText - 现有弧线列表
 // 通过对比 before/after 的字符数与估算 token 数, 验证假设:
 //   "拆掉跨章注入后 prompt 体积显著下降 → 实际调用 AI 时 parse 失败率下降
 //    → retry 不再需要"
+//
+// 注: existingArcs 已不再由 extractAll 喂给 AI (plot-consolidator v2 自己读
+// 章节 + existing arcs 做语义级判断), 所以本验证脚本不再测这一段。
 //
 // 用法:
 //   pnpm --filter shared build && node scripts/verify-extract-prompt-split.mjs
 //   node scripts/verify-extract-prompt-split.mjs --json   # 输 JSON 报告
 //
-// 设计原则 (重构后):
+// 设计原则:
 //   - 真源唯一: 直接 import packages/shared/dist/extract-prompt.js 的 buildExtractPrompt
-//               + 调用 mode='full' / mode='slim' 两个真实入口, 消除"验证镜像 vs 生产代码漂移"风险
 //   - 易读: prompt 构造器在 packages/shared/src/extract-prompt.ts, 验证脚本只负责
 //           "用同一份真实函数跑两次, 报告体积差异"
 //   - 可扩展: 改 fixture 即可模拟不同故事压力; prompt 文字改了在 shared 包里,
 //             验证脚本零修改
 //   - 解耦: 验证脚本只读 dist 产物, 不读数据库 / 不调 AI
-//
-// 不做的事:
-//   - 不调用真实 AI provider (本脚本只构造 prompt + 估算 token)
-//   - 不读数据库 / 真实章节
-//   - 不修改任何生产代码
 
 'use strict'
 
@@ -36,8 +32,8 @@ import { buildExtractPrompt } from '../packages/shared/dist/extract-prompt.js'
 // Section 1: Fixture (模拟一个典型的归档场景)
 // ============================================================================
 //
-// 数字选择: 主角 2 人 / 现有弧线 4 条 / 已有实体 200 个 / N-1 全局图谱 300 节点
-// / 章节正文 ~8000 字 - 接近典型玄幻长篇第 10-20 章的归档压力
+// 数字选择: 主角 2 人 / 已有实体 200 个 / N-1 全局图谱 300 节点 / 章节正文 ~8000 字
+//  - 接近典型玄幻长篇第 10-20 章的归档压力
 //
 // 想测不同压力? 改这一节就行, prompt 构造器不变.
 
@@ -45,14 +41,6 @@ const FIXTURE = {
   storyId: 'demo-story',
   chapterId: 'demo-chapter',
   protagonistNames: ['李凡', '赵若曦'],
-
-  // 现有弧线 (current extractAll 加载, slim 模式不消费)
-  existingArcs: [
-    { name: '李凡修仙之路', type: 'main', status: 'active', progress: 35 },
-    { name: '李凡与赵若曦的感情', type: 'side', status: 'active', progress: 20 },
-    { name: '玄天宗内斗', type: 'side', status: 'resolving', progress: 60 },
-    { name: '魔道余孽', type: 'pending', progress: 0 }
-  ],
 
   // 已有实体 type:key (current extractAll 加载, slim 模式不消费)
   existingNodeKeys: Array.from({ length: 200 }, (_, i) =>
@@ -113,18 +101,14 @@ function estimateTokens(text) {
 //
 // 真源唯一: buildExtractPrompt 是 packages/shared/src/extract-prompt.ts 的
 // 纯函数, 通过 mode 选项切换:
-//   - mode='full': 喂入跨章上下文 (existingArcs + previousSnapshotNodes +
-//                  existingNodeKeys), 相当于当前 extractAll 的行为
+//   - mode='full': 喂入跨章上下文 (existingNodeKeys + previousSnapshotNodes)
 //   - mode='slim': 不喂跨章上下文, AI 只输出本章事实
-//
-// 重构后这里不再有"prompt 镜像", 改 prompt 文字只改 shared 包, 本脚本零修改.
 
 function buildBeforePrompt(f) {
   return buildExtractPrompt(
     {
       protagonistNames: f.protagonistNames,
       existingNodeKeys: f.existingNodeKeys,
-      existingArcs: f.existingArcs,
       previousSnapshotNodes: f.previousSnapshotNodes,
       content: f.content,
       outline: f.outline
@@ -136,10 +120,9 @@ function buildBeforePrompt(f) {
 function buildAfterPrompt(f) {
   return buildExtractPrompt(
     {
-      // slim 模式不消费以下三个字段, 但传空数组让 schema 完整
+      // slim 模式不消费跨章上下文字段, 喂空数组保持接口完整
       protagonistNames: f.protagonistNames,
       existingNodeKeys: [],
-      existingArcs: [],
       previousSnapshotNodes: [],
       content: f.content,
       outline: f.outline
@@ -157,7 +140,7 @@ function reportMarkdown(before, after, fixture) {
   lines.push('# Extract Prompt Split 验证报告')
   lines.push('')
   lines.push(`生成时间: ${new Date().toISOString()}`)
-  lines.push(`Fixture: 主角 ${fixture.protagonistNames.length} 人 / 现有弧线 ${fixture.existingArcs.length} 条 / 已有实体 ${fixture.existingNodeKeys.length} 个 / N-1 节点 ${fixture.previousSnapshotNodes.length} 个 / 章节正文 ${fixture.content.length} 字`)
+  lines.push(`Fixture: 主角 ${fixture.protagonistNames.length} 人 / 已有实体 ${fixture.existingNodeKeys.length} 个 / N-1 节点 ${fixture.previousSnapshotNodes.length} 个 / 章节正文 ${fixture.content.length} 字`)
   lines.push('')
   lines.push('## 对比结果')
   lines.push('')
@@ -169,10 +152,10 @@ function reportMarkdown(before, after, fixture) {
   lines.push('## 删除的注入段（full 含 / slim 不含）')
   lines.push('')
   lines.push('1. **已有实体清单** (`existingNodeKeys` 拼接) - 200 个 type:key')
-  lines.push('2. **N-1 全局图谱清单** (`previousSnapshotNodes` block) - 300 节点')
-  lines.push('3. **现有弧线列表** (`existingArcsText`) - 4 条弧线 + 粒度约束说明')
-  lines.push('4. **timelinePosition 详细 Y.DDDHH 编码说明** - slim 仅简化为 "Y.DDDHH"')
-  lines.push('5. **plot 任务段跨章融合职责文字** - slim 仅留"本章推进"职责,跨章融合由 worker 负责')
+  lines.push('2. **N-1 全局图谱清单** (`previousEntitiesBlock`) - 300 节点')
+  lines.push('3. **timelinePosition 详细 Y.DDDHH 编码说明** - slim 仅简化为 "Y.DDDHH"')
+  lines.push('')
+  lines.push('注: 剧情弧线 raw arcs 已不再由 extractAll 提取 — plot-consolidator v2 直接读章节 + existing arcs 做语义级判断。')
   lines.push('')
   lines.push('## 假设验证')
   lines.push('')

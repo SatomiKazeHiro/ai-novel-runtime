@@ -13,7 +13,6 @@ import { callAIWithLog } from './ai-call-logger.js'
 import { resolveProvider } from './ai-provider-init.js'
 import { type MemoryExtractionResult, extractMemoryFromChapter, prepareMemoryWrites, type ArchiveMemoryData } from './memory-extractor.js'
 import { type GraphExtractionResult } from './graph-extractor.js'
-import { type PlotArcAnalysis, extractPlotArcs } from './plot-extractor.js'
 import { organizeGraph } from './graph-organizer.js'
 import { type GraphSnapshot } from './graph-snapshot.js'
 import { consolidatePlotArcs } from './plot-consolidator.js'
@@ -21,24 +20,24 @@ import { consolidatePlotArcs } from './plot-consolidator.js'
 export interface CombinedExtractionData {
   memories: MemoryExtractionResult | null
   graph: GraphExtractionResult
-  plotArcs: PlotArcAnalysis | null
 }
 
 /**
- * AI 合并提取返回值的顶层 schema. 仅校验 3 个顶层字段是否存在 / 类型可识别;
- * 子结构 (memories / graph / plotArcs) 留给下游 service 处理 (与旧实现一致:
- * memories 可能为 null, graph 缺失用 {nodes:[],edges:[]} 兜底, plotArcs
- * 缺失 preparePlotArcWrites 用 arcs||[] 兜底).
+ * AI 合并提取返回值的顶层 schema. 仅校验 2 个顶层字段是否存在 / 类型可识别;
+ * 子结构 (memories / graph) 留给下游 service 处理 (与旧实现一致:
+ * memories 可能为 null, graph 缺失用 {nodes:[],edges:[]} 兜底).
+ *
+ * 注: 剧情弧线不再由 extractAll 提取 — plot-consolidator v2 (worker) 自己读
+ * 章节 + existing arcs 做语义级判断, 不依赖 AI 在这一步返回 raw arcs.
  *
  * 为什么不 strict:
  *   AI 偶尔会输出辅助字段 (e.g. `_reasoning`, `confidence`), strict 会让
  *   这些合法附带信息被误判为 "格式错误" 触发 retry,反而更不稳.
- *   顶层结构对齐 prompt 三大任务即可.
+ *   顶层结构对齐 prompt 任务即可.
  */
 const CombinedExtractResultSchema = z.object({
   memories: z.unknown().nullable(),
-  graph: z.unknown().optional(),
-  plotArcs: z.unknown().nullable()
+  graph: z.unknown().optional()
 })
 type CombinedExtractResult = z.infer<typeof CombinedExtractResultSchema>
 
@@ -128,21 +127,6 @@ export async function extractAll(
   })
   const protagonistNames = protagonists.map(p => p.name)
 
-  // 加载已有弧线：只保留活跃/待收尾/待启动的 + 近期（30天内）更新过的
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-  const existingArcs = await prisma.plotArc.findMany({
-    where: {
-      storyId,
-      OR: [
-        { status: { in: ['active', 'resolving', 'pending'] } },
-        { updatedAt: { gte: thirtyDaysAgo } }
-      ]
-    }
-  })
-  const existingArcsText = existingArcs.length > 0
-    ? existingArcs.map(a => `- ${a.name} (${a.type}, ${a.status}, 进度${a.progress}%)`).join('\n')
-    : '暂无已追踪的剧情弧线'
-
   // 加载已有节点（用于去重提示）：角色节点全部保留 + 其他类型只保留最近100个
   const [characterNodes, recentOtherNodes] = await Promise.all([
     prisma.graphNode.findMany({ where: { storyId, type: 'character' } }),
@@ -156,7 +140,7 @@ export async function extractAll(
   const existingKeys = new Set(combinedNodes.map(n => `${n.type}:${n.key}`))
 
   app.log.info(
-    `[CombinedExtractor] Context injection: ${existingArcs.length} arcs, ${characterNodes.length} characters, ${recentOtherNodes.length} recent nodes`
+    `[CombinedExtractor] Context injection: ${characterNodes.length} characters, ${recentOtherNodes.length} recent nodes`
   )
 
   // 解析当前章节 / 故事 / 全局默认的 AI Provider 配置, 用于算 content 预算
@@ -174,18 +158,13 @@ export async function extractAll(
   // large graphs; trim by descending importance when capped.
   // NOTE: previousEntitiesBlock 现在只在 buildExtractPrompt('full') 内部构造;
   // 'slim' 模式不消费这些跨章上下文, AI 只输出本章事实。
-  // 保留 existingArcs / existingKeys 查询以便 mode='full' fallback 兼容,
-  // slim 模式查询开销可忽略 (300 节点级别 ~100ms)。
+  // existingArcs 由独立的 plot-consolidator v2 worker 自己读 DB 获取,
+  // 不再喂给 extract prompt (v1 的 slim 模式喂 existingArcs 但没用,
+  // v2 设计意图是 consolidator 自己读章节做语义判断)。
   const extractPrompt = buildExtractPrompt(
     {
       protagonistNames,
       existingNodeKeys: Array.from(existingKeys),
-      existingArcs: existingArcs.map(a => ({
-        name: a.name,
-        type: a.type,
-        status: a.status,
-        progress: a.progress
-      })),
       previousSnapshotNodes: previousSnapshot?.nodes || [],
       content: truncatedContent,
       outline
@@ -291,7 +270,6 @@ export async function extractAll(
   // schema 只校验顶层字段存在;子结构交给下游 service 兜底(与旧实现语义一致)
   const memories = (result.memories ?? null) as MemoryExtractionResult | null
   const graph = (result.graph || { nodes: [], edges: [] }) as GraphExtractionResult
-  const plotArcs = (result.plotArcs ?? null) as PlotArcAnalysis | null
 
   // 统计
   const memCount = (memories?.mainEvents?.length || 0) +
@@ -303,10 +281,10 @@ export async function extractAll(
                    Object.keys(memories?.characterStatusChanges || {}).length
 
   app.log.info(
-    `[CombinedExtractor] Extracted: ${memCount} memories, ${graph.nodes?.length || 0} nodes, ${graph.edges?.length || 0} edges, ${plotArcs?.arcs?.length || 0} arcs`
+    `[CombinedExtractor] Extracted: ${memCount} memories, ${graph.nodes?.length || 0} nodes, ${graph.edges?.length || 0} edges`
   )
 
-  return { memories, graph, plotArcs }
+  return { memories, graph }
 }
 
 /**
@@ -365,15 +343,16 @@ export async function prepareArchiveData(
   const memoryData = prepareMemoryWrites(storyId, chapterId, extraction.memories, fromChapterNumber)
 
   // 5. 跨章融合剧情弧线 (P1 bug fix: plot arc 不增长)
-  //    slim prompt 不喂 existingArcs, AI 返回的名字不连续;
-  //    这里 code fast path (name 精确匹配) + AI reconcile (语义同名) + carry-forward (未推进 arc 保留)
-  //    替代旧的 preparePlotArcWrites 直接按 name 匹配 → 全部 isNew=true 的回归路径。
+  //    v2 设计 (用户 2026-06-26): consolidator 自己读章节内容 + existingArcs,
+  //    AI 做语义判断 — 不再依赖 extractAll.plotArcs (slim prompt 没喂 existingArcs,
+  //    raw arcs 名字已经歪, 喂给 consolidator 只是把错误传下去)。
+  //    AI prompt 提示 "笔墨浓重/推动剧情/情感强烈" 才开新 arc, 避免把过渡/路人做成 arc。
   //    注: 这里查全量 arc (不限于 active), 因为 carry-forward 需要看到 completed 之外的
   //       所有状态才能正确判断"是否被本章节推进过"。
   const allExistingArcs = await prisma.plotArc.findMany({ where: { storyId } })
-  const plotArcWrites = extraction.plotArcs
-    ? await consolidatePlotArcs(app, storyId, chapterId, allExistingArcs, extraction.plotArcs.arcs)
-    : []
+  const plotArcWrites = await consolidatePlotArcs(
+    app, storyId, chapterId, allExistingArcs, content, outline || undefined
+  )
 
   return {
     memories: memoryData,
