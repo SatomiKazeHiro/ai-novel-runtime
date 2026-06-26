@@ -28,7 +28,9 @@ function makeApp() {
   return {
     prisma: {
       draft: {
-        findUnique: vi.fn().mockResolvedValue({ status: 'pending' }),
+        // 默认 status='generating' — 这是 chapters-generate.ts:278 route 创建 draft 时的真实初值。
+        // 之前 mock 默认 'pending' 配合旧 worker 的 `!== 'pending'` 跳过条件, 把这个 bug 掩盖了。
+        findUnique: vi.fn().mockResolvedValue({ status: 'generating' }),
         update: vi.fn()
       },
       chapter: {
@@ -155,19 +157,90 @@ describe('generate-processor — preLockStatus restore (Task #66)', () => {
   })
 
   it('生成中遇到已被 select 标 rejected 的 draft, 跳过 (避免 select 被覆盖)', async () => {
-    // 第一个 draft 被 select 标 rejected, 第二个 pending, 第三个 rejected
+    // 第一个 draft 被 select 标 rejected, 第二个 generating, 第三个 rejected
     mockCallAIWithLog.mockResolvedValue('content')
     const app = makeApp()
     app.prisma.draft.findUnique
       .mockResolvedValueOnce({ status: 'rejected' })
-      .mockResolvedValueOnce({ status: 'pending' })
+      .mockResolvedValueOnce({ status: 'generating' })
       .mockResolvedValueOnce({ status: 'rejected' })
     const processor = createGenerateProcessor(app)
     await processor(makeJob('draft', [true, true, true]))
 
-    // 只应该有 1 次 AI 调用 (中间那个 pending), rejected 跳过
+    // 只应该有 1 次 AI 调用 (中间那个 generating), rejected 跳过
     expect(mockCallAIWithLog).toHaveBeenCalledTimes(1)
-    // 只有 1 次 draft.update (中间那个 pending → completed)
+    // 只有 1 次 draft.update (中间那个 generating → completed)
+    const draftUpdates = app.prisma.draft.update.mock.calls.map((c: any) => c[0].where.id)
+    expect(draftUpdates).toEqual(['d1'])
+  })
+
+  it('route 实际用 status="generating" 创建 draft, worker 必须处理 (regression #5189442 bug)', async () => {
+    // bug 背景: 之前 worker 用 `current.status !== 'pending'` 跳过,
+    // 但 chapters-generate.ts:278 route 用 'generating' 创建 draft,
+    // 导致 worker 永远跳过自己刚派出去的任务, draft 卡在 'generating' 永远不处理。
+    // 修复: 跳过条件改为 SKIP_STATUSES 白名单 (selected/rejected/completed/failed),
+    // pending + generating 都会处理。
+    mockCallAIWithLog.mockResolvedValue('content')
+    const app = makeApp()
+    // 默认 mock 就是 'generating', 显式再确认一次
+    app.prisma.draft.findUnique.mockResolvedValue({ status: 'generating' })
+    const processor = createGenerateProcessor(app)
+    await processor(makeJob('draft', [true, true, true]))
+
+    // 3 个 draft 都应该被处理, AI 调用 3 次
+    expect(mockCallAIWithLog).toHaveBeenCalledTimes(3)
+    // 3 个 draft.update 都发生 (status → completed)
+    const draftUpdates = app.prisma.draft.update.mock.calls.map((c: any) => c[0].where.id)
+    expect(draftUpdates).toEqual(['d0', 'd1', 'd2'])
+  })
+
+  it('selected draft 跳过 (用户已选, 不能复活)', async () => {
+    mockCallAIWithLog.mockResolvedValue('content')
+    const app = makeApp()
+    app.prisma.draft.findUnique.mockResolvedValue({ status: 'selected' })
+    const processor = createGenerateProcessor(app)
+    await processor(makeJob('draft', [true, true, true]))
+
+    // 全 selected → 全部跳过, 0 AI 调用
+    expect(mockCallAIWithLog).toHaveBeenCalledTimes(0)
+    expect(app.prisma.draft.update).not.toHaveBeenCalled()
+  })
+
+  it('completed draft 跳过 (worker 已成功处理过, 不重跑)', async () => {
+    mockCallAIWithLog.mockResolvedValue('content')
+    const app = makeApp()
+    app.prisma.draft.findUnique.mockResolvedValue({ status: 'completed' })
+    const processor = createGenerateProcessor(app)
+    await processor(makeJob('draft', [true, true, true]))
+
+    expect(mockCallAIWithLog).toHaveBeenCalledTimes(0)
+    expect(app.prisma.draft.update).not.toHaveBeenCalled()
+  })
+
+  it('failed draft 跳过 (worker 已失败, 不静默重试)', async () => {
+    mockCallAIWithLog.mockResolvedValue('content')
+    const app = makeApp()
+    app.prisma.draft.findUnique.mockResolvedValue({ status: 'failed' })
+    const processor = createGenerateProcessor(app)
+    await processor(makeJob('draft', [true, true, true]))
+
+    expect(mockCallAIWithLog).toHaveBeenCalledTimes(0)
+    expect(app.prisma.draft.update).not.toHaveBeenCalled()
+  })
+
+  it('mixed: generating 处理, selected/rejected/completed/failed 全部跳过', async () => {
+    mockCallAIWithLog.mockResolvedValue('content')
+    const app = makeApp()
+    app.prisma.draft.findUnique
+      .mockResolvedValueOnce({ status: 'selected' })     // 跳过
+      .mockResolvedValueOnce({ status: 'generating' })   // 处理
+      .mockResolvedValueOnce({ status: 'rejected' })     // 跳过
+      .mockResolvedValueOnce({ status: 'completed' })    // 跳过
+      .mockResolvedValueOnce({ status: 'failed' })       // 跳过
+    const processor = createGenerateProcessor(app)
+    await processor(makeJob('draft', [true, true, true, true, true]))
+
+    expect(mockCallAIWithLog).toHaveBeenCalledTimes(1)
     const draftUpdates = app.prisma.draft.update.mock.calls.map((c: any) => c[0].where.id)
     expect(draftUpdates).toEqual(['d1'])
   })

@@ -26,24 +26,28 @@ export function createGenerateProcessor(app: FastifyInstance) {
       const draftId = draftIds[i]
       const temperature = temperatures[i]
 
-      // 写 draft 前查 status, 跳过已被 select / rejected / 已处理过的 draft。
+      // 写 draft 前查 status, 跳过用户已决定 / 已处理过的 draft。
       // 否则用户在 worker 跑到一半时 select, select route 把所有 draft 置 rejected、
       // 把选中的置 selected, 但 worker 后续仍会调 update({status:completed}),
       // 把已被 select 标记的 draft "复活", 破坏"被选中的应该是唯一 active 草稿"的语义。
       //
       // status 集合说明:
-      //   pending    — worker 还没跑过 (初始状态)
-      //   generating — (历史字段, 实际 worker 直接写 completed/failed, 不会用 generating)
+      //   pending    — worker 还没跑过 (历史字段, route 已不再用, 保留兼容)
+      //   generating — route 创建 draft 时的初始状态, "已入队等 worker 跑"
       //   completed  — worker 已成功处理
       //   failed     — worker 处理失败
       //   selected   — 用户已选此 draft
       //   rejected   — 用户选了别的 draft, 此 draft 被淘汰
-      // 跳过 pending 之外的所有状态 — pending 才是真正需要 worker 处理的。
+      //
+      // 关键: route 用 `status: 'generating'` 创建 draft (§routes/chapters-generate.ts:278),
+      // 所以 worker 不能用 `status !== 'pending'` 来过滤, 否则永远跳过自己刚派出去的任务。
+      // 应当处理 pending + generating, 跳过其他四种 (用户决定 + 已完成)。
+      const SKIP_STATUSES = ['selected', 'rejected', 'completed', 'failed']
       const current = await prisma.draft.findUnique({
         where: { id: draftId },
         select: { status: true }
       })
-      if (!current || current.status !== 'pending') {
+      if (!current || SKIP_STATUSES.includes(current.status)) {
         app.log.info(`[Generate] Skipping draft ${draftId} (status=${current?.status ?? 'missing'}, user may have selected another draft already)`)
         continue
       }

@@ -169,19 +169,29 @@ rejected   → （终态）
 
 `services/generate-processor.ts` 写 Draft / Chapter 前必须遵守：
 
-**1. 跳过非 pending 的 draft**（`generate-processor.ts:42-49`）：
+**1. 跳过用户已决定 / 已完成的 draft**（`generate-processor.ts:45-53`）：
 
 ```ts
+const SKIP_STATUSES = ['selected', 'rejected', 'completed', 'failed']
 const current = await prisma.draft.findUnique({ where: { id: draftId }, select: { status: true } })
-if (!current || current.status !== 'pending') {
+if (!current || SKIP_STATUSES.includes(current.status)) {
   app.log.info(`[Generate] Skipping draft ${draftId} (status=${current?.status})`)
   continue
 }
 ```
 
-防止 worker 把已被 select 标 `selected` 或被同事务标 `rejected` 的 draft "复活"成 `completed`。
+**关键陷阱**：route (`chapters-generate.ts:278`) 用 `status: 'generating'` 创建 draft，**不是 `pending`**。所以 worker 不能用 `status !== 'pending'` 来过滤——那样会跳过自己刚派出去的任务，导致 draft 永远卡在 `generating`。正确做法是白名单 4 个 SKIP_STATUSES，处理 `pending` + `generating`。
 
-**2. chapter.status 恢复用 `updateMany where status='generating'` 保护**（`generate-processor.ts:96-99`）：
+四种 SKIP_STATUSES 的语义：
+
+| 状态 | 跳过原因 |
+|------|---------|
+| `selected` | 用户已选，不能被 worker 复活成 `completed` |
+| `rejected` | 用户已淘汰，不能被 worker 复活成 `completed` |
+| `completed` | worker 已成功处理过，重跑会重复消耗 AI |
+| `failed` | worker 已失败，留在原状态方便诊断，不静默重试 |
+
+**2. chapter.status 恢复用 `updateMany where status='generating'` 保护**（`generate-processor.ts:101-104`）：
 
 ```ts
 const statusRestore = await prisma.chapter.updateMany({
