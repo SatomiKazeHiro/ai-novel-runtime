@@ -2,8 +2,85 @@
 
 **Goal:** 推完 timeline-encoding 半成品改动：让 server-side write path (memory-extractor / combined-extractor / chapters-archive) 与 read path (chapters-generate / stories / timeline route / web) 在 `position` 字段上对齐，重新生成 Prisma client，修复数据迁移遗留的语义损坏，让 preview / archive / 章节生成 prompt 实际可用。
 
-> 范围：仅时间线相关代码 + 数据回填 + 测试。**不动** memory / graph / plot arc / 角色 / 世界观等其他模块。
+> 范围：仅时间线相关代码 + 数据清空 + 测试。**不动** memory / graph / plot arc / 角色 / 世界观等其他模块。
 > 当前 working tree 的 timeline 半成品改动不再回滚，全部 commit 进这一版。
+
+---
+
+## 0. 业务背景 + 设计动机（先理解为什么）
+
+### 0.1 旧设计 `day` 整数的局限
+
+旧 schema 用 `TimelineEvent.day: Int` 表示"故事开始第几天"。这只能 cover 极简场景：
+- **故事不能跨年**：D=400 之后跟 D=1 谁先谁后？
+- **前史不可表达**："主角穿越前 10 年"怎么写？-10？还是 year 0？
+- **小时段不可定位**：AI 说"李凡傍晚到达"和"李凡清晨到达"，day 字段区分不开
+- **跨章连续性靠人工**：AI 容易写出"第 5 章 day=100，第 6 章 day=50"这种回退
+
+### 0.2 新设计 `Y.DDDHH` 实数的动机
+
+`TimelineEvent.position: Float` 用单小数点编码 **年.天.时**：
+- 整数位 `Y` = 故事第 N 年（负数 = 前史）
+- 小数位 `DDDHH` = 3 位天 + 2 位时，恰好 5 位
+- 例：`1.00106` = 第 1 年第 1 天 06 时；`-2.05018` = 前 2 年第 50 天 18 时
+- 排序就是数字 asc（`orderBy: { position: 'asc' }`），跨年/前史都自然有序
+- **跨章连续性靠编码本身**：第 6 章 position > 第 5 章 position 是物理约束（数据库排），不是 prompt 约束
+
+### 0.3 数据流（端到端）
+
+```
+┌─ AI 提取 (memory-extractor)
+│   MemoryExtractionResult {
+│     timelinePosition: number | null   ← 本章开篇时间锚点
+│     timelineEvents: {position, description}[]   ← 章内多个时间点
+│   }
+│
+├─ 数据准备 (prepareMemoryWrites)
+│   归一化 timelineEvents[]
+│   sanitizeTimelinePosition 兜底
+│
+├─ 事务写入 (chapters-archive.ts archive 端点)
+│   ┌─ prisma.$transaction
+│   │   ├─ commitMemoryWrites(tx, ...)
+│   │   │   └─ upsert TimelineEvent (按 storyId_position 复合键)
+│   │   └─ tx.chapter.update  ← 本期新增:
+│   │       data: { timelinePosition, summary }
+│   └─
+│
+├─ 读取消费
+│   ├─ chapters-generate.ts → PromptPipeline.timeline layer → AI 章节生成 prompt
+│   ├─ stories.ts → Story 详情接口 timelineEvents[] 字段
+│   ├─ timeline.ts → Timeline CRUD (用户手动管理)
+│   └─ web views → Timeline.vue / ReviewingPanel.vue (UI 渲染 + 编辑)
+│
+└─ 级联删除 (chapters-crud.ts 删章节)
+    deleteMany timelineEvent where storyId=?, fromChapterNumber=?
+```
+
+### 0.4 Consumer 链速查
+
+| 消费者 | 文件 | 用的字段 |
+|--------|------|---------|
+| 章节生成 prompt 第 7 层 | `chapters-generate.ts:119, 246` | `timelineEvents[].position` + `events` 渲染成 `[第1年第1天 06时] 事件1；事件2` |
+| Story 详情接口 | `stories.ts:90` | `timelineEvents[]`（按 position asc） |
+| Timeline 页 CRUD | `apps/web/src/views/Timeline.vue` | `position`, `events[]` |
+| ReviewingPanel 时间线 tab | `apps/web/src/views/ReviewingPanel.vue:87-99` | `te.position`, `te.events`（用户在 archive 阶段编辑）|
+| Worker task 模板选择 | `apps/web/src/views/StoryWorkerTask.vue:87, 96` | timeline worker（setting.ts 已删 default，但 UI 仍可选）|
+| 章节删除级联 | `chapters-crud.ts:176` | `deleteMany where storyId, fromChapterNumber` |
+
+### 0.5 设计原则（用户原话）
+
+> "治本的稳健的，代码是优化解耦的、易读的可扩展的"
+
+应用方式：
+
+| 原则 | 在 timeline 工作里的落地点 |
+|------|---------------------------|
+| **治本** | 不 patch symptom（preview 500），而是 fix root cause：schema + data + prompt + client + code 全部对齐 Y.DDDHH 编码。一次到位，避免下次又半成品。|
+| **稳健** | (1) `sanitizeTimelinePosition` 兜底（AI 返回 1.5 这种不合法值不写库，记 warning）；(2) `isValidPosition` 检测 + 渲染降级（`位置无效: <值>`），不抛 500；(3) 数据清空是显式 destructive 操作，可回滚（备份）|
+| **解耦** | Y.DDDHH 编解码抽到 `packages/shared/src/timeline-encoding.ts` 单点真源；server 用 TS import；前端先复制实现（避免改 vite workspace 配置）。Memory / timeline / graph / plot 各 worker 数据流清晰分工|
+| **易读** | 每个模块单一职责：encode / decode / sanitize / isValid / formatSafe 各一个纯函数；命名直白（`decodeTimelinePosition` 不叫 `parsePos`）；关键决策有注释|
+| **可扩展** | (1) `TimelineEventExtraction` 接口预留 `events: string[]`（chapter 内多时间点）；(2) `Chapter.timelinePosition` 字段已就位，未来跨章冲突检测只需加 worker；(3) 编码是 Real（不是 String），未来支持查询"两个事件之间多少时间"无需 schema 改 |
 
 ---
 
@@ -29,13 +106,13 @@
 | `apps/web/src/api/timeline.ts` | ✅ timeline-encoding | `position` |
 | 测试文件 | 一半一半 | 混 |
 
-### 1.2 数据语义损坏（**最严重**）
+### 1.2 数据语义损坏（已被 §3.1 清空决策覆盖）
 
 迁移 SQL 把 `TimelineEvent.day` (Int) → `position` (Float)，**position 值还是整数日**（dev.db 现在 9f5c 故事的 6 行：position = 0.0, 0.5, 1.0）。
 
-`formatTimelinePosition(0.0)` 解析会渲染 "第 0 年第 0 天 00 时" — 完全无语义。
-
 迁移 SQL 自带注释："旧 day 数据按整数搬到 position（语义暂保留，待手动修正成 YYYY.MMDD.HH 编码）" —— **写代码的人知道这事没做完**。
+
+**用户决策**：不修，直接清空（详见 §3.1）。
 
 ### 1.3 AI prompt vs schema 断层
 
@@ -83,31 +160,31 @@
 
 ## 3. 设计决策
 
-### 3.1 数据迁移策略
+### 3.1 数据清空策略（**用户决定**）
 
-**问题**：9f5c 故事 6 行 TimelineEvent 的 position 损坏（值如 0.0, 0.5, 1.0，不是合法 Y.DDDHH）。用户故事已建到第 N 章。
+**用户决策**：TimelineEvent 旧数据**直接清空**，不做任何迁移。
 
-**两种方案**：
+**理由**：
+- 用户故事大部分是测试数据
+- TimelineEvent 没有跨表外键引用（Chapter 不引用 TimelineEvent.id，Memory 不引用）
+- 唯一关联是 `TimelineEvent.fromChapterNumber = Chapter.number`，但 Chapter 表保留
+- 清空后用户重新跑 archive 时会重建 timeline 上下文
 
-| 方案 | 含义 | 工作量 | 风险 |
-|------|------|--------|------|
-| **A. 保守（推荐）** | 不动旧数据；`formatTimelinePosition` 检测 `!isValidPosition(p)` 时返回 "位置无效 (旧格式)"；新 write 走 Y.DDDHH | 小（只改 renderer + 加 isValid）| 低，旧数据保留为历史记录 |
-| **B. 激进** | 写迁移脚本 `scripts/fix-timeline-positions.mjs`，把整数 day 值映射成 1.D12 等 | 中（脚本 + 备份 + dry-run）| 中，0.5/1.0 这种"非整数 day"无法可靠还原语义 |
+**清空范围**：
+- `prisma.dev.db` 里所有 `TimelineEvent` 行
+- `Chapter.timelinePosition` 列：清 NULL（保留列，不删字段——用户后续还是会写）
+- 不动其他表（Memory / CharacterBranchState / PlotArc / GraphNode / Chapter 等）
 
-**推荐 A**：激进迁移没法完美还原 0.5 这种值的语义（它不是整数 day，可能是 UI 误输入）。保守方案让系统继续可用，旧数据保留为可识别的"无效"状态，等用户手动修或忽略。
+**清空步骤**：
+1. `cp prisma/dev.db prisma/dev.db.pre-timeline-clean.bak`（备份，回滚用）
+2. `pnpm prisma db execute --schema prisma/schema.prisma --stdin <<EOF`
+   ```sql
+   DELETE FROM TimelineEvent;
+   UPDATE Chapter SET timelinePosition = NULL;
+   ```
+3. 验证：`SELECT count(*) FROM TimelineEvent` → 0；`SELECT count(*) FROM Chapter WHERE timelinePosition IS NOT NULL` → 0
 
-**A 方案落地点**：
-1. `decodeTimelinePosition(p)` 返回 `{ year, day, hour, sign } | null`，不合法返回 null
-2. `formatTimelinePosition(p)` 包装一个高阶函数，无效输入显示 `位置无效: ${p}`
-3. `KNOWN-ISSUES.md` 加一行说明 9f5c 故事 6 行损坏数据由来 + 处理建议
-
-**B 方案落地点**（如果用户坚持）：
-1. `cp prisma/dev.db prisma/dev.db.pre-timeline-fix.bak`
-2. `scripts/fix-timeline-positions.mjs`：用 better-sqlite3 直接读写；`--dry-run` 先打印"将改 X 行从 Y 到 Z"再确认
-3. 只动 `position < 100 && decimal.length !== 5` 的行；整数 day `D` → `1.D12`
-4. 不动用户手动输入的合法 Y.DDDHH
-
-本 spec §4 实施步骤默认走 A 方案。
+**渲染层仍保留 `isValidPosition` 容错**：用户手动新增 timeline event 时万一输错（虽然 Timeline.vue 是 `<n-input-number :step="0.0001">` 引导，但极端边界仍要容错），渲染降级到 `位置无效: <值>`，不抛 500。
 
 ### 3.2 Y.DDDHH 编码常量（单点真源）
 
@@ -252,17 +329,10 @@ if (pending.memories.timelinePosition != null && typeof pending.memories.timelin
 - `pnpm --filter server exec vitest run`
 - ✅ 验证：0 error，185+ 测试全过
 
-**Step 7：渲染器 + KNOWN-ISSUES（保守方案 A）**
-- `decodeTimelinePosition` / `isValidPosition` / 高阶 `formatTimelinePositionSafe` 加进 `packages/shared/src/timeline-encoding.ts`
-- `chapters-generate.ts` / `Timeline.vue` / `ReviewingPanel.vue` 都用 `formatTimelinePositionSafe`（前端先复制实现，跨包 vite 是 P+）
-- `KNOWN-ISSUES.md` 加一行："9f5c 故事 6 行 TimelineEvent 旧 day 格式数据未迁移，渲染显示 '位置无效: <值>'，可手动修复或忽略"
-- ✅ 验证：渲染旧数据不报错，新数据正常
-
-**Step 7B：数据迁移脚本（激进方案 B，可选）**
-- 如果用户选了 B 方案，写 `scripts/fix-timeline-positions.mjs`
-- `cp prisma/dev.db prisma/dev.db.pre-timeline-fix.bak`
-- dry-run + 实际跑
-- ✅ 验证：dev.db 里 9f5c 故事 6 行 position 现在是合法 Y.DDDHH
+**Step 7：数据清空**
+- `cp prisma/dev.db prisma/dev.db.pre-timeline-clean.bak`
+- `pnpm prisma db execute --schema prisma/schema.prisma --stdin` 跑 `DELETE FROM TimelineEvent; UPDATE Chapter SET timelinePosition = NULL;`
+- ✅ 验证：`SELECT count(*) FROM TimelineEvent` = 0；`Chapter.timelinePosition` 全部 NULL
 
 **Step 8：手动 e2e 验证**
 - `pnpm dev`
@@ -285,21 +355,22 @@ if (pending.memories.timelinePosition != null && typeof pending.memories.timelin
 | 风险 | 缓解 |
 |------|------|
 | AI 仍输出非 Y.DDDHH（如 1.5 这种）| prompt 显式约束 + 代码层 `sanitizeTimelinePosition`（null → skip write，不入库脏数据）|
-| 数据迁移改坏旧 day 语义 | dry-run 必跑 + `dev.db.pre-timeline-fix.bak` 备份 |
+| 数据清空后用户故事无 timeline 上下文 | 用户重新跑 archive 流程会重建 TimelineEvent（新写入合法 Y.DDDHH）；旧 prompt 依赖 timeline layer 现在为空，章节生成仍能跑（空 string layer）|
 | Prisma client regen 文件占用 | 停 dev server / 关 IDE / `--force` |
 | typecheck 改了又出新 error | 每次 Step 1-4 跑 typecheck，逐步 commit 比 big-bang 易回滚 |
-| 用户手动输入 Y.DDDHH 也被改坏 | 迁移脚本（如果走 B 方案）只动 `position < 100 && decimal.length ≠ 5` 的行；保守方案 A 不动数据 |
+| 数据清空操作不可逆 | `dev.db.pre-timeline-clean.bak` 备份；commit 前用户确认 |
 | 已有 chapter.timelinePosition 是 null，archive 后不写 | Step 4 显式 `if != null` 写；写 null（明确无时间）vs 不写（保留前值）— 不写保持现状 |
 | 测试覆盖半边状态 | Step 6 全跑；新增 timeline-encoding + timeline-api + prepare-archive-timeline 测试 |
 | 推完发现 AI prompt 写 Y.DDDHH 太难 | 后续可加 worker task 微调或回退到 `timelineDay` 整数 + 后续计算 |
+| setting.ts 删 timeline worker default 后 StoryWorkerTask.vue 仍可选 | UI 选择后写入 DB 的 WorkerTask 表，setting.ts 只影响硬编码 fallback；功能不破坏 |
 
 ---
 
 ## 6. 回滚方案
 
-**代码回滚**：`git reset --hard d0fb8de`（importance commit 之前的 HEAD）。
+**代码回滚**：`git reset --hard 9efde51`（spec commit 之前的 HEAD）或 `d0fb8de`（importance commit 之前的 HEAD，更彻底）。
 
-**数据回滚**：`cp prisma/dev.db.pre-timeline-fix.bak prisma/dev.db`。
+**数据回滚**：`cp prisma/dev.db.pre-timeline-clean.bak prisma/dev.db`。
 
 **Prisma client 回滚**：`pnpm db:generate` 重生成（schema 还是 timeline-encoding，所以重生成还是 timeline-encoding）。
 
@@ -323,8 +394,10 @@ if (pending.memories.timelinePosition != null && typeof pending.memories.timelin
 - [ ] `pnpm typecheck` 8/8 packages 0 error
 - [ ] `pnpm --filter server exec vitest run` 全过（185+ 测试）
 - [ ] 新增 timeline-encoding.test.ts + memory-extractor 重写 + timeline-api.test + prepare-archive-timeline 扩展全过
+- [ ] `pnpm db:generate` 成功（Prisma client 识别 `position` 字段，识别 `storyId_position` 复合键）
+- [ ] dev.db 数据清空：TimelineEvent 行数 = 0，Chapter.timelinePosition 全部 NULL；备份在 `prisma/dev.db.pre-timeline-clean.bak`
 - [ ] `pnpm dev` 起来后，preview / generate 接口不再 500
-- [ ] archive 一章 9f5c 故事：TimelineEvent 新行 position 是合法 Y.DDDHH，Chapter.timelinePosition 同步写库
-- [ ] dev.db 现有 6 行损坏数据已迁移到合法 Y.DDDHH
+- [ ] archive 一章：TimelineEvent 新行 position 是合法 Y.DDDHH，Chapter.timelinePosition 同步写库
+- [ ] Timeline.vue / ReviewingPanel.vue 显示时间格式正确（旧脏数据如有残留显示 `位置无效: <值>`，不报错）
 - [ ] setting.ts 删 `timeline` worker default 已审计无 dangling consumer
 - [ ] git status 确认 scope 干净后 commit
