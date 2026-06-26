@@ -1,7 +1,13 @@
 import type { FastifyInstance } from 'fastify'
+import { z } from 'zod'
 import { RuntimePromptCompiler, countTokens } from '@novel-runtime/ai-provider'
 import { truncateByParagraph } from '@novel-runtime/prompt-runtime'
-import { cleanJsonBlock, safeJsonParse, type PendingArchiveData } from '@novel-runtime/shared'
+import {
+  cleanJsonBlock,
+  safeJsonParse,
+  buildExtractPrompt,
+  type PendingArchiveData
+} from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
 import { resolveProvider } from './ai-provider-init.js'
@@ -15,6 +21,35 @@ export interface CombinedExtractionData {
   memories: MemoryExtractionResult | null
   graph: GraphExtractionResult
   plotArcs: PlotArcAnalysis | null
+}
+
+/**
+ * AI 合并提取返回值的顶层 schema. 仅校验 3 个顶层字段是否存在 / 类型可识别;
+ * 子结构 (memories / graph / plotArcs) 留给下游 service 处理 (与旧实现一致:
+ * memories 可能为 null, graph 缺失用 {nodes:[],edges:[]} 兜底, plotArcs
+ * 缺失 preparePlotArcWrites 用 arcs||[] 兜底).
+ *
+ * 为什么不 strict:
+ *   AI 偶尔会输出辅助字段 (e.g. `_reasoning`, `confidence`), strict 会让
+ *   这些合法附带信息被误判为 "格式错误" 触发 retry,反而更不稳.
+ *   顶层结构对齐 prompt 三大任务即可.
+ */
+const CombinedExtractResultSchema = z.object({
+  memories: z.unknown().nullable(),
+  graph: z.unknown().optional(),
+  plotArcs: z.unknown().nullable()
+})
+type CombinedExtractResult = z.infer<typeof CombinedExtractResultSchema>
+
+/**
+ * 把 AI 原始响应解析成 CombinedExtractResult. 两步:
+ *   1. cleanJsonBlock + JSON.parse: 修 fence / 裸 &, 仍可能抛 (非法 JSON)
+ *   2. CombinedExtractResultSchema.parse: 顶层结构校验
+ * 任一步失败抛错, 上游 retry 块兜底.
+ */
+function parseCombinedResult(raw: string): CombinedExtractResult {
+  const json = JSON.parse(cleanJsonBlock(raw))
+  return CombinedExtractResultSchema.parse(json) as CombinedExtractResult
 }
 
 /** N-1 inventory cap: 防 prompt 爆炸；超出按 importance desc 截断 */
@@ -136,101 +171,28 @@ export async function extractAll(
   // Inject N-1 entity inventory so the AI reuses existing type:key values
   // instead of inventing new ones. Cap at 500 to defend against extremely
   // large graphs; trim by descending importance when capped.
-  let previousEntitiesBlock = ''
-  if (previousSnapshot && previousSnapshot.nodes.length > 0) {
-    const sorted = [...previousSnapshot.nodes]
-      .sort((a, b) => {
-        const ai = (a.data?.importance as number) || 0
-        const bi = (b.data?.importance as number) || 0
-        return bi - ai
-      })
-    const trimmed = sorted.slice(0, PREV_SNAPSHOT_INVENTORY_CAP)
-    const lines = trimmed.map(n => `- ${n.type}:${n.key} (${n.label})`)
-    previousEntitiesBlock = `\n\n=== N-1 全局图谱中的实体清单（用于 key 复用） ===\n本故事 N-1 章后的图谱共有 ${previousSnapshot.nodes.length} 个实体，请严格复用以下 type:key，禁止再造新 key：\n${lines.join('\n')}\n注意：N-1 没有出现的实体才允许创建新 key。新 key 必须用英文小写、下划线分隔。`
-  }
+  // NOTE: previousEntitiesBlock 现在只在 buildExtractPrompt('full') 内部构造;
+  // 'slim' 模式不消费这些跨章上下文, AI 只输出本章事实。
+  // 保留 existingArcs / existingKeys 查询以便 mode='full' fallback 兼容,
+  // slim 模式查询开销可忽略 (300 节点级别 ~100ms)。
+  const extractPrompt = buildExtractPrompt(
+    {
+      protagonistNames,
+      existingNodeKeys: Array.from(existingKeys),
+      existingArcs: existingArcs.map(a => ({
+        name: a.name,
+        type: a.type,
+        status: a.status,
+        progress: a.progress
+      })),
+      previousSnapshotNodes: previousSnapshot?.nodes || [],
+      content: truncatedContent,
+      outline
+    },
+    { mode: 'slim' }
+  )
 
-  const extractPrompt = `请分析以下小说章节，同时完成【记忆提取】、【实体关系提取】和【剧情弧线分析】三个任务。返回严格 JSON 格式，不要 markdown 代码块，不要解释文字。
-
-=== 严格 JSON 格式要求（不要违反，否则会解析失败）===
-- 所有字段值必须是合法 JSON 值（数字、字符串、布尔、null、数组、对象）。绝对不要用 "&" 或 "..." 或 "etc" 之类占位符
-- 字符串里的 "&" 必须转义为 "&"（或者直接用"和"代替）
-- 数字字段（importance、progress 等）必须是 0-10 的整数或小数，不要用任何非数字字符
-- 字段值如果不知道，请用 null 或空数组 []，不要用任何替代字符
-
-=== 任务1：记忆提取 ===
-提取对剧情有实质推动作用的信息。
-本故事主角：${protagonistNames.join('、') || '无明确主角'}
-
-每条事件必须包含：
-- description: 简洁描述"有什么人做了什么"
-- participants: 参与该事件的所有角色名单
-- importance: 事件在本章的重要性（4~7）。如果事件有主角参与，请自行+1，最终为5~8。
-
-importance 评分标准：
-- 7: 本章核心转折/高潮，占大量篇幅
-- 6: 重要推进，占中等篇幅
-- 5: 有一定作用，占少量篇幅
-- 4: 过渡/铺垫，篇幅很短
-
-主角参与且达到 8 分的事件视为"主要事件"，放入 mainEvents；其他放入 sideEvents。
-
-**重要：mainEvents 和 sideEvents 数组的顺序必须和事件在文章中的出现顺序完全一致，不能打乱，更不能把结尾的事件放到数组开头。**
-
-事件格式示例：
-{
-  "description": "许青向姜禾解释现代社会的身份制度和法律危险",
-  "participants": ["许青", "姜禾"],
-  "importance": 6
-}
-
-提取字段：
-- mainEvents: 主要事件（对象数组，每个对象包含 description / participants / importance）
-- sideEvents: 次要事件（对象数组，格式同上）
-- emotions: 主要角色情绪变化（字符串数组）
-- foreshadowing: 新埋下的伏笔（字符串数组）
-- relationshipChanges: 角色关系变化（字符串数组）
-- characterStatusChanges: 角色状态变化（对象，如 {"张三": {"rank": "初级", "location": "北京", "relationships": {"李四": "兄弟", "王五": "敌对"}}}）。其中 relationships 子键可选，用于表达该角色与其他角色的关系变化。
-- timelineDay: 本章发生在第几天（数字，不确定则 null）
-- summary: 本章一句话摘要（50字以内）
-- scenes: 推动剧情的关键地点（对象数组，如 [{ "location": "名称", "description": "场景描写（可选）", "event": "在此发生的事件概括", "importance": 1-10 }]）
-  场景 importance 标准：7-10 核心剧情地点，4-6 有一定事件，1-3 路人提及/无实质事件
-
-=== 任务2：实体与关系提取 ===
-提取 importance >= 6 的核心实体和它们之间的关系：
-- nodes: [{ type: "character"|"faction"|"event"|"item", key: "唯一标识（英文小写）", label: "显示名称", importance: 1-10, data: {...} }]
-- edges: [{ fromKey, fromType, toKey, toType, relation, importance: 1-10 }]
-  relation 应该是一个简洁的核心词或短语（2-6字为佳），直接表达两实体间的核心联系，不要带状语、从句或补充说明
-
-=== 节点质量约束（重要）===
-只提取能推动剧情发展的实体：
-- 角色：仅当本章发生了状态变化（修为/位置/身份/阵营/关系）或剧情转折点
-- 势力：仅当本章发生存亡/合并/对抗/结盟等变化
-- 物品：仅当本章有归属变更、能力觉醒、用于关键事件
-- 事件：仅当本章明确发生或被揭示
-禁止提取：路人甲乙丙、纯环境描述、一次性对话提及、无后续影响的设定
-
-已有实体（不要重复提取，但可补充新属性）：${Array.from(existingKeys).join(', ') || '无'}${previousEntitiesBlock}
-
-=== 任务3：剧情弧线分析 ===
-分析已有弧线的推进，标注未解悬念：
-现有弧线：
-${existingArcsText}
-
-返回弧线列表：
-- arcs: [{ name, type: "main"|"side", status: "pending"|"active"|"resolving"|"completed", progress: 0-100, currentStage, nextGoal, unresolved: [], summary }]
-
-=== 返回格式 ===
-{
-  "memories": { mainEvents, sideEvents, emotions, foreshadowing, relationshipChanges, characterStatusChanges, timelineDay, summary, scenes },
-  "graph": { "nodes": [...], "edges": [...] },
-  "plotArcs": { "arcs": [...] }
-}
-
-章节大纲：${outline || '无大纲'}
-章节内容如下：
-${truncatedContent}`
-
-  app.log.info(`[CombinedExtractor] Calling AI for chapter ${chapterId}`)
+  app.log.info(`[CombinedExtractor] Calling AI for chapter ${chapterId} (mode=slim)`)
 
   // compiled 提到 try 外面声明：retry 块也要复用同一份 prompt，
   // 必须在 raw 已成功（说明 try 块成功）的代码路径上能访问 compiled。
@@ -283,20 +245,20 @@ ${truncatedContent}`
   // 对于修不了的结构损坏，按用户约束"以稳为主、允许多调几次 AI 兜底"
   // 重试一次（带不同 callType 让 PromptLog 区分两次调用），抽风是偶发
   // 性，重试大概率能拿到合法 JSON。第二次仍失败才抛错。
-  let result: any
+  let result: CombinedExtractResult
   try {
-    result = JSON.parse(cleanJsonBlock(raw))
+    result = parseCombinedResult(raw)
   } catch (firstErr: any) {
     app.log.warn(
-      `[CombinedExtractor] JSON parse failed (${firstErr.message.slice(0, 200)}), retrying AI call once`
+      `[CombinedExtractor] Parse/validate failed (${firstErr.message.slice(0, 200)}), retrying AI call once`
     )
     let retryRaw: string | null
     try {
       // 注意：retry 复用同一份 compiled prompt，不修改 prompt 内容。
       // LLM 抽风是偶发性（temperature > 0 + 采样），同一 prompt 多次调用
-      // 大概率能得到合法 JSON。真正治本需要在 prompt 里加格式约束（已
-      // 在 extractPrompt 里加"所有字段值必须是合法 JSON"提示），这里只
-      // 是兜底。
+      // 大概率能得到合法 JSON。temperature 从 0.3 降到 0.1 进一步压低采样
+      // 噪声；compiled prompt 文本不改。真正治本需要在 prompt 里加格式约
+      // 束（已在 extractPrompt 里加"所有字段值必须是合法 JSON"提示）。
       retryRaw = await callAIWithLog(app, {
         storyId, chapterId, callType: 'combined_extract_retry',
         compiled, temperature: 0.1
@@ -314,7 +276,7 @@ ${truncatedContent}`
       )
     }
     try {
-      result = JSON.parse(cleanJsonBlock(retryRaw))
+      result = parseCombinedResult(retryRaw)
       app.log.info(`[CombinedExtractor] Retry succeeded`)
     } catch (retryErr: any) {
       throw new Error(
@@ -325,9 +287,10 @@ ${truncatedContent}`
     }
   }
 
-  const memories: MemoryExtractionResult = result.memories
-  const graph: GraphExtractionResult = result.graph || { nodes: [], edges: [] }
-  const plotArcs: PlotArcAnalysis = result.plotArcs
+  // schema 只校验顶层字段存在;子结构交给下游 service 兜底(与旧实现语义一致)
+  const memories = (result.memories ?? null) as MemoryExtractionResult | null
+  const graph = (result.graph || { nodes: [], edges: [] }) as GraphExtractionResult
+  const plotArcs = (result.plotArcs ?? null) as PlotArcAnalysis | null
 
   // 统计
   const memCount = (memories?.mainEvents?.length || 0) +
