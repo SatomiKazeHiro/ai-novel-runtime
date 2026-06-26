@@ -382,7 +382,12 @@ function canDevelop(node: FlatNode) {
   return node.status === 'archived'
 }
 function canEdit(node: FlatNode) {
-  return ['draft', 'generated', 'selected', 'reviewing'].includes(node.status)
+  // generating 也允许编辑: server PUT 路由(apps/server/src/routes/chapters-crud.ts)
+  // 对 generating 状态无字段限制; generate-processor 只写 Draft + chapter.status,
+  // 不写 title/outline/sceneLocation/sceneMood/sceneGoal,
+  // 用户在 generating 期间改这些字段不影响当前次 AI 调用
+  // (worker 已持有编译好的 prompt snapshot), 下次 generate 会用新 outline。
+  return ['draft', 'generated', 'selected', 'reviewing', 'generating'].includes(node.status)
 }
 function canView(node: FlatNode) {
   return node.status === 'archived'
