@@ -26,6 +26,28 @@ export function createGenerateProcessor(app: FastifyInstance) {
       const draftId = draftIds[i]
       const temperature = temperatures[i]
 
+      // 写 draft 前查 status, 跳过已被 select / rejected / 已处理过的 draft。
+      // 否则用户在 worker 跑到一半时 select, select route 把所有 draft 置 rejected、
+      // 把选中的置 selected, 但 worker 后续仍会调 update({status:completed}),
+      // 把已被 select 标记的 draft "复活", 破坏"被选中的应该是唯一 active 草稿"的语义。
+      //
+      // status 集合说明:
+      //   pending    — worker 还没跑过 (初始状态)
+      //   generating — (历史字段, 实际 worker 直接写 completed/failed, 不会用 generating)
+      //   completed  — worker 已成功处理
+      //   failed     — worker 处理失败
+      //   selected   — 用户已选此 draft
+      //   rejected   — 用户选了别的 draft, 此 draft 被淘汰
+      // 跳过 pending 之外的所有状态 — pending 才是真正需要 worker 处理的。
+      const current = await prisma.draft.findUnique({
+        where: { id: draftId },
+        select: { status: true }
+      })
+      if (!current || current.status !== 'pending') {
+        app.log.info(`[Generate] Skipping draft ${draftId} (status=${current?.status ?? 'missing'}, user may have selected another draft already)`)
+        continue
+      }
+
       try {
         app.log.info(`[Generate] Calling AI for draft ${draftId}, temp=${temperature}`)
         const result = await callAIWithLog(app, {
@@ -63,20 +85,21 @@ export function createGenerateProcessor(app: FastifyInstance) {
       }
     }
 
-    // 恢复 chapter.status:用抢锁前的状态决定,而不是写死 'generated'
-    //   draft     → generated  (首次生成完成)
-    //   generated → generated  (再生成完成,本身就在)
-    //   selected  → selected   (再生成完成,状态保留,Chapter.content 不动)
-    // 修复旧 bug:全失败时也恢复(旧代码卡在 'generating'),避免章节卡死
-    // 兜底:preLockStatus 缺失(老 queue 残留 job)按 'draft' 处理,行为同旧版本
+    // 恢复 chapter.status: 看 chapter 当前状态, 不无脑覆盖。
+    //   抢锁前 = draft  → 本次任务把 chapter 推到 'generated' (前提是 chapter 还在 generating)
+    //   抢锁前 = generated/selected → 仅当 chapter 还在 generating 时不写 (selected 是用户主动选的, 不要覆盖)
+    // 用户在 worker 跑到一半时 select, select route 已把 chapter.status 翻成 'selected',
+    // 这里 updateMany where status='generating' count=0, 不动 chapter.status — select 结果保留。
+    // 兜底:preLockStatus 缺失 (老 queue 残留 job) 按 'draft' 处理, 行为同旧版本。
     const effectivePreLock = preLockStatus ?? 'draft'
-    const restoreStatus = effectivePreLock === 'draft' ? 'generated' : effectivePreLock
-    await prisma.chapter.update({
-      where: { id: chapterId },
-      data: { status: restoreStatus }
+    const targetStatus = effectivePreLock === 'draft' ? 'generated' : effectivePreLock
+    const statusRestore = await prisma.chapter.updateMany({
+      where: { id: chapterId, status: 'generating' },
+      data: { status: targetStatus }
     })
+    const restored = statusRestore.count > 0
 
-    app.log.info(`[Generate] Done for chapter ${chapterId}: ${successCount} success, ${failCount} failed, restored to ${restoreStatus}`)
+    app.log.info(`[Generate] Done for chapter ${chapterId}: ${successCount} success, ${failCount} failed, restored=${restored} target=${targetStatus}`)
 
     return { successCount, failCount, total: draftIds.length }
   }

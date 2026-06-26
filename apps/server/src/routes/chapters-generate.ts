@@ -314,16 +314,20 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     const chapter = await getOrThrowChapter(prisma, chapterId, reply)
     if (chapter === null) return
 
-    // 允许 generated / scored / selected 三态切换候选
+    // 允许 generated / scored / selected / generating 四态选择候选
     // - generated / scored: 首次/评分后选择
     // - selected: 已选了一个,看到新生成的更好的候选想切换
+    // - generating: 用户在 worker 跑的时候看到喜欢的就立即选;
+    //   配合 generate-processor 的"rejected draft 跳过 + chapter.status 不覆盖"
+    //   兜底,select 不会因为后续 worker 完成而被破坏
     // 切换路径下,UI 的 handleAdoptDraft 已有"确认覆盖"对话框兜底
     if (chapter.status !== 'generated' &&
         chapter.status !== 'scored' &&
-        chapter.status !== 'selected') {
+        chapter.status !== 'selected' &&
+        chapter.status !== 'generating') {
       return reply.status(400).send({
         success: false,
-        error: `章节当前状态为 ${chapter.status}，只允许 generated / scored / selected 状态选择候选`
+        error: `章节当前状态为 ${chapter.status}，只允许 generated / scored / selected / generating 状态选择候选`
       })
     }
 
@@ -336,7 +340,7 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
 
     // 状态机独占锁：原子性 updateMany（防止双击 select 产生重复 chapter update）
     const lockResult = await prisma.chapter.updateMany({
-      where: { id: chapterId, status: { in: ['generated', 'scored', 'selected'] } },
+      where: { id: chapterId, status: { in: ['generated', 'scored', 'selected', 'generating'] } },
       data: { status: 'selected' }
     })
     if (lockResult.count === 0) {
