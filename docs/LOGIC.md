@@ -126,20 +126,71 @@ Draft → Generating → Generated → (Scored) → Selected → Reviewing → A
 
 ### 8 态状态机合法转换
 
-集中在 `routes/chapters.ts:18-27` 的 `VALID_STATUS_TRANSITIONS`：
+状态转换散落在多个路由（`routes/chapters-*.ts` 拆分后已不是单一文件）：
 
 ```
-draft      → generating
-generating → generated
-generated  → selected | scored
-scored     → selected
-selected   → reviewing
-reviewing  → archived
+draft      → generating | archived          (/generate, /prepare-archive 的 side-story 旁路)
+generating → generated | selected           (worker 完成, /select 抢先 — 见下方 §2.1)
+generated  → generating | selected          (/generate 追加候选, /select)
+scored     → selected                       (/select — 防御性保留, 实际无 setter)
+selected   → generating | reviewing         (/generate 追加候选, /prepare-archive)
+reviewing  → archived                       (/archive 确认)
 archived   → （终态）
 rejected   → （终态）
 ```
 
-**注意**：`assertStatusTransition` helper（line 29-37）定义后**未被任何路由调用**——状态转换实际用硬编码字符串判断（line 551, 630 等）。`ChapterStatus` 在 Prisma 是 enum，类型层兜底；helper 是冗余设计。
+**各边触发的端点**：
+
+| 转换 | 端点 | 文件:行 |
+|------|------|---------|
+| draft / generated / selected → generating | `POST /api/chapters/:id/generate` | `routes/chapters-generate.ts:178` |
+| generating → selected | `POST /api/chapters/:id/select` | `routes/chapters-generate.ts:342` |
+| generated / scored / selected / generating → selected | `POST /api/chapters/:id/select` | `routes/chapters-generate.ts:343` |
+| selected → reviewing | `POST /api/chapters/:id/prepare-archive` | `routes/chapters-archive.ts:71,116` |
+| reviewing → archived | `POST /api/chapters/:id/archive` | `routes/chapters-archive.ts:167-168` |
+
+**锁机制**：除 `selected → reviewing`（软转，无锁）外，所有转换都用 `updateMany where status: { in: [...] }` 做原子锁——`count === 0` 返回 409，由前端重试。
+
+**注意**：`assertStatusTransition` / `VALID_STATUS_TRANSITIONS` 两个 helper 是历史遗留（`routes/chapters.ts` 拆分前的 dead code），现已随文件拆分消失。状态转换靠 `updateMany` 模式 + Prisma enum 类型层兜底；后续如要集中管理，建议抽 `routes/_state-machine.ts`。
+
+### §2.1 · preLockStatus — worker 状态恢复语义
+
+`/generate` 抢锁前读取 `chapter.status` 并记为 `preLockStatus`，随队列 payload 透传给 worker（`chapters-generate.ts:196`）。worker 完成时不再写死 `'generated'`，而是按 preLockStatus 恢复：
+
+| preLockStatus | worker 恢复目标 | 语义 |
+|---------------|----------------|------|
+| `draft` | `generated` | 首次生成，新候选待选 |
+| `generated` | `generated` | 追加候选，旧候选保留 |
+| `selected` | `selected` | 已在选中状态下追加候选，Chapter.content / 已选 draft 标记不动 |
+
+**为什么**：旧版本 worker 完成时无条件 `chapter.update({ status: 'generated' })`，会把"用户在 generating 中抢先 select"的状态覆盖回 `generated`，破坏 select 的纯加法语义（select 后 Chapter.content 应保留，不应被 worker 反转）。`preLockStatus` 让状态机可逆。
+
+### §2.2 · Worker 写操作的两个不变量
+
+`services/generate-processor.ts` 写 Draft / Chapter 前必须遵守：
+
+**1. 跳过非 pending 的 draft**（`generate-processor.ts:42-49`）：
+
+```ts
+const current = await prisma.draft.findUnique({ where: { id: draftId }, select: { status: true } })
+if (!current || current.status !== 'pending') {
+  app.log.info(`[Generate] Skipping draft ${draftId} (status=${current?.status})`)
+  continue
+}
+```
+
+防止 worker 把已被 select 标 `selected` 或被同事务标 `rejected` 的 draft "复活"成 `completed`。
+
+**2. chapter.status 恢复用 `updateMany where status='generating'` 保护**（`generate-processor.ts:96-99`）：
+
+```ts
+const statusRestore = await prisma.chapter.updateMany({
+  where: { id: chapterId, status: 'generating' },
+  data: { status: targetStatus }
+})
+```
+
+`count === 0` 表示用户在 worker 跑一半时抢先 select，chapter.status 已被翻成 `selected`——保留不动。这是兜底：即使 preLockStatus 因 race condition 失真，`where status='generating'` 也能确保不覆盖 select 结果。
 
 ### 5-phase 归档流水线（详细）
 
@@ -148,7 +199,7 @@ rejected   → （终态）
 | 1 提取 | `combined-extractor.ts:extractAll` | `prepare-archive` | 1 次（合并提取，temperature 0.3） | throw → 路由冒泡 500 |
 | 2 整理 | `graph-organizer.ts:organizeGraph` | `prepare-archive` | 1 次（temperature 0.2，maxTokens 8192） | **rethrow** → 路由冒泡 500 |
 | 2.5 人工审查 | `ReviewingPanel.vue` | `save-pending-archive-data` (用户点"保存调整") | 0 次 | 用户编辑失败可重试 |
-| 3 事务 | `routes/chapters.ts:archive` | `archive` | 0 次 | 事务回滚，章节维持 `reviewing` |
+| 3 事务 | `routes/chapters-archive.ts:archive` | `archive` | 0 次 | 事务回滚，章节维持 `reviewing` |
 | 4 优化 | `memory-optimizer.ts:optimizeMemories` | `archive`（事务后） | 1 次（temperature 0.3） | **不阻塞**归档（已 try/catch） |
 
 **阶段 3 事务范围**：`commitMemoryWrites` + summary 更新 + `commitPlotArcWrites` + `saveGraphSnapshotAndDelta` + `chapter.status = 'archived'` + `pendingArchiveData = null`。**全部成功或全部回滚**。
@@ -217,7 +268,7 @@ POST /api/chapters/:id/archive
 
 只有 1 个**事实上的共享类型**：`ChapterStatus`（Prisma enum），但前端没用 Prisma client：
 - 前端 `Chapters.vue:1057-1074` 的 `statusTagType` **手写字符串**判断（缺 `scored` + `rejected`）
-- 后端 `routes/chapters.ts:18-27` 的 `VALID_STATUS_TRANSITIONS` 用字符串字面量
+- 后端状态转换散落在各 `routes/chapters-*.ts` 路由的 `updateMany where status: { in: [...] }` 模式（旧的 `VALID_STATUS_TRANSITIONS` helper 已随拆分消失，见 §2）
 - `packages/shared` 的 `ChapterStatus` const 缺 `generating` + `reviewing` —— **三层定义全不一致**
 
 `PendingArchiveData` 在前后端**各定义一份**（`combined-extractor.ts:18` vs `ReviewingPanel.vue:167`），字段加/改/删无类型检查。
