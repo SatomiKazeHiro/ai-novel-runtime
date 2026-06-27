@@ -6,6 +6,7 @@
       :precision="5"
       :min="-99999"
       :max="99999"
+      :controls="controls"
       placeholder="如 1.00106 (第1年第1天 06时)"
       style="flex: 1"
       @update:value="onChange"
@@ -31,8 +32,15 @@
  *   - 默认值 `DEFAULT_TIMELINE_POSITION = 1.00106` (从 shared 统一拿)
  *   - 非法值 (NaN, Infinity) → preview 显示 "格式错误", 仍允许编辑
  *
+ * Props:
+ *   - preview: 是否在右侧显示解码预览 (默认 true)
+ *   - controls: 是否显示 n-input-number 的 +/- 步进按钮 (默认 true)
+ *     一些 caller (如 ReviewingPanel 2026-06-27) 已经有自己的 hero 显示解码,
+ *     不需要步进按钮,可传 false
+ *
  * 用法:
  *   <TimelinePositionInput v-model="form.position" />
+ *   <TimelinePositionInput v-model="te.position" :preview="false" :controls="false" />
  */
 import { computed } from 'vue'
 import { NInputNumber, NTag, NSpace } from 'naive-ui'
@@ -41,8 +49,10 @@ import { formatTimelinePosition, DEFAULT_TIMELINE_POSITION } from '@novel-runtim
 const props = withDefaults(defineProps<{
   modelValue: number | null
   preview?: boolean  // 是否显示右侧解码预览
+  controls?: boolean  // 是否显示 n-input-number 的 +/- 步进按钮
 }>(), {
-  preview: true
+  preview: true,
+  controls: true
 })
 
 const emit = defineEmits<{

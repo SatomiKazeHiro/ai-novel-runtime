@@ -105,48 +105,41 @@
                       <div class="cap-timeline-card__head-chips">
                         <span class="cap-chip is-snow cap-timeline-card__count-chip">
                           <span class="cap-timeline-card__count-label">事件</span>
-                          <span class="cap-timeline-card__count-value">{{ parseEventsJson(te.events).count }}</span>
+                          <span class="cap-timeline-card__count-value">{{ getEventsList(te.events).length }}</span>
                         </span>
                       </div>
                     </div>
 
-                    <!-- Position hero: mono 编码 + 人类解读 -->
+                    <!-- Position hero: 时间文本 + ? 含义 + 校验 tag -->
                     <div class="cap-timeline-card__pos-hero">
-                      <div class="cap-timeline-card__pos-value-block">
-                        <span class="cap-timeline-card__pos-prefix">POS ·</span>
-                        <span class="cap-timeline-card__pos-value">{{ formatPositionValue(te.position) }}</span>
-                      </div>
-                      <span class="cap-timeline-card__pos-arrow" aria-hidden="true">↳</span>
-                      <span class="cap-timeline-card__pos-label">{{ formatPositionLabel(te.position) }}</span>
+                      <span class="cap-timeline-card__pos-time">{{ formatPositionLabel(te.position) }}</span>
+                      <span
+                        class="cap-timeline-card__pos-help"
+                        :title="positionHelpText()"
+                        :aria-label="positionHelpText()"
+                        tabindex="0"
+                      >?</span>
+                      <span
+                        class="cap-chip cap-timeline-card__pos-validity"
+                        :class="positionValidity(te.position).chipClass"
+                      >{{ positionValidity(te.position).label }}</span>
                     </div>
                   </header>
 
-                  <!-- 字段 01: 时间编码 (可编辑) -->
+                  <!-- 字段 01: 时间编码 (可编辑, 无 stepper 按钮 / 无 preview, hero 已承担展示) -->
                   <div class="cap-timeline-card__field">
                     <span class="cap-timeline-card__label">01 · 时间编码</span>
-                    <TimelinePositionInput v-model="te.position" />
+                    <TimelinePositionInput v-model="te.position" :preview="false" :controls="false" />
                   </div>
 
-                  <!-- 字段 02: 事件 JSON (rows=10) -->
+                  <!-- 字段 02: 事件列表 (DynamicTags, 与 Timeline.vue 编辑 modal 同款) -->
                   <div class="cap-timeline-card__field">
                     <span class="cap-timeline-card__label">02 · 事件列表</span>
-                    <n-input
-                      v-model:value="te.events"
-                      type="textarea"
-                      :rows="10"
-                      :input-props="{ class: 'cap-timeline-card__mono-input' }"
-                      placeholder='事件 JSON 数组，如 ["事件1", "事件2"]'
+                    <DynamicTags
+                      :model-value="getEventsList(te.events)"
+                      @update:model-value="(v) => setEventsList(te, v)"
                     />
-                    <div class="cap-timeline-card__json-status">
-                      <span
-                        class="cap-chip"
-                        :class="parseEventsJson(te.events).ok ? 'is-positive' : 'is-error'"
-                      >
-                        {{ parseEventsJson(te.events).ok
-                          ? `${parseEventsJson(te.events).count} events · JSON 合法`
-                          : (parseEventsJson(te.events).error || '空') }}
-                      </span>
-                    </div>
+                    <span class="cap-timeline-card__events-hint">回车或 + 添加一条 · × 删除</span>
                   </div>
 
                   <!-- Footer: 删除 -->
@@ -372,7 +365,7 @@ import {
   NSelect, NSlider,
   useDialog
 } from 'naive-ui'
-import { DEFAULT_TIMELINE_POSITION, formatTimelinePosition, safeJsonParse } from '@novel-runtime/shared'
+import { DEFAULT_TIMELINE_POSITION, formatTimelinePosition, safeJsonParse, validateTimelinePosition } from '@novel-runtime/shared'
 import type { PendingArchiveData } from '@novel-runtime/shared'
 import EditableGraph from '../components/graph/EditableGraph.vue'
 import DynamicTags from '../components/DynamicTags.vue'
@@ -526,27 +519,19 @@ function formatSimilarArcNames(similarToJson: string | undefined): string {
 }
 
 /**
- * 解析 te.events JSON 字符串, 返回 { ok, count, error } 用于状态 chip 渲染。
- * - ok=true 且 count>0: 合法 JSON 数组
- * - ok=true 且 count=0: 合法 JSON 但空数组 (或空字符串)
- * - ok=false: 解析失败
+ * 解析 te.events JSON 字符串 → string[] 给 DynamicTags 用。
+ * 解析失败 (非 JSON / 非数组) → 空数组, 允许用户重新输入。
  */
-function parseEventsJson(raw: string | null | undefined): { ok: boolean; count: number; error?: string } {
-  if (!raw || !raw.trim()) return { ok: true, count: 0, error: '空' }
-  const parsed = safeJsonParse<unknown>(raw, null)
-  if (parsed == null) return { ok: false, count: 0, error: 'JSON 非法' }
-  if (Array.isArray(parsed)) return { ok: true, count: parsed.length }
-  return { ok: false, count: 0, error: '不是数组' }
+function getEventsList(json: string | null | undefined): string[] {
+  const parsed = safeJsonParse<unknown>(json, [])
+  return Array.isArray(parsed) ? parsed.filter(v => typeof v === 'string') : []
 }
 
 /**
- * 渲染 position 编码值: 把数字格式化成 5 位小数字符串,用于 position hero。
- * null / NaN / Infinity → 占位 "—"
+ * DynamicTags 改值回写: string[] → JSON 字符串存进 te.events。
  */
-function formatPositionValue(position: number | null | undefined): string {
-  if (position == null || !Number.isFinite(position)) return '—'
-  // toFixed(5) 保证 5 位小数 (与 Y.DDDHH 编码约定一致)
-  return position.toFixed(5)
+function setEventsList(te: any, list: string[]) {
+  te.events = JSON.stringify(list)
 }
 
 /**
@@ -556,6 +541,34 @@ function formatPositionValue(position: number | null | undefined): string {
 function formatPositionLabel(position: number | null | undefined): string {
   if (position == null || !Number.isFinite(position)) return '未设置'
   return formatTimelinePosition(position)
+}
+
+/**
+ * 渲染"?"按钮的 tooltip: 解释 Y.DDDHH 编码含义。
+ * 与 Timeline.vue 的 evt-field__hint 文字保持一致。
+ */
+const POSITION_HELP_TEXT = 'Y.DDDHH 编码:整数位=年(负数=前史), 5 位小数=年内第几天(001-365)+小时(00-23)'
+function positionHelpText(): string {
+  return POSITION_HELP_TEXT
+}
+
+/**
+ * 计算 position 校验状态, 渲染 validity chip 用。
+ * 三态: ok / not-set / invalid
+ *   - null / undefined → "未设置" (is-snow 中性)
+ *   - validateTimelinePosition.ok=false → "✕ 非法 · {reason}" (is-error)
+ *   - 合法 → "✓ 合法" (is-positive)
+ */
+type PositionValidity = { label: string; chipClass: string }
+function positionValidity(position: number | null | undefined): PositionValidity {
+  if (position == null) {
+    return { label: '未设置', chipClass: 'is-snow' }
+  }
+  const result = validateTimelinePosition(position)
+  if (!result.ok) {
+    return { label: `✕ 非法 · ${result.reason}`, chipClass: 'is-error' }
+  }
+  return { label: '✓ 合法', chipClass: 'is-positive' }
 }
 
 function isSpecialContent(content?: string): boolean {
@@ -1083,61 +1096,64 @@ defineExpose({ startConfirm, stopConfirm })
 }
 
 /* === Position hero — 时刻表的核心识别物 ===
-   设计意图:把 Y.DDDHH 编码当成"印刷标本 / 坐标牌"展示。
+   设计意图:把解码后的"第N年第N天 NN时"作为视觉主体,加 ? 问号按钮
+   提供编码含义 hover tooltip,末尾 chip 给出实时校验结果。
    - 浅米色底 (bg-elev) + 1px border, 内嵌于卡片
-   - 左边 22px mono 加粗 terracotta 编码值 (POS · 1.00700)
-   - 中间 ↳ 箭头作为过渡
-   - 右边 11px dim mono 人类解读 (第1年第7天 06时)
+   - 18px mono semibold 时间文本作为主视觉 (不再用 22px terracotta 加粗)
+   - ? 圆按钮:中性灰 border, 鼠标悬浮 / focus 时加深 (cursor: help)
+   - 校验 chip 走 cap-chip is-positive / is-error / is-snow 变体
    字段值变化时不强响动, 保持 specimen 的静态感。 */
 .cap-timeline-card__pos-hero {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
-  padding: 10px 14px;
+  padding: 12px 14px;
   background: var(--bg-elev);
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   flex-wrap: wrap;
   min-width: 0;
 }
-.cap-timeline-card__pos-value-block {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
+.cap-timeline-card__pos-time {
   font-family: var(--font-mono);
-  flex-shrink: 0;
-}
-.cap-timeline-card__pos-prefix {
-  font-size: 10px;
+  font-size: 18px;
   font-weight: var(--weight-semibold);
-  color: var(--text-tertiary);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-.cap-timeline-card__pos-value {
-  font-size: 22px;
-  font-weight: var(--weight-bold);
-  color: var(--accent);
+  color: var(--text-primary);
   letter-spacing: 0.04em;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-.cap-timeline-card__pos-arrow {
-  font-size: 14px;
-  color: var(--color-mid-gray);
-  line-height: 1;
-  flex-shrink: 0;
-}
-.cap-timeline-card__pos-label {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: var(--weight-regular);
-  color: var(--text-secondary);
-  letter-spacing: 0.04em;
-  line-height: 1.3;
+  line-height: 1.2;
   flex: 1 1 auto;
   min-width: 0;
   word-break: break-word;
+  font-variant-numeric: tabular-nums;
+}
+.cap-timeline-card__pos-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border-default);
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: var(--weight-bold);
+  cursor: help;
+  background: transparent;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  line-height: 1;
+  user-select: none;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.cap-timeline-card__pos-help:hover,
+.cap-timeline-card__pos-help:focus {
+  border-color: var(--color-mid-gray);
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  outline: none;
+}
+.cap-timeline-card__pos-validity {
+  flex-shrink: 0;
 }
 
 /* === 字段: label + content (与剧情弧线一致) === */
@@ -1156,23 +1172,14 @@ defineExpose({ startConfirm, stopConfirm })
   line-height: 1;
 }
 
-/* === events JSON textarea: mono 字体 + 白底(与剧情弧线 __mono-input 同款) ===
-   避免 Naive UI 默认 n-input 浅灰底,显式覆盖 */
-.cap-timeline-card__mono-input :deep(textarea) {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.55;
-  letter-spacing: 0.01em;
-  background: var(--bg-card) !important;
-  color: var(--text-primary);
-}
-
-/* === JSON 状态 chip 行 === */
-.cap-timeline-card__json-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+/* === 事件列表 hint (DynamicTags 下方提示文字) ===
+   与 Timeline.vue evt-field__hint 同款 cap-caption 风格 */
+.cap-timeline-card__events-hint {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  margin-top: 2px;
 }
 
 /* === 底部: 删除(与剧情弧线对齐) === */
