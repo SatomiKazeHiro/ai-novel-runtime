@@ -132,40 +132,15 @@
                     </div>
                   </div>
 
-                  <!-- 字段 02: 事件列表 (纵向 list: 每条事件一行 + 行尾 × 删除 + 底部 + 添加) -->
-                  <div class="cap-timeline-card__field">
+                  <!-- 字段 02: 事件列表 (DynamicTags, scoped CSS 强制 1 列: 每行 1 个 tag) -->
+                  <div class="cap-timeline-card__field cap-timeline-card__events-field">
                     <span class="cap-timeline-card__label">02 · 事件列表</span>
-                    <div class="cap-timeline-card__events-list">
-                      <div
-                        v-for="(event, eventIdx) in getEventsList(te.events)"
-                        :key="eventIdx"
-                        class="cap-timeline-card__event-row"
-                      >
-                        <n-input
-                          :value="event"
-                          :bordered="false"
-                          size="small"
-                          placeholder="事件描述..."
-                          @update:value="(v) => updateEventAt(te, eventIdx, v)"
-                        />
-                        <button
-                          type="button"
-                          class="cap-pill is-sm is-ghost cap-timeline-card__event-remove"
-                          title="删除该事件"
-                          aria-label="删除该事件"
-                          @click="removeEventAt(te, eventIdx)"
-                        >×</button>
-                      </div>
-                      <div
-                        v-if="getEventsList(te.events).length === 0"
-                        class="cap-timeline-card__event-empty"
-                      >暂无事件,点击下方添加</div>
-                    </div>
-                    <button
-                      type="button"
-                      class="cap-pill is-sm is-primary cap-timeline-card__event-add"
-                      @click="addEvent(te)"
-                    >+ 添加一条</button>
+                    <DynamicTags
+                      class="cap-timeline-card__events-list"
+                      :model-value="getEventsList(te.events)"
+                      @update:model-value="(v) => setEventsList(te, v)"
+                    />
+                    <span class="cap-timeline-card__events-hint">回车或 + 添加一条 · × 删除</span>
                   </div>
 
                   <!-- Footer: 删除 -->
@@ -545,7 +520,7 @@ function formatSimilarArcNames(similarToJson: string | undefined): string {
 }
 
 /**
- * 解析 te.events JSON 字符串 → string[] 给 list 渲染用。
+ * 解析 te.events JSON 字符串 → string[] 给 DynamicTags 渲染用。
  * 解析失败 (非 JSON / 非数组) → 空数组, 允许用户重新输入。
  */
 function getEventsList(json: string | null | undefined): string[] {
@@ -554,38 +529,10 @@ function getEventsList(json: string | null | undefined): string[] {
 }
 
 /**
- * list 改值回写: string[] → JSON 字符串存进 te.events。
+ * DynamicTags 改值回写: string[] → JSON 字符串存进 te.events。
  */
 function setEventsList(te: any, list: string[]) {
   te.events = JSON.stringify(list)
-}
-
-/**
- * 改写单个事件 (list 模式下, n-input inline edit 回调)。
- */
-function updateEventAt(te: any, idx: number, value: string) {
-  const list = getEventsList(te.events)
-  list[idx] = value
-  setEventsList(te, list)
-}
-
-/**
- * 删除某条事件 (list 行末 × 按钮)。
- */
-function removeEventAt(te: any, idx: number) {
-  const list = getEventsList(te.events)
-  list.splice(idx, 1)
-  setEventsList(te, list)
-}
-
-/**
- * 追加一条空事件 (list 底部 + 添加一条按钮)。空字符串保留,
- * 用户可继续输入或 × 删除;不在此处 trim,避免误删半填的输入。
- */
-function addEvent(te: any) {
-  const list = getEventsList(te.events)
-  list.push('')
-  setEventsList(te, list)
 }
 
 /**
@@ -1232,65 +1179,52 @@ defineExpose({ startConfirm, stopConfirm })
   line-height: 1;
 }
 
-/* === 事件列表 (纵向 list 模式: 1 条事件 1 行) ===
-   - 外层容器: 1px border + 6px radius + 白底, 跟剧情弧线 card 一致
-   - 每行: 1px border-bottom 分隔 (最后一行无), inline edit input + 行尾 × ghost 按钮
-   - input 用 :bordered="false" 走 n-input 默认底色透明, 视觉上"内嵌"于行
-   - × 按钮 ghost 变体 (透明底 + ink black 文本 + 1px pebble border) 不抢戏
-   - 底部 + 添加一条按钮 primary 变体 (terracotta), 跟 cap-pill is-sm 节奏一致 */
+/* === 事件列表 (DynamicTags 1 列模式: 强制每行 1 个 tag) ===
+   timeline card 的 events 字段用 DynamicTags 但希望 tag 单列堆叠
+   (避免 2 列 card grid 窄卡下 tag 文本被裁)。通过 CSS 强制每个
+   n-tag 100% 宽 + 独占一行, 不影响其他 DynamicTags 用法
+   (emotions / foreshadowing / relationshipChanges 仍走自然 wrap)。
+   - tag 容器: 1px border + 6px radius 围成"列", 跟剧情弧线 card 一致
+   - 每个 n-tag: 100% 宽, 右 margin 0, 底 margin 6px 分隔
+   - tag content: 解除 max-width / nowrap 限制, 让长文本自然换行显示
+   - input (n-dynamic-tags 自带) 仍走 inline, 用户能继续添加新 tag */
 .cap-timeline-card__events-list {
-  display: flex;
-  flex-direction: column;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-card);
   background: var(--bg-card);
-  overflow: hidden;
+  padding: 10px 12px;
 }
-.cap-timeline-card__event-row {
+.cap-timeline-card__events-list :deep(.n-dynamic-tags) {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 4px 2px 12px;
-  border-bottom: 1px solid var(--border-subtle);
-  transition: background 0.12s ease;
+  flex-direction: column;
+  align-items: stretch;
 }
-.cap-timeline-card__event-row:last-child {
-  border-bottom: none;
+.cap-timeline-card__events-list :deep(.n-dynamic-tags .n-tag) {
+  max-width: 100%;
+  width: 100%;
+  margin: 0 0 6px 0;
+  height: auto;
+  min-height: 28px;
+  padding: 4px 10px;
 }
-.cap-timeline-card__event-row:hover {
-  background: var(--bg-elev);
+.cap-timeline-card__events-list :deep(.n-dynamic-tags .n-tag__content) {
+  max-width: 100%;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-word;
 }
-/* n-input :bordered="false" 默认高度是 34px (size=small), 这里再收紧点
-   跟 row 高度对齐; hover 时给个浅底色给"可输入"暗示 */
-.cap-timeline-card__event-row :deep(.n-input) {
-  background: transparent;
-}
-.cap-timeline-card__event-row :deep(.n-input:hover) {
-  background: transparent;
-}
-.cap-timeline-card__event-remove {
+.cap-timeline-card__events-list :deep(.n-dynamic-tags .n-tag__close) {
+  margin-left: 8px;
   flex-shrink: 0;
-  /* 覆盖 cap-pill is-sm 默认 30px 高, 让 × 按钮更紧凑 */
-  height: 26px;
-  width: 32px;
-  padding: 0;
-  font-size: 16px;
-  line-height: 1;
+}
+/* 事件列表 hint (DynamicTags 下方提示文字) */
+.cap-timeline-card__events-hint {
+  font-size: 10px;
   color: var(--text-tertiary);
-}
-.cap-timeline-card__event-remove:hover {
-  color: var(--color-error);
-}
-.cap-timeline-card__event-empty {
-  padding: 14px 12px;
-  font-size: 12px;
-  color: var(--text-tertiary);
-  text-align: center;
-  letter-spacing: 0.02em;
-}
-.cap-timeline-card__event-add {
-  align-self: flex-start;
-  margin-top: 8px;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  margin-top: 6px;
 }
 
 /* === 底部: 删除(与剧情弧线对齐) === */
