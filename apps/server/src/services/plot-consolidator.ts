@@ -69,19 +69,26 @@ export type ConsolidatedArcWrite = PendingPlotArcWrite
 /** AI 返回的单条 update: 对某条 existing arc 的字段更新 */
 const UpdateSchema = z.object({
   existingId: z.string(),
+  /** AI 可在 update 时翻转 type (主线↔支线) */
+  type: z.enum(['main', 'side']).optional(),
   progress: z.number().min(0).max(100).optional(),
-  status: z.enum(['pending', 'active', 'resolving', 'completed']).optional(),
+  /** 'stale' 是代码自动设置, AI 不直接写 */
+  status: z.enum(['active', 'resolving', 'completed', 'closed']).optional(),
   currentStage: z.string().optional(),
   nextGoal: z.string().optional(),
   unresolved: z.array(z.string()).optional(),
-  summary: z.string().optional()
+  summary: z.string().optional(),
+  /** status='closed' 时必填, 'duplicate' = 与其他弧线重复 */
+  closedReason: z.enum(['duplicate']).optional(),
+  /** status='closed' 时填, 指向被合并到的 arc id */
+  closedTargetArcId: z.string().optional()
 })
 
 /** AI 返回的单条新 arc: 章节中识别的新事件线 */
 const NewArcSchema = z.object({
   name: z.string(),
   type: z.enum(['main', 'side']),
-  status: z.enum(['pending', 'active', 'resolving', 'completed']),
+  status: z.enum(['active', 'resolving', 'completed']),
   progress: z.number().min(0).max(100),
   currentStage: z.string(),
   nextGoal: z.string(),
