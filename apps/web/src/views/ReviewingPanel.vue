@@ -11,44 +11,94 @@
     <n-space vertical size="large" style="width: 100%">
 
       <!-- 本章级常驻区: 摘要 + 角色状态 (跨 tab 通用, 不藏在记忆tab 内) -->
-      <n-card title="本章摘要" size="small">
-        <n-input
-          v-model:value="summary"
-          type="textarea"
-          :rows="2"
-          placeholder="一句话摘要"
-        />
+
+      <!-- 本章摘要 — 印刷感引文块: cap-eyebrow 副标 + 大字引号 + 内嵌 textarea + 字符计数 hint -->
+      <n-card class="cap-summary-card" size="small">
+        <template #header>
+          <header class="cap-summary-card__head">
+            <span class="cap-eyebrow">EXCERPT · 本章摘要</span>
+            <h3 class="cap-summary-card__title">一句话核心</h3>
+          </header>
+        </template>
+        <div class="cap-summary-card__body">
+          <span class="cap-summary-card__quote-mark" aria-hidden="true">"</span>
+          <n-input
+            v-model:value="summary"
+            type="textarea"
+            :rows="3"
+            placeholder="本章的核心冲突、转折或情感落点…"
+            class="cap-summary-card__input"
+          />
+        </div>
+        <footer class="cap-summary-card__foot">
+          <span class="cap-summary-card__hint">印在章节标题下方 · 一行说清本章发生了什么</span>
+          <span class="cap-summary-card__count">{{ (summary || '').length }} 字</span>
+        </footer>
       </n-card>
-      <n-card title="角色状态" size="small">
-        <n-empty v-if="characterStates.length === 0" description="暂无角色状态" />
-        <n-space
-          v-for="(state, idx) in characterStates"
-          :key="`state-${idx}`"
-          vertical
-          style="width: 100%; margin-bottom: 12px"
-        >
-          <n-space justify="space-between" style="width: 100%">
-            <n-text strong>{{ state.characterId }}</n-text>
-            <n-button size="small" type="error" @click="removeCharacterState(idx)">删除</n-button>
-          </n-space>
-          <n-form-item label="状态 JSON" label-placement="left" style="margin-bottom: 8px">
-            <n-input
-              v-model:value="state.status"
-              type="textarea"
-              :rows="3"
-              placeholder='{"rank": "...", "location": "..."}'
-            />
-          </n-form-item>
-          <n-form-item label="关系 JSON" label-placement="left">
-            <n-input
-              v-model:value="state.relationships"
-              type="textarea"
-              :rows="2"
-              placeholder='{"角色A": "朋友", "角色B": "敌对"}'
-            />
-          </n-form-item>
-        </n-space>
-        <n-button size="small" dashed block @click="addCharacterState">添加角色状态</n-button>
+
+      <!-- 角色状态 — 角色表: cap-eyebrow 副标 + 编号 + 内嵌 JSON + cap-pill 按钮 -->
+      <n-card class="cap-character-card" size="small">
+        <template #header>
+          <header class="cap-character-card__head">
+            <span class="cap-eyebrow">CHARACTER STATES · 角色状态</span>
+            <h3 class="cap-character-card__title">本章登场角色</h3>
+          </header>
+        </template>
+        <n-empty v-if="characterStates.length === 0" description="暂无角色状态, 点击下方添加" />
+        <ol v-else class="cap-character-card__list">
+          <li
+            v-for="(state, idx) in characterStates"
+            :key="`state-${idx}`"
+            class="cap-character-card__item cap-rise"
+            :data-rise="String(Math.min(idx + 1, 7))"
+          >
+            <div class="cap-character-card__item-head">
+              <span class="cap-character-card__item-no">N°&nbsp;{{ String(idx + 1).padStart(2, '0') }}</span>
+              <input
+                v-model="state.characterId"
+                class="cap-character-card__item-name"
+                placeholder="角色名 / 角色 ID"
+                spellcheck="false"
+              />
+              <button
+                type="button"
+                class="cap-pill is-sm is-danger cap-character-card__item-remove"
+                title="删除该角色状态"
+                aria-label="删除该角色状态"
+                @click="removeCharacterState(idx)"
+              >删除</button>
+            </div>
+            <div class="cap-character-card__item-fields">
+              <label class="cap-character-card__field">
+                <span class="cap-character-card__field-label">状态</span>
+                <n-input
+                  v-model:value="state.status"
+                  type="textarea"
+                  :rows="3"
+                  placeholder='{"rank": "...", "location": "..."}'
+                  class="cap-character-card__json-input"
+                />
+              </label>
+              <label class="cap-character-card__field">
+                <span class="cap-character-card__field-label">关系</span>
+                <n-input
+                  v-model:value="state.relationships"
+                  type="textarea"
+                  :rows="2"
+                  placeholder='{"角色A": "朋友", "角色B": "敌对"}'
+                  class="cap-character-card__json-input"
+                />
+              </label>
+            </div>
+          </li>
+        </ol>
+        <footer class="cap-character-card__foot">
+          <button
+            type="button"
+            class="cap-pill is-sm is-primary cap-character-card__add"
+            @click="addCharacterState"
+          >+ 添加角色状态</button>
+        </footer>
       </n-card>
 
       <!-- 主编辑区 -->
@@ -379,7 +429,7 @@
 import { ref, computed, watch } from 'vue'
 import {
   NCard, NSpace, NTabs, NTabPane, NCollapse, NCollapseItem,
-  NInput, NInputNumber, NButton, NEmpty, NFormItem, NGrid, NGi, NText,
+  NInput, NInputNumber, NButton, NEmpty, NGrid, NGi, NText,
   NSelect, NSlider,
   useDialog
 } from 'naive-ui'
@@ -1246,5 +1296,258 @@ defineExpose({ startConfirm, stopConfirm })
   border-top: 1px solid var(--border-subtle);
   display: flex;
   justify-content: flex-end;
+}
+
+/* =================================================================
+   本章摘要卡片 — 印刷感引文块
+   ----------------------------------------------------------------
+   设计意图 (2026-06-28 用户反馈 "不那么平淡也不那么炫酷"):
+     - banner 下两个常驻卡片原本是裸 n-card + n-input, 与其他 tab 内的
+       n-card 视觉完全一样, 没有层级区分, 显得"平淡"
+     - 这里用"引文 / 印刷感"语义包装: 巨号引号 + 内嵌 textarea + 字符
+       计数 hint, 让用户感觉是在"写一句给读者看的话"而非"填一个表单字段"
+     - 副标 cap-eyebrow + 大字 title (跟 cap-arc-card__title 节奏一致),
+       但走 cream 暖灰底 (`--bg-section`) 与白色卡形成对比, 在 banner 下
+       两块 n-card 区分 "引文" (摘要) vs "表" (角色状态)
+   ================================================================= */
+.cap-summary-card {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  transition: border-color 0.18s ease, transform 0.18s ease;
+}
+.cap-summary-card:hover {
+  border-color: var(--color-mid-gray);
+  transform: translateY(-1px);
+}
+.cap-summary-card :deep(.n-card-header) {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+.cap-summary-card :deep(.n-card__content) {
+  padding-top: 4px;
+}
+.cap-summary-card__head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cap-summary-card__title {
+  margin: 0;
+  font-size: var(--text-subheading-size);
+  font-weight: var(--weight-semibold);
+  line-height: 1.4;
+  color: var(--text-primary);
+  letter-spacing: -0.005em;
+}
+/* 引文块: 巨号引号 + 内嵌 textarea */
+.cap-summary-card__body {
+  position: relative;
+  padding: 4px 8px 4px 32px;
+}
+.cap-summary-card__quote-mark {
+  position: absolute;
+  left: 0;
+  top: -8px;
+  font-family: var(--font-sans);
+  font-size: 56px;
+  line-height: 1;
+  font-weight: var(--weight-bold);
+  color: var(--accent);
+  opacity: 0.55;
+  user-select: none;
+  pointer-events: none;
+}
+/* 内嵌 textarea: 去边框 + 透明底, 跟卡片白底融成"印在纸上"的感觉 */
+.cap-summary-card__input :deep(textarea) {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.65;
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
+  font-weight: var(--weight-regular);
+  resize: vertical;
+  min-height: 60px;
+}
+.cap-summary-card__input :deep(textarea::placeholder) {
+  color: var(--color-placeholder);
+  font-style: italic;
+}
+.cap-summary-card__input :deep(.n-input__border),
+.cap-summary-card__input :deep(.n-input__state-border) {
+  display: none !important;
+}
+.cap-summary-card__foot {
+  margin-top: 4px;
+  padding: 8px 0 0;
+  border-top: 1px dashed var(--border-subtle);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-caption-size);
+  letter-spacing: 0.04em;
+}
+.cap-summary-card__hint {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+.cap-summary-card__count {
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+/* =================================================================
+   角色状态卡片 — 角色表 (跟剧情弧线/时间线卡片同构, 但走 list 而非 grid)
+   ----------------------------------------------------------------
+   设计意图 (2026-06-28):
+     - 之前是 n-card + n-form-item + n-button type=error, 视觉上跟"表单字段"
+       长得一样, 没有"编目感"
+     - 这里走 ① cap-eyebrow 副标 + 大字 title (与剧情弧线头部同节奏)
+       ② 每条角色状态用 <ol> 编号列表 + N° 编号 + 行内可编辑名字 (n-form-item
+          那层 label 壳拿掉, 名字直接是 inline input)
+       ③ 状态/关系 JSON 用 .cap-character-card__json-input 走 mono + 去边框,
+          跟摘要的内嵌 textarea 节奏一致 (但保留细边框, 因为 JSON 需要视觉分组)
+       ④ 按钮从 n-button type=error / n-button dashed block 升级为 cap-pill
+          (与剧情弧线/时间线的删除/添加按钮统一)
+   ================================================================= */
+.cap-character-card {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  transition: border-color 0.18s ease, transform 0.18s ease;
+}
+.cap-character-card:hover {
+  border-color: var(--color-mid-gray);
+  transform: translateY(-1px);
+}
+.cap-character-card :deep(.n-card-header) {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+.cap-character-card :deep(.n-card__content) {
+  padding-top: 4px;
+}
+.cap-character-card__head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cap-character-card__title {
+  margin: 0;
+  font-size: var(--text-subheading-size);
+  font-weight: var(--weight-semibold);
+  line-height: 1.4;
+  color: var(--text-primary);
+  letter-spacing: -0.005em;
+}
+/* 编号列表 (替换 n-space v-for, 拿到真正的 list 语义) */
+.cap-character-card__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cap-character-card__item {
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.15s ease;
+}
+.cap-character-card__item:hover {
+  border-color: var(--border-default);
+}
+.cap-character-card__item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cap-character-card__item-no {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+/* 角色名 inline edit: 无边框 + 加重, 像 "档案卡上的名字" */
+.cap-character-card__item-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 4px 6px;
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.15s ease;
+}
+.cap-character-card__item-name:hover {
+  border-bottom-color: var(--border-subtle);
+}
+.cap-character-card__item-name:focus {
+  border-bottom-color: var(--accent);
+}
+.cap-character-card__item-name::placeholder {
+  color: var(--color-placeholder);
+  font-style: italic;
+  font-weight: var(--weight-regular);
+}
+.cap-character-card__item-remove {
+  flex-shrink: 0;
+}
+.cap-character-card__item-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.cap-character-card__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.cap-character-card__field-label {
+  font-size: var(--text-caption-size);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  line-height: 1;
+}
+/* JSON 输入: mono 字体 + 1px 细边框, 跟卡片白底形成 "档案抽屉" 感 */
+.cap-character-card__json-input :deep(textarea) {
+  font-family: var(--font-mono) !important;
+  font-size: 12px !important;
+  line-height: 1.55 !important;
+  letter-spacing: 0.01em;
+  background: var(--bg-card);
+}
+.cap-character-card__foot {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-start;
+}
+.cap-character-card__add {
+  /* cap-pill is-sm is-primary 已定义, 这里只调一下节奏 */
+  letter-spacing: 0.04em;
 }
 </style>
