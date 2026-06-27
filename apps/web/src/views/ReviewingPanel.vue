@@ -218,20 +218,14 @@
                     </div>
                   </div>
 
-                  <!-- 摘要: italic 引文块 (display only) + 隐藏 input -->
+                  <!-- 摘要: textarea 直接编辑 -->
                   <div class="cap-arc-card__field">
                     <span class="cap-arc-card__label">06 · 摘要</span>
-                    <p
-                      class="cap-arc-card__pull-quote"
-                      :class="{ 'is-empty': !arc.summary }"
-                    >
-                      {{ arc.summary || '（无摘要）' }}
-                    </p>
                     <n-input
                       v-model:value="arc.summary"
                       type="textarea"
                       :rows="2"
-                      placeholder="弧线摘要 — 编辑后引文块即时同步"
+                      placeholder="弧线摘要"
                       size="small"
                     />
                   </div>
@@ -891,25 +885,7 @@ defineExpose({ startConfirm, stopConfirm })
   letter-spacing: 0.02em;
 }
 
-/* === 摘要: italic 引文块 + 隐藏 input === */
-.cap-arc-card__pull-quote {
-  margin: 0;
-  font-size: 13px;
-  font-style: italic;
-  line-height: 1.55;
-  color: var(--text-secondary);
-  padding: 8px 12px;
-  border-left: 2px solid var(--accent);
-  background: var(--color-warm-accent-tint);
-  border-radius: 0 var(--radius-input) var(--radius-input) 0;
-  word-break: break-word;
-}
-.cap-arc-card__pull-quote.is-empty {
-  font-style: normal;
-  color: var(--text-tertiary);
-  border-left-color: var(--border-default);
-  background: transparent;
-}
+/* === 摘要: (引文块已移除,直接 textarea 编辑) === */
 
 /* === JSON 字段: 等宽字体(保留和普通输入框一致的卡片底色) === */
 .cap-arc-card__mono-input :deep(textarea) {
