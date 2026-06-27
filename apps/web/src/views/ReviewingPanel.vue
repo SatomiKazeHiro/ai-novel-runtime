@@ -107,74 +107,172 @@
             <n-grid
               v-else
               cols="2 s:1"
-              x-gap="12"
-              y-gap="12"
+              x-gap="14"
+              y-gap="14"
               responsive="screen"
               style="margin-bottom: 12px"
             >
               <n-gi v-for="(arc, idx) in plotArcs" :key="`arc-${idx}`">
-                <n-card size="small" hoverable>
-                  <template #header>
-                    <n-space align="center" :wrap="false" size="small" style="min-width: 0">
-                      <n-text strong style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
-                        {{ arc.name || '(未命名)' }}
-                      </n-text>
-                      <n-tag
-                        v-if="arc.similarToExistingIds && safeJsonParse<string[]>(arc.similarToExistingIds, []).length > 0"
-                        type="warning"
+                <article class="cap-arc-card cap-rise" :data-rise="String(Math.min(idx + 1, 7))">
+                  <!-- 头部: 序号 + 类型/状态 chip + 相似 badge -->
+                  <header class="cap-arc-card__head">
+                    <div class="cap-arc-card__head-left">
+                      <span class="cap-arc-card__no">N°&nbsp;{{ String(idx + 1).padStart(2, '0') }}<span class="cap-arc-card__no-sep"> / {{ plotArcs.length }}</span></span>
+                      <span class="cap-chip" :class="arcTypeChipClass(arc.type)">
+                        {{ arc.type === 'main' ? '主线' : '支线' }}
+                      </span>
+                      <span class="cap-chip" :class="arcStatusChipClass(arc.status)">
+                        {{ arcStatusLabel(arc.status) }}
+                      </span>
+                    </div>
+                    <span
+                      v-if="arc.similarToExistingIds && safeJsonParse<string[]>(arc.similarToExistingIds, []).length > 0"
+                      class="cap-chip is-warm"
+                      :title="formatSimilarArcNames(arc.similarToExistingIds)"
+                    >
+                      ⚠ 相似 · {{ formatSimilarArcNames(arc.similarToExistingIds) }}
+                    </span>
+                    <span v-else-if="arc.status === 'closed'" class="cap-chip is-error">
+                      已关闭
+                    </span>
+                  </header>
+
+                  <!-- 大标题 -->
+                  <h3 class="cap-arc-card__title">{{ arc.name || '(未命名)' }}</h3>
+
+                  <!-- 薄分隔线 + cap-pencil + DRAFT eyebrow -->
+                  <div class="cap-arc-card__rule">
+                    <span class="cap-pencil" />
+                    <span class="cap-arc-card__rule-text">DRAFT ENTRY</span>
+                    <span class="cap-arc-card__rule-line" />
+                  </div>
+
+                  <!-- 字段: 名称 (inline edit) -->
+                  <div class="cap-arc-card__field">
+                    <span class="cap-arc-card__label">01 · 名称</span>
+                    <n-input
+                      v-model:value="arc.name"
+                      placeholder="弧线名称"
+                      size="small"
+                      :input-props="{ class: 'cap-arc-card__name-input' }"
+                    />
+                  </div>
+
+                  <!-- 类型 / 状态 (chip-row, 可点改) -->
+                  <div class="cap-arc-card__field">
+                    <span class="cap-arc-card__label">02 · 类型 / 状态</span>
+                    <div class="cap-arc-card__chip-row">
+                      <n-select
+                        v-model:value="arc.type"
+                        :options="arcTypeOptions"
                         size="small"
-                      >
-                        ⚠️ 相似: {{ formatSimilarArcNames(arc.similarToExistingIds) }}
-                      </n-tag>
-                      <n-tag
-                        v-else-if="arc.status === 'closed'"
-                        type="warning"
+                        style="flex: 1"
+                      />
+                      <n-select
+                        v-model:value="arc.status"
+                        :options="arcStatusOptions"
                         size="small"
-                      >
-                        已关闭
-                      </n-tag>
-                    </n-space>
-                  </template>
-                  <n-space vertical size="small" style="width: 100%">
-                    <n-form-item label="名称" label-placement="top" :show-feedback="false">
-                      <n-input v-model:value="arc.name" placeholder="弧线名称" />
-                    </n-form-item>
-                    <n-grid cols="2" x-gap="8" :show-divider="false">
-                      <NGridItem>
-                        <n-form-item label="类型" label-placement="top" :show-feedback="false">
-                          <n-select v-model:value="arc.type" :options="arcTypeOptions" />
-                        </n-form-item>
-                      </NGridItem>
-                      <NGridItem>
-                        <n-form-item label="状态" label-placement="top" :show-feedback="false">
-                          <n-select v-model:value="arc.status" :options="arcStatusOptions" />
-                        </n-form-item>
-                      </NGridItem>
-                    </n-grid>
-                    <n-form-item label="进度" label-placement="top" :show-feedback="false">
-                      <n-space align="center" :wrap="false" style="width: 100%">
-                        <n-slider v-model:value="arc.progress" :min="0" :max="100" :step="1" style="flex: 1" />
-                        <n-text depth="3" style="min-width: 36px; text-align: right">{{ arc.progress }}%</n-text>
-                      </n-space>
-                    </n-form-item>
-                    <n-form-item label="当前阶段" label-placement="top" :show-feedback="false">
-                      <n-input v-model:value="arc.currentStage" placeholder="当前阶段" />
-                    </n-form-item>
-                    <n-form-item label="下一目标" label-placement="top" :show-feedback="false">
-                      <n-input v-model:value="arc.nextGoal" placeholder="下一目标" />
-                    </n-form-item>
-                    <n-form-item label="摘要" label-placement="top" :show-feedback="false">
-                      <n-input v-model:value="arc.summary" type="textarea" :rows="2" placeholder="弧线摘要" />
-                    </n-form-item>
-                    <n-form-item label="未解悬念" label-placement="top" :show-feedback="false">
-                      <n-input v-model:value="arc.unresolved" type="textarea" :rows="2" placeholder='JSON 数组，如 ["悬念1", "悬念2"]' />
-                    </n-form-item>
-                    <n-form-item label="阶段记录" label-placement="top" :show-feedback="false">
-                      <n-input v-model:value="arc.stages" type="textarea" :rows="3" placeholder="阶段记录 JSON" />
-                    </n-form-item>
-                    <n-button size="small" type="error" block @click="removePlotArc(idx)">删除此弧线</n-button>
-                  </n-space>
-                </n-card>
+                        style="flex: 1"
+                      />
+                    </div>
+                  </div>
+
+                  <!-- 进度条: 笔触 visual + 透明 slider + mono % -->
+                  <div class="cap-arc-card__field">
+                    <span class="cap-arc-card__label">03 · 进度</span>
+                    <div class="cap-arc-card__progress">
+                      <div class="cap-arc-card__progress-track" aria-hidden="true">
+                        <div
+                          class="cap-arc-card__progress-fill"
+                          :style="{ width: arc.progress + '%' }"
+                        />
+                      </div>
+                      <n-slider
+                        v-model:value="arc.progress"
+                        :min="0"
+                        :max="100"
+                        :step="1"
+                        class="cap-arc-card__progress-slider"
+                      />
+                      <span class="cap-arc-card__progress-text">{{ String(arc.progress).padStart(2, '0') }}%</span>
+                    </div>
+                  </div>
+
+                  <!-- 当前阶段 / 下一目标 (同行) -->
+                  <div class="cap-arc-card__row">
+                    <div class="cap-arc-card__field">
+                      <span class="cap-arc-card__label">04 · 当前阶段</span>
+                      <n-input
+                        v-model:value="arc.currentStage"
+                        placeholder="当前阶段"
+                        size="small"
+                      />
+                    </div>
+                    <div class="cap-arc-card__field">
+                      <span class="cap-arc-card__label">05 · 下一目标</span>
+                      <n-input
+                        v-model:value="arc.nextGoal"
+                        placeholder="下一目标"
+                        size="small"
+                      />
+                    </div>
+                  </div>
+
+                  <!-- 摘要: italic 引文块 (display only) + 隐藏 input -->
+                  <div class="cap-arc-card__field">
+                    <span class="cap-arc-card__label">06 · 摘要</span>
+                    <p
+                      class="cap-arc-card__pull-quote"
+                      :class="{ 'is-empty': !arc.summary }"
+                    >
+                      {{ arc.summary || '（无摘要）' }}
+                    </p>
+                    <n-input
+                      v-model:value="arc.summary"
+                      type="textarea"
+                      :rows="2"
+                      placeholder="弧线摘要 — 编辑后引文块即时同步"
+                      size="small"
+                    />
+                  </div>
+
+                  <!-- 未解悬念 (mono 块) -->
+                  <div class="cap-arc-card__field">
+                    <span class="cap-arc-card__label">07 · 未解悬念</span>
+                    <n-input
+                      v-model:value="arc.unresolved"
+                      type="textarea"
+                      :rows="2"
+                      placeholder='JSON 数组, 如 ["悬念1", "悬念2"]'
+                      size="small"
+                      class="cap-arc-card__mono-input"
+                    />
+                  </div>
+
+                  <!-- 阶段记录 (mono 块) -->
+                  <div class="cap-arc-card__field">
+                    <span class="cap-arc-card__label">08 · 阶段记录</span>
+                    <n-input
+                      v-model:value="arc.stages"
+                      type="textarea"
+                      :rows="3"
+                      placeholder="阶段记录 JSON"
+                      size="small"
+                      class="cap-arc-card__mono-input"
+                    />
+                  </div>
+
+                  <!-- 底部: 删除 -->
+                  <footer class="cap-arc-card__foot">
+                    <button
+                      type="button"
+                      class="cap-pill is-sm is-danger"
+                      @click="removePlotArc(idx)"
+                    >
+                      删除此弧线
+                    </button>
+                  </footer>
+                </article>
               </n-gi>
             </n-grid>
             <n-button size="small" dashed block @click="addPlotArc">添加剧情弧线</n-button>
@@ -207,8 +305,8 @@
 import { ref, computed, watch } from 'vue'
 import {
   NCard, NSpace, NTabs, NTabPane, NCollapse, NCollapseItem,
-  NInput, NInputNumber, NButton, NEmpty, NDivider, NFormItem, NGrid, NGridItem, NGi, NText,
-  NSelect, NSlider, NTag,
+  NInput, NInputNumber, NButton, NEmpty, NDivider, NGi, NText,
+  NSelect, NSlider,
   useDialog
 } from 'naive-ui'
 import { DEFAULT_TIMELINE_POSITION, safeJsonParse } from '@novel-runtime/shared'
@@ -321,6 +419,34 @@ const arcStatusOptions = [
   { label: '已关闭', value: 'closed' },
   { label: '沉寂', value: 'stale' }
 ]
+
+/**
+ * cap-chip variant 映射 — 5 status 各有视觉语义:
+ *   active    → is-positive (sage)  "活"
+ *   resolving → is-warm     (terra)  "热"
+ *   completed → is-snow     (neutral) "已完结"
+ *   closed    → is-error    (calm red) "被合并/关闭"
+ *   stale     → is-muted    (ash)     "沉寂"
+ */
+function arcStatusLabel(status: string): string {
+  const opt = arcStatusOptions.find(o => o.value === status)
+  return opt?.label || status
+}
+
+function arcStatusChipClass(status: string): string {
+  switch (status) {
+    case 'active': return 'is-positive'
+    case 'resolving': return 'is-warm'
+    case 'completed': return 'is-snow'
+    case 'closed': return 'is-error'
+    case 'stale': return 'is-muted'
+    default: return ''
+  }
+}
+
+function arcTypeChipClass(type: string): string {
+  return type === 'main' ? 'is-warm' : 'is-snow'
+}
 
 /**
  * 解析 similarToExistingIds JSON 数组, 在 plotArcs 里找对应 name。
@@ -558,3 +684,223 @@ function stopConfirm() {
 
 defineExpose({ startConfirm, stopConfirm })
 </script>
+
+<style scoped>
+/* === Editorial storyboard entry — plot arc card ===
+   卡片像杂志条目:N° 序号 + 类型/状态 chip cluster + 24px 大标题 +
+   笔触分隔线 + 编号字段 eyebrow。暖色 canvas 上纯白卡 + 1px pebble border,
+   无 shadow(继承 .cap-card 的扁平纸张感)。hover 时 1px border 转 mid-gray
+   + 微抬升 1px,与 .cap-card.is-interactive 风格一致。*/
+
+.cap-arc-card {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  padding: 18px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color 0.18s ease, transform 0.18s ease;
+}
+.cap-arc-card:hover {
+  border-color: var(--color-mid-gray);
+  transform: translateY(-1px);
+}
+
+/* === 头部: 序号 + chip cluster + 相似 badge === */
+.cap-arc-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 22px;
+}
+.cap-arc-card__head-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cap-arc-card__no {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+}
+.cap-arc-card__no-sep {
+  color: var(--color-mid-gray);
+  font-weight: var(--weight-regular);
+}
+
+/* === cap-chip 新增 is-muted variant ===
+   base.css 现有 4 个 variant (snow/warm/positive/error),
+   stale 状态需要灰一点,不靠 blueprint blue。直接在 scoped style 里 patch。 */
+:deep(.cap-chip.is-muted),
+.cap-chip.is-muted {
+  background: var(--color-stone-gray);
+  color: var(--text-tertiary);
+  border-color: var(--border-default);
+}
+
+/* === 大标题: arc.name === */
+.cap-arc-card__title {
+  margin: 0;
+  font-size: var(--text-heading-sm-size); /* 24px */
+  font-weight: var(--weight-semibold);
+  line-height: var(--text-heading-sm-lh);
+  color: var(--text-primary);
+  letter-spacing: -0.005em;
+  word-break: break-word;
+}
+
+/* === 薄分隔线 + cap-pencil + DRAFT eyebrow === */
+.cap-arc-card__rule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 -2px;
+}
+.cap-arc-card__rule-text {
+  font-size: 9px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+}
+.cap-arc-card__rule-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border-default);
+}
+
+/* === 字段: label + content === */
+.cap-arc-card__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.cap-arc-card__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 600px) {
+  .cap-arc-card__row { grid-template-columns: 1fr; }
+}
+.cap-arc-card__label {
+  font-size: var(--text-caption-size); /* 10px */
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  line-height: 1;
+}
+
+/* === 名称输入: 大字无 form-item 包裹,直接显示 === */
+.cap-arc-card__name-input {
+  font-weight: var(--weight-semibold) !important;
+}
+
+/* === 类型/状态 chip-row === */
+.cap-arc-card__chip-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+/* === 进度条: 4px 笔触 visual + 透明 slider overlay + mono % === */
+.cap-arc-card__progress {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 28px;
+}
+.cap-arc-card__progress-track {
+  position: absolute;
+  left: 0;
+  right: 56px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 4px;
+  background: var(--color-stone-gray);
+  border-radius: var(--radius-pill);
+  pointer-events: none;
+  overflow: hidden;
+}
+.cap-arc-card__progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  transition: width 0.25s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.cap-arc-card__progress :deep(.n-slider) {
+  flex: 1;
+  height: 28px;
+}
+.cap-arc-card__progress :deep(.n-slider-rail) {
+  background: transparent !important;
+  height: 4px;
+}
+.cap-arc-card__progress :deep(.n-slider-fill) {
+  background: transparent !important;
+  height: 4px;
+}
+.cap-arc-card__progress :deep(.n-slider-handle) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--color-warm-accent-tint);
+}
+.cap-arc-card__progress-text {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  color: var(--text-secondary);
+  min-width: 44px;
+  text-align: right;
+  letter-spacing: 0.02em;
+}
+
+/* === 摘要: italic 引文块 + 隐藏 input === */
+.cap-arc-card__pull-quote {
+  margin: 0;
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  padding: 8px 12px;
+  border-left: 2px solid var(--accent);
+  background: var(--color-warm-accent-tint);
+  border-radius: 0 var(--radius-input) var(--radius-input) 0;
+  word-break: break-word;
+}
+.cap-arc-card__pull-quote.is-empty {
+  font-style: normal;
+  color: var(--text-tertiary);
+  border-left-color: var(--border-default);
+  background: transparent;
+}
+
+/* === JSON 字段: 等宽字体块 === */
+.cap-arc-card__mono-input :deep(textarea) {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  letter-spacing: 0.01em;
+  background: var(--bg-section); /* stone-gray, 像"原始笔记" */
+}
+
+/* === 底部: 删除 === */
+.cap-arc-card__foot {
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  justify-content: flex-end;
+}
+</style>
