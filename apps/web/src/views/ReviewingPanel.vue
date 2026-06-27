@@ -106,7 +106,7 @@
             <n-empty v-if="plotArcs.length === 0" description="暂无剧情弧线" />
             <n-grid
               v-else
-              cols="2 s:1"
+              cols="2"
               x-gap="14"
               y-gap="14"
               responsive="screen"
@@ -439,7 +439,7 @@ function arcStatusChipClass(status: string): string {
 }
 
 function arcTypeChipClass(type: string): string {
-  return type === 'main' ? 'is-warm' : 'is-snow'
+  return type === 'main' ? 'is-warm' : 'is-blue'
 }
 
 /**
@@ -738,6 +738,16 @@ defineExpose({ startConfirm, stopConfirm })
   background: var(--color-stone-gray);
   color: var(--text-tertiary);
   border-color: var(--border-default);
+}
+
+/* === cap-chip 新增 is-blue variant ===
+   蓝图蓝 tint,跟 is-positive / is-warm 同结构但用 cool-accent 系。
+   支线 arc 标识用 — 比 is-snow (中性白) 多一层"冷调支线"语义。 */
+:deep(.cap-chip.is-blue),
+.cap-chip.is-blue {
+  background: var(--color-cool-accent-tint);
+  color: var(--accent-link);
+  border-color: rgba(74, 90, 122, 0.25);
 }
 
 /* === 大标题: arc.name === */
