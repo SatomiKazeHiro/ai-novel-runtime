@@ -300,7 +300,7 @@ ${chapterContent}
     {
       "name": "新弧线名称",
       "type": "main" | "side",
-      "status": "pending" | "active",
+      "status": "active" | "resolving" | "completed",
       "progress": 0-15,
       "currentStage": "本章结束时该弧线处于什么阶段 (≤30字)",
       "nextGoal": "下一步要推进什么 (≤30字)",
