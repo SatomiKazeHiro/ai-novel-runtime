@@ -266,8 +266,14 @@ function buildConsolidatePrompt(
    - 纯环境描写 / 过渡铺垫
    - 已有弧线的小进展 (应该走 updates)
 
-3. 【粒度约束】整个故事主线 (type=main) 最多 1 条, 支线 (type=side) 最多 2 条。
-   已有弧线已经占用配额时, 新弧线必须替换/放弃, 不要硬凑。
+3. 【已有弧线管理】
+   - 比对已有弧线 (含 status), 若主题/冲突/角色与已有高度重叠, 在 updates 里推进已有弧线,
+     不要创建重复的 newArcs。
+   - 若两条已有弧线中只有一条值得保留, 关闭另一条:
+     在 updates 里写 status='closed' + closedReason='duplicate' + closedTargetArcId=<保留条id>。
+   - 主线支线 (type) 跟章节 POV 绑定: 主角参与的剧情线可以标 main, 主角不参与的标 side。
+     type 可随章节变化, 不用守"只能 1 条 main"。
+   - 剧情自然收尾时, status='completed'; 与其他弧线重复时, status='closed'。
 
 【已有剧情弧线 (数据库 N-1 状态)】
 ${existingList || '(暂无, 这是故事开篇)'}
