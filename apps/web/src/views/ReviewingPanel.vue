@@ -90,7 +90,8 @@
             <n-empty v-if="timelineEvents.length === 0" description="暂无时间线事件" />
             <n-grid
               v-else
-              cols="1"
+              cols="2"
+              x-gap="14"
               y-gap="14"
               responsive="screen"
               style="margin-bottom: 12px"
