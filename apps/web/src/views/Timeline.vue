@@ -29,35 +29,97 @@
       <n-empty v-else description="暂无时间线事件" />
     </n-spin>
 
-    <n-modal v-model:show="showModal" :title="editingId ? '编辑事件' : '添加事件'" preset="card" style="width: 500px">
-      <n-form :model="form" label-placement="left" label-width="80">
-        <n-form-item label="绑定章节" required>
+    <n-modal v-model:show="showModal" preset="card" style="width: 580px">
+      <template #header>
+        <div class="evt-modal-head">
+          <span class="cap-eyebrow">{{ editingId ? 'EDIT · TIMELINE EVENT' : 'NEW · TIMELINE EVENT' }}</span>
+          <h2 class="evt-modal-head__title">
+            {{ editingId ? '编辑事件' : '添加事件' }}
+            <span class="evt-modal-head__time">{{ formatTimelinePosition(form.position) }}</span>
+          </h2>
+          <p class="cap-body-sm evt-modal-head__lede">
+            章节锚点 · 时刻定位 · 事件描述
+          </p>
+        </div>
+      </template>
+
+      <div class="evt-form">
+        <section class="evt-field">
+          <span class="cap-eyebrow evt-field__label">Chapter · 绑定章节</span>
+          <div v-if="editingId" class="evt-chapter-card">
+            <div class="evt-chapter-card__icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" width="18" height="18" fill="none">
+                <path d="M3.5 3.5h13v13h-13z" stroke="currentColor" stroke-width="1.2"/>
+                <path d="M3.5 7.5h13" stroke="currentColor" stroke-width="1.2"/>
+                <path d="M6 11.5h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                <path d="M6 13.5h5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <div class="evt-chapter-card__body">
+              <span class="evt-chapter-card__title">{{ chapterLabelFor(form.fromChapterNumber) }}</span>
+              <span class="evt-chapter-card__meta">编辑模式下章节不可修改 · 由 archive 流程维护</span>
+            </div>
+            <span class="evt-chapter-card__lock" aria-label="locked">
+              <svg viewBox="0 0 20 20" width="12" height="12" fill="none">
+                <rect x="4.5" y="9" width="11" height="7.5" rx="1" stroke="currentColor" stroke-width="1.2"/>
+                <path d="M7 9V7a3 3 0 0 1 6 0v2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+              </svg>
+              LOCKED
+            </span>
+          </div>
           <n-select
+            v-else
             v-model:value="form.fromChapterNumber"
             :options="archivedChapterOptions"
-            :disabled="!!editingId || archivedChapterOptions.length === 0"
+            :disabled="archivedChapterOptions.length === 0"
             placeholder="选择已归档章节"
             @update:value="onChapterChange"
           />
-          <n-text v-if="editingId" depth="3" style="font-size: 12px; margin-top: 4px; display: block">
-            编辑模式下章节不可修改 (与 chapterNumber 强绑定, 由 archive 流程维护)。
-          </n-text>
-          <n-text v-else-if="archivedChapterOptions.length === 0" depth="3" style="font-size: 12px; margin-top: 4px; display: block">
-            该故事下尚无已归档章节, 无法添加事件 (需先归档至少一个章节)。
-          </n-text>
-        </n-form-item>
-        <n-form-item label="时间位置" required>
-          <TimelinePositionInput v-model="form.position" />
-        </n-form-item>
-        <n-form-item label="事件">
+          <span
+            v-if="!editingId && archivedChapterOptions.length === 0"
+            class="cap-caption evt-field__hint evt-field__hint--warn"
+          >
+            该故事下尚无已归档章节, 无法添加事件 (需先归档至少一个章节)
+          </span>
+          <span
+            v-else-if="!editingId && form.fromChapterNumber != null"
+            class="cap-caption evt-field__hint"
+          >
+            已绑到 {{ chapterLabelFor(form.fromChapterNumber) }} · 后续可在归档流程追溯
+          </span>
+        </section>
+
+        <div class="evt-divider" aria-hidden="true"></div>
+
+        <section class="evt-field">
+          <span class="cap-eyebrow evt-field__label">Position · 时间位置</span>
+          <div class="evt-position">
+            <div class="evt-position__input">
+              <TimelinePositionInput v-model="form.position" :preview="false" />
+            </div>
+            <span class="evt-position__preview">{{ formatTimelinePosition(form.position) }}</span>
+          </div>
+          <span class="cap-caption evt-field__hint">
+            Y.DDDHH 编码:整数位=年(负数=前史), 5 位小数=年内第几天(001-365)+小时(00-23)
+          </span>
+        </section>
+
+        <div class="evt-divider" aria-hidden="true"></div>
+
+        <section class="evt-field">
+          <span class="cap-eyebrow evt-field__label">Events · 事件描述</span>
           <DynamicTags v-model="form.events" />
-        </n-form-item>
-      </n-form>
+          <span class="cap-caption evt-field__hint">
+            回车或 + 添加一条 · × 删除 · 至少 1 条
+          </span>
+        </section>
+      </div>
+
       <template #footer>
-        <n-space justify="end">
-          <n-button @click="showModal = false">取消</n-button>
-          <n-button type="primary" :disabled="!canSave" @click="handleSave">保存</n-button>
-        </n-space>
+        <div class="evt-modal-foot">
+          <button class="cap-pill is-ghost" @click="showModal = false">取消</button>
+          <button class="cap-pill is-primary" :disabled="!canSave" @click="handleSave">保存</button>
+        </div>
       </template>
     </n-modal>
   </div>
@@ -67,7 +129,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NSpace, NButton, NModal, NForm, NFormItem, NSelect, NText,
+  NSpace, NButton, NModal, NSelect,
   NTimeline, NTimelineItem, NUl, NLi, NEmpty, NSpin,
   useDialog, useMessage
 } from 'naive-ui'
@@ -124,6 +186,17 @@ const canSave = computed(() => {
   if (!editingId.value && form.value.fromChapterNumber == null) return false
   return true
 })
+
+/**
+ * 由 number 推导显示标签 "第N章 · 标题"。无匹配时回退 "第N章"。
+ * locked 态下从 chapters 缓存中查找, 不重新请求。
+ */
+function chapterLabelFor(chapterNumber: number | null): string {
+  if (chapterNumber == null) return '(未选择)'
+  const c = chapters.value.find(ch => ch.number === chapterNumber)
+  const prefix = c?.isSideStory ? `番外·第${chapterNumber}章` : `第${chapterNumber}章`
+  return c?.title ? `${prefix} · ${c.title}` : prefix
+}
 
 async function loadTimeline() {
   if (!route.params.storyId) {
@@ -282,3 +355,170 @@ onMounted(() => {
   }
 })
 </script>
+
+<style scoped>
+/* === 编辑/添加事件 modal (boords storyboard frame) ===
+   取代 n-form 默认 label-placement=left 排版, 每个字段有独立 cap-eyebrow
+   header + 控件 + caption, 用 1px hairline divider 分章节锚点 / 时刻定位 /
+   事件描述三段, locked 章节渲染为档案卡片 (cream-tint + lock badge)。 */
+.evt-modal-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 2px;
+}
+.evt-modal-head__title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  font-size: var(--text-heading-sm-size);
+  font-weight: var(--weight-semibold);
+  line-height: var(--text-heading-sm-lh);
+  letter-spacing: var(--text-heading-sm-ls);
+  color: var(--color-ink-black);
+}
+.evt-modal-head__time {
+  font-family: var(--font-mono);
+  font-size: var(--text-body-size);
+  font-weight: var(--weight-medium);
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  background: var(--color-warm-accent-tint);
+  border-radius: var(--radius-badge);
+}
+.evt-modal-head__lede {
+  margin: 0;
+  color: var(--text-tertiary);
+}
+
+.evt-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-2) 0 var(--space-3);
+}
+
+.evt-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.evt-field__label {
+  color: var(--text-tertiary);
+}
+.evt-field__hint {
+  color: var(--text-muted);
+  line-height: 1.5;
+  display: block;
+}
+.evt-field__hint--warn {
+  color: var(--color-error);
+}
+
+.evt-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: var(--space-1) 0;
+}
+
+/* 章节 locked 档案卡片: 模仿故事板 "场景档案" 的视觉 */
+.evt-chapter-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 12px;
+  background: var(--color-stone-gray);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+}
+.evt-chapter-card__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-badge);
+  background: var(--bg-card);
+  color: var(--accent);
+  border: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.evt-chapter-card__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.evt-chapter-card__title {
+  font-size: var(--text-body-size);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.evt-chapter-card__meta {
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+  letter-spacing: 0.025em;
+  line-height: 1.4;
+}
+.evt-chapter-card__lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-caption-size);
+  font-weight: var(--weight-semibold);
+  color: var(--text-tertiary);
+  letter-spacing: 0.1em;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-badge);
+  background: var(--bg-card);
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}
+
+/* 时间位置: input + 右侧大预览徽章 (terracotta tint, 等宽) */
+.evt-position {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-3);
+}
+.evt-position__input {
+  flex: 1;
+  min-width: 0;
+}
+.evt-position__preview {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: var(--text-subheading-size);
+  font-weight: var(--weight-semibold);
+  color: var(--accent);
+  padding: 0 14px;
+  background: var(--color-warm-accent-tint);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  white-space: nowrap;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.evt-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+}
+.evt-modal-foot .cap-pill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+</style>
