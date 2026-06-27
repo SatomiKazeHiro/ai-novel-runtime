@@ -56,6 +56,8 @@ function buildExistingArc(name: string, overrides: Partial<ExistingArcView> = {}
     stages: '[]',
     createdAt: new Date('2026-01-01'),
     updatedAt: new Date('2026-01-01'),
+    closedReason: null,
+    closedTargetArcId: null,
     ...overrides
   }
 }

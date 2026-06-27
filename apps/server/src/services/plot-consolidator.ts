@@ -62,6 +62,10 @@ export interface ExistingArcView {
   stages: string  // JSON-encoded
   createdAt: Date
   updatedAt: Date
+  // status='closed' 时: 'duplicate' 或其他原因
+  closedReason: string | null
+  // status='closed' as duplicate 时: 指向被合并到的 arc id
+  closedTargetArcId: string | null
 }
 
 export type ConsolidatedArcWrite = PendingPlotArcWrite
@@ -147,7 +151,7 @@ export async function consolidatePlotArcs(
       `falling back to carry-forward ${existingArcs.length} existing arc(s)`
     )
     return existingArcs
-      .filter(e => e.status !== 'completed')
+      .filter(e => e.status !== 'completed' && e.status !== 'closed')
       .map(e => carryForwardArc(storyId_, e))
   }
 
@@ -169,10 +173,10 @@ export async function consolidatePlotArcs(
     writes.push(newArcFromAI(storyId_, newArc))
   }
 
-  // 3. carry-forward 未推进的 active existing
+  // 3. carry-forward 未推进的 active existing (completed/closed 终态不重写)
   for (const existing of existingArcs) {
     if (advancedExistingIds.has(existing.id)) continue
-    if (existing.status === 'completed') continue
+    if (existing.status === 'completed' || existing.status === 'closed') continue
     writes.push(carryForwardArc(storyId_, existing))
   }
 
@@ -315,7 +319,7 @@ function mergeUpdateIntoExisting(
   return {
     storyId,
     name: existing.name,
-    type: update.status ? (existing.type) : existing.type,  // type 不通过 update 改
+    type: update.type ?? existing.type,
     status: update.status ?? existing.status,
     progress: mergedProgress,
     stages: mergeStages(existing.stages, update.currentStage || existing.currentStage || '', update.status ?? existing.status, update.summary || existing.summary || ''),
@@ -324,7 +328,10 @@ function mergeUpdateIntoExisting(
     unresolved: update.unresolved ? JSON.stringify(update.unresolved) : existing.unresolved,
     summary: update.summary ?? existing.summary ?? '',
     isNew: false,
-    existingId: existing.id
+    existingId: existing.id,
+    source: 'ai-update',
+    closedReason: update.closedReason,
+    closedTargetArcId: update.closedTargetArcId
   }
 }
 
@@ -364,7 +371,8 @@ function carryForwardArc(storyId: string, existing: ExistingArcView): Consolidat
     unresolved: existing.unresolved,
     summary: existing.summary || '',
     isNew: false,
-    existingId: existing.id
+    existingId: existing.id,
+    source: 'carry-forward'
   }
 }
 
