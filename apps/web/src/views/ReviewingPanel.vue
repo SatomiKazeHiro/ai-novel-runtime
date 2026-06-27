@@ -104,70 +104,80 @@
           <!-- 剧情弧线编辑器 -->
           <n-card title="剧情弧线" size="small">
             <n-empty v-if="plotArcs.length === 0" description="暂无剧情弧线" />
-            <n-collapse
-              v-if="plotArcs.length > 0"
-              :default-expanded-names="plotArcs.map((_, i) => String(i))"
+            <n-grid
+              v-else
+              cols="2 s:1"
+              x-gap="12"
+              y-gap="12"
+              responsive="screen"
+              style="margin-bottom: 12px"
             >
-              <n-collapse-item
-                v-for="(arc, idx) in plotArcs"
-                :key="`arc-${idx}`"
-                :name="String(idx)"
-                :title="arc.name"
-              >
-                <template #header-extra>
-                  <n-space size="small">
-                    <n-tag
-                      v-if="arc.similarToExistingIds && safeJsonParse<string[]>(arc.similarToExistingIds, []).length > 0"
-                      type="warning"
-                      size="small"
-                    >
-                      ⚠️ 相似: {{ formatSimilarArcNames(arc.similarToExistingIds) }}
-                    </n-tag>
-                    <n-tag
-                      v-else-if="arc.status === 'closed'"
-                      type="warning"
-                      size="small"
-                    >
-                      已关闭
-                    </n-tag>
+              <n-gi v-for="(arc, idx) in plotArcs" :key="`arc-${idx}`">
+                <n-card size="small" hoverable>
+                  <template #header>
+                    <n-space align="center" :wrap="false" size="small" style="min-width: 0">
+                      <n-text strong style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+                        {{ arc.name || '(未命名)' }}
+                      </n-text>
+                      <n-tag
+                        v-if="arc.similarToExistingIds && safeJsonParse<string[]>(arc.similarToExistingIds, []).length > 0"
+                        type="warning"
+                        size="small"
+                      >
+                        ⚠️ 相似: {{ formatSimilarArcNames(arc.similarToExistingIds) }}
+                      </n-tag>
+                      <n-tag
+                        v-else-if="arc.status === 'closed'"
+                        type="warning"
+                        size="small"
+                      >
+                        已关闭
+                      </n-tag>
+                    </n-space>
+                  </template>
+                  <n-space vertical size="small" style="width: 100%">
+                    <n-form-item label="名称" label-placement="top" :show-feedback="false">
+                      <n-input v-model:value="arc.name" placeholder="弧线名称" />
+                    </n-form-item>
+                    <n-grid cols="2" x-gap="8" :show-divider="false">
+                      <NGridItem>
+                        <n-form-item label="类型" label-placement="top" :show-feedback="false">
+                          <n-select v-model:value="arc.type" :options="arcTypeOptions" />
+                        </n-form-item>
+                      </NGridItem>
+                      <NGridItem>
+                        <n-form-item label="状态" label-placement="top" :show-feedback="false">
+                          <n-select v-model:value="arc.status" :options="arcStatusOptions" />
+                        </n-form-item>
+                      </NGridItem>
+                    </n-grid>
+                    <n-form-item label="进度" label-placement="top" :show-feedback="false">
+                      <n-space align="center" :wrap="false" style="width: 100%">
+                        <n-slider v-model:value="arc.progress" :min="0" :max="100" :step="1" style="flex: 1" />
+                        <n-text depth="3" style="min-width: 36px; text-align: right">{{ arc.progress }}%</n-text>
+                      </n-space>
+                    </n-form-item>
+                    <n-form-item label="当前阶段" label-placement="top" :show-feedback="false">
+                      <n-input v-model:value="arc.currentStage" placeholder="当前阶段" />
+                    </n-form-item>
+                    <n-form-item label="下一目标" label-placement="top" :show-feedback="false">
+                      <n-input v-model:value="arc.nextGoal" placeholder="下一目标" />
+                    </n-form-item>
+                    <n-form-item label="摘要" label-placement="top" :show-feedback="false">
+                      <n-input v-model:value="arc.summary" type="textarea" :rows="2" placeholder="弧线摘要" />
+                    </n-form-item>
+                    <n-form-item label="未解悬念" label-placement="top" :show-feedback="false">
+                      <n-input v-model:value="arc.unresolved" type="textarea" :rows="2" placeholder='JSON 数组，如 ["悬念1", "悬念2"]' />
+                    </n-form-item>
+                    <n-form-item label="阶段记录" label-placement="top" :show-feedback="false">
+                      <n-input v-model:value="arc.stages" type="textarea" :rows="3" placeholder="阶段记录 JSON" />
+                    </n-form-item>
+                    <n-button size="small" type="error" block @click="removePlotArc(idx)">删除此弧线</n-button>
                   </n-space>
-                </template>
-                <n-space vertical style="width: 100%">
-                  <n-form-item label="名称" label-placement="left">
-                    <n-input v-model:value="arc.name" placeholder="弧线名称" />
-                  </n-form-item>
-                  <n-grid cols="2" x-gap="12" :show-divider="false">
-                    <NGridItem>
-                      <n-select v-model:value="arc.type" :options="arcTypeOptions" />
-                    </NGridItem>
-                    <NGridItem>
-                      <n-select v-model:value="arc.status" :options="arcStatusOptions" />
-                    </NGridItem>
-                  </n-grid>
-                  <n-form-item label="进度" label-placement="left">
-                    <n-slider v-model:value="arc.progress" :min="0" :max="100" :step="1" />
-                    <n-text>{{ arc.progress }}%</n-text>
-                  </n-form-item>
-                  <n-form-item label="当前阶段" label-placement="left">
-                    <n-input v-model:value="arc.currentStage" placeholder="当前阶段" />
-                  </n-form-item>
-                  <n-form-item label="下一目标" label-placement="left">
-                    <n-input v-model:value="arc.nextGoal" placeholder="下一目标" />
-                  </n-form-item>
-                  <n-form-item label="摘要" label-placement="left">
-                    <n-input v-model:value="arc.summary" type="textarea" :rows="2" placeholder="弧线摘要" />
-                  </n-form-item>
-                  <n-form-item label="未解悬念" label-placement="left">
-                    <n-input v-model:value="arc.unresolved" type="textarea" :rows="2" placeholder='JSON 数组，如 ["悬念1", "悬念2"]' />
-                  </n-form-item>
-                  <n-form-item label="阶段记录" label-placement="left">
-                    <n-input v-model:value="arc.stages" type="textarea" :rows="3" placeholder="阶段记录 JSON" />
-                  </n-form-item>
-                  <n-button size="small" type="error" block @click="removePlotArc(idx)">删除此弧线</n-button>
-                </n-space>
-              </n-collapse-item>
-            </n-collapse>
-            <n-button size="small" dashed block @click="addPlotArc" style="margin-top: 12px">添加剧情弧线</n-button>
+                </n-card>
+              </n-gi>
+            </n-grid>
+            <n-button size="small" dashed block @click="addPlotArc">添加剧情弧线</n-button>
           </n-card>
         </n-tab-pane>
 
@@ -197,7 +207,7 @@
 import { ref, computed, watch } from 'vue'
 import {
   NCard, NSpace, NTabs, NTabPane, NCollapse, NCollapseItem,
-  NInput, NInputNumber, NButton, NEmpty, NDivider, NFormItem, NGrid, NGridItem, NText,
+  NInput, NInputNumber, NButton, NEmpty, NDivider, NFormItem, NGrid, NGridItem, NGi, NText,
   NSelect, NSlider, NTag,
   useDialog
 } from 'naive-ui'
