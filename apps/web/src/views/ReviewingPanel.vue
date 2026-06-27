@@ -114,6 +114,24 @@
                 :name="String(idx)"
                 :title="arc.name"
               >
+                <template #header-extra>
+                  <n-space size="small">
+                    <n-tag
+                      v-if="arc.similarToExistingIds && safeJsonParse<string[]>(arc.similarToExistingIds, []).length > 0"
+                      type="warning"
+                      size="small"
+                    >
+                      ⚠️ 相似: {{ formatSimilarArcNames(arc.similarToExistingIds) }}
+                    </n-tag>
+                    <n-tag
+                      v-else-if="arc.status === 'closed'"
+                      type="warning"
+                      size="small"
+                    >
+                      已关闭
+                    </n-tag>
+                  </n-space>
+                </template>
                 <n-space vertical style="width: 100%">
                   <n-form-item label="名称" label-placement="left">
                     <n-input v-model:value="arc.name" placeholder="弧线名称" />
@@ -183,7 +201,7 @@ import {
   NSelect, NSlider,
   useDialog
 } from 'naive-ui'
-import { DEFAULT_TIMELINE_POSITION } from '@novel-runtime/shared'
+import { DEFAULT_TIMELINE_POSITION, safeJsonParse } from '@novel-runtime/shared'
 import type { PendingArchiveData } from '@novel-runtime/shared'
 import EditableGraph from '../components/graph/EditableGraph.vue'
 import DynamicTags from '../components/DynamicTags.vue'
@@ -287,11 +305,26 @@ const arcTypeOptions = [
 ]
 
 const arcStatusOptions = [
-  { label: '待启动', value: 'pending' },
   { label: '进行中', value: 'active' },
   { label: '收尾中', value: 'resolving' },
-  { label: '已完成', value: 'completed' }
+  { label: '已完成', value: 'completed' },
+  { label: '已关闭', value: 'closed' },
+  { label: '沉寂', value: 'stale' }
 ]
+
+/**
+ * 解析 similarToExistingIds JSON 数组, 在 plotArcs 里找对应 name。
+ * 找不到时退化为 id 前 8 位。
+ */
+function formatSimilarArcNames(similarToJson: string | undefined): string {
+  if (!similarToJson) return ''
+  const ids = safeJsonParse<string[]>(similarToJson, [])
+  if (ids.length === 0) return ''
+  return ids.map(id => {
+    const target = plotArcs.value.find((a: any) => a.existingId === id || a.id === id)
+    return target?.name || id.slice(0, 8)
+  }).join(', ')
+}
 
 function isSpecialContent(content?: string): boolean {
   if (!content) return false
@@ -392,14 +425,15 @@ function addPlotArc() {
     storyId: props.chapter.storyId,
     name: '新弧线',
     type: 'side',
-    status: 'pending',
+    status: 'active',
     progress: 0,
     stages: '[]',
     currentStage: '',
     nextGoal: '',
     unresolved: '[]',
     summary: '',
-    isNew: true
+    isNew: true,
+    similarToExistingIds: '[]'
   })
 }
 
