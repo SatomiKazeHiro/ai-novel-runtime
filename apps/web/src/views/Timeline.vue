@@ -129,7 +129,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NSpace, NButton, NModal, NSelect,
+  NSpace, NButton, NModal, NSelect, NText,
   NTimeline, NTimelineItem, NUl, NLi, NEmpty, NSpin,
   useDialog, useMessage
 } from 'naive-ui'
