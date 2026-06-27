@@ -114,38 +114,31 @@
             >
               <n-gi v-for="(arc, idx) in plotArcs" :key="`arc-${idx}`">
                 <article class="cap-arc-card cap-rise" :data-rise="String(Math.min(idx + 1, 7))">
-                  <!-- 头部: 序号 + 类型/状态 chip + 相似 badge -->
+                  <!-- 头部: meta (序号 + chips) + 大标题,合并展示 -->
                   <header class="cap-arc-card__head">
-                    <div class="cap-arc-card__head-left">
+                    <div class="cap-arc-card__head-meta">
                       <span class="cap-arc-card__no">N°&nbsp;{{ String(idx + 1).padStart(2, '0') }}<span class="cap-arc-card__no-sep"> / {{ String(plotArcs.length).padStart(2, '0') }}</span></span>
-                      <span class="cap-chip" :class="arcTypeChipClass(arc.type)">
-                        {{ arc.type === 'main' ? '主线' : '支线' }}
-                      </span>
-                      <span class="cap-chip" :class="arcStatusChipClass(arc.status)">
-                        {{ arcStatusLabel(arc.status) }}
-                      </span>
+                      <div class="cap-arc-card__head-chips">
+                        <span class="cap-chip" :class="arcTypeChipClass(arc.type)">
+                          {{ arc.type === 'main' ? '主线' : '支线' }}
+                        </span>
+                        <span class="cap-chip" :class="arcStatusChipClass(arc.status)">
+                          {{ arcStatusLabel(arc.status) }}
+                        </span>
+                        <span
+                          v-if="arc.similarToExistingIds && safeJsonParse<string[]>(arc.similarToExistingIds, []).length > 0"
+                          class="cap-chip is-warm"
+                          :title="formatSimilarArcNames(arc.similarToExistingIds)"
+                        >
+                          ⚠ 相似 · {{ formatSimilarArcNames(arc.similarToExistingIds) }}
+                        </span>
+                        <span v-else-if="arc.status === 'closed'" class="cap-chip is-error">
+                          已关闭
+                        </span>
+                      </div>
                     </div>
-                    <span
-                      v-if="arc.similarToExistingIds && safeJsonParse<string[]>(arc.similarToExistingIds, []).length > 0"
-                      class="cap-chip is-warm"
-                      :title="formatSimilarArcNames(arc.similarToExistingIds)"
-                    >
-                      ⚠ 相似 · {{ formatSimilarArcNames(arc.similarToExistingIds) }}
-                    </span>
-                    <span v-else-if="arc.status === 'closed'" class="cap-chip is-error">
-                      已关闭
-                    </span>
+                    <h3 class="cap-arc-card__title">{{ arc.name || '(未命名)' }}</h3>
                   </header>
-
-                  <!-- 大标题 -->
-                  <h3 class="cap-arc-card__title">{{ arc.name || '(未命名)' }}</h3>
-
-                  <!-- 薄分隔线 + DRAFT eyebrow + 右侧圆点收尾 -->
-                  <div class="cap-arc-card__rule">
-                    <span class="cap-arc-card__rule-text">DRAFT ENTRY</span>
-                    <span class="cap-arc-card__rule-line" />
-                    <span class="cap-arc-card__rule-dot" aria-hidden="true" />
-                  </div>
 
                   <!-- 字段: 名称 (inline edit) -->
                   <div class="cap-arc-card__field">
@@ -681,10 +674,9 @@ defineExpose({ startConfirm, stopConfirm })
 
 <style scoped>
 /* === Editorial storyboard entry — plot arc card ===
-   卡片像杂志条目:N° 序号 + 类型/状态 chip cluster + 24px 大标题 +
-   笔触分隔线 + 编号字段 eyebrow。暖色 canvas 上纯白卡 + 1px pebble border,
-   无 shadow(继承 .cap-card 的扁平纸张感)。hover 时 1px border 转 mid-gray
-   + 微抬升 1px,与 .cap-card.is-interactive 风格一致。*/
+   卡片像杂志条目: meta (序号 + chips) + 大标题 + 编号字段 eyebrow。
+   暖色 canvas 上纯白卡 + 1px pebble border, 无 shadow (继承 .cap-card 的扁平纸张感)。
+   hover 时 1px border 转 mid-gray + 微抬升 1px, 与 .cap-card.is-interactive 风格一致。*/
 
 .cap-arc-card {
   position: relative;
@@ -702,8 +694,16 @@ defineExpose({ startConfirm, stopConfirm })
   transform: translateY(-1px);
 }
 
-/* === 头部: 序号 + chip cluster + 相似 badge === */
+/* === 头部: meta (序号 + chips) + 大标题,合并展示 ===
+   上下两层:
+   - 上层 meta: 序号左对齐, chips 右对齐 (justify-between)
+   - 下层 title: arc.name 22px 大标题, 跟 meta 紧凑相邻 */
 .cap-arc-card__head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cap-arc-card__head-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -711,7 +711,7 @@ defineExpose({ startConfirm, stopConfirm })
   flex-wrap: wrap;
   min-height: 22px;
 }
-.cap-arc-card__head-left {
+.cap-arc-card__head-chips {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -753,42 +753,12 @@ defineExpose({ startConfirm, stopConfirm })
 /* === 大标题: arc.name === */
 .cap-arc-card__title {
   margin: 0;
-  font-size: var(--text-heading-sm-size); /* 24px */
+  font-size: var(--text-subheading-size); /* 20px — 跟 chips 视觉层次更和谐 */
   font-weight: var(--weight-semibold);
-  line-height: var(--text-heading-sm-lh);
+  line-height: 1.4;
   color: var(--text-primary);
   letter-spacing: -0.005em;
   word-break: break-word;
-}
-
-/* === 薄分隔线 + cap-pencil + DRAFT eyebrow === */
-.cap-arc-card__rule {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: -2px 0 -2px;
-}
-.cap-arc-card__rule-text {
-  font-size: 9px;
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-  font-family: var(--font-mono);
-}
-.cap-arc-card__rule-line {
-  flex: 1;
-  height: 1px;
-  background: var(--border-default);
-  min-width: 24px;
-}
-/* 右侧装饰小圆点 — 跟左侧 cap-pencil 视觉对称,收尾感 */
-.cap-arc-card__rule-dot {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--border-default);
-  flex-shrink: 0;
 }
 
 /* === 字段: label + content === */
