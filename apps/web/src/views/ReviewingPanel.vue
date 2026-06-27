@@ -137,7 +137,16 @@
                         </span>
                       </div>
                     </div>
-                    <h3 class="cap-arc-card__title">{{ arc.name || '(未命名)' }}</h3>
+                    <h3 class="cap-arc-card__title">
+                      <span class="cap-arc-card__title-text">{{ arc.name || '(未命名)' }}</span>
+                      <span
+                        v-if="arc.isNew"
+                        class="cap-chip is-warm cap-arc-card__new-tag"
+                        title="本次归档新建的弧线"
+                      >
+                        NEW
+                      </span>
+                    </h3>
                   </header>
 
                   <!-- 字段: 名称 (inline edit) -->
@@ -759,6 +768,23 @@ defineExpose({ startConfirm, stopConfirm })
   color: var(--text-primary);
   letter-spacing: -0.005em;
   word-break: break-word;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cap-arc-card__title-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.cap-arc-card__new-tag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  height: 18px;
+  padding: 0 7px;
+  letter-spacing: 0.08em;
+  line-height: 18px;
+  align-self: center;
 }
 
 /* === 字段: label + content === */
