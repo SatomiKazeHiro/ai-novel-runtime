@@ -480,17 +480,19 @@ function statusTagType(status?: string) {
     }
 }
 
-// 剧情弧线 status → n-tag type 映射(从原 Chapters.vue line 1153-1166 搬过来)
+// 剧情弧线 status → n-tag type 映射 (5 态 2026-06-27: active / resolving / completed / closed / stale)
 function arcStatusType(status?: string) {
     switch (status) {
         case "active":
             return "success";
-        case "completed":
-            return "default";
         case "resolving":
             return "warning";
-        case "pending":
+        case "completed":
             return "default";
+        case "closed":
+            return "warning"; // 橙色, 提示"被合并/关闭"
+        case "stale":
+            return "info"; // 蓝色, 提示"沉寂中"
         default:
             return "default";
     }
