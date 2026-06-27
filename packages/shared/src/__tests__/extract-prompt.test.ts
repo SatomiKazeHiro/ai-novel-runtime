@@ -104,4 +104,27 @@ describe('buildExtractPrompt — mode=slim (chapter-fact-only)', () => {
     // 没传 options → 默认 slim → 不含 N-1 注入
     expect(prompt).not.toContain('N-1 全局图谱中的实体清单')
   })
+
+  /**
+   * timelinePosition / timelineEvents 强约束回归 (2026-06-27 fix)
+   *
+   * 背景: 用户报告"时间线一直是空的"。调查发现 slim 模式 prompt 对
+   * timeline 字段的描述太弱, AI 倾向把 position 留 null。修复后
+   * slim 模式必须有完整 Y.DDDHH 编码规则 + "必须返回" + 示例数组。
+   */
+  it('slim prompt 强约束 timelinePosition (Y.DDDHH 编码规则)', () => {
+    const prompt = buildExtractPrompt(baseInput, { mode: 'slim' })
+    expect(prompt).toContain('DDDHH')
+    expect(prompt).toContain('整数位 Y = 故事第 N 年')
+    expect(prompt).toContain('严禁返回 -1 占位')
+  })
+
+  it('slim prompt 强约束 timelineEvents (必须返回 + 示例)', () => {
+    const prompt = buildExtractPrompt(baseInput, { mode: 'slim' })
+    expect(prompt).toContain('**必须返回**')
+    expect(prompt).toContain('至少 1 个**即章首事件')
+    expect(prompt).toContain('1.00106')
+    // 必须列出 Y.DDDHH 示例
+    expect(prompt).toMatch(/position.*1\.00106.*description/)
+  })
 })

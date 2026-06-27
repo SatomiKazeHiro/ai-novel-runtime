@@ -78,6 +78,8 @@ export interface MemoryExtractionResult {
   timelinePosition: number | null
   summary: string
   scenes: SceneMemory[]       // 推动剧情发展的地点/场景
+  // 章内不同时间点的事件 (AI 可能漏字段, 可选)
+  timelineEvents?: Array<{ position: number | null; description: string }>
 }
 
 export async function extractMemoryFromChapter(
@@ -172,7 +174,7 @@ ${content.slice(0, 8000)}`
     const result: MemoryExtractionResult = JSON.parse(cleanJsonBlock(raw))
 
     const totalEvents = (result.mainEvents?.length || 0) + (result.sideEvents?.length || 0)
-    app.log.info(`[MemoryExtractor] Extracted: ${totalEvents} events (${result.mainEvents?.length || 0} main, ${result.sideEvents?.length || 0} side), position=${result.timelinePosition}`)
+    app.log.info(`[MemoryExtractor] Extracted: ${totalEvents} events (${result.mainEvents?.length || 0} main, ${result.sideEvents?.length || 0} side), position=${result.timelinePosition}, timelineEvents=${result.timelineEvents?.length || 0}`)
     return result
   } catch (err: any) {
     app.log.error(`[MemoryExtractor] Failed: ${err.message}`)
@@ -292,25 +294,60 @@ export function prepareMemoryWrites(
   }
 
   // 6. 时间线
-  //    AI 偶尔会返回格式不对的 position (e.g. 负 day、hour > 23),
-  //    validateTimelinePosition 在写库前兜底, 非法值丢弃, 保留 summary/timelinePosition 顶层字段
-  if (typeof result.timelinePosition === 'number') {
-    const validation = validateTimelinePosition(result.timelinePosition)
-    if (validation.ok) {
-      timelinePosition = result.timelinePosition
-      const eventDescs = (result.mainEvents || []).map(e => e.description)
-      timelineEvents.push({
+  //    双层数据源:
+  //    - 顶层 timelinePosition: 章首时间锚点 (旧路径)
+  //    - result.timelineEvents[]: AI 返回的章内时间点事件 (新路径)
+  //    行为:
+  //      a) 顶层 valid → 章首 row 写入 (携 mainEvents 描述), 数组里 position 独立 row
+  //      b) 顶层 null + 数组 valid → 用数组第一条 position 作章首, 章首 row 写入 (携 mainEvents)
+  //      c) 顶层 null + 数组空/全 null → 不合成, 输出空
+  //    validateTimelinePosition 在写库前兜底, 非法值丢弃
+  let anchorPosition: number | null = null
+  if (typeof result.timelinePosition === 'number' &&
+      validateTimelinePosition(result.timelinePosition).ok) {
+    anchorPosition = result.timelinePosition
+  }
+
+  // 先扫描数组, 收集所有 valid position 事件 (每条 events 仅含自身 description)
+  const perEventWrites: TimelineEventWrite[] = []
+  for (const ev of result.timelineEvents || []) {
+    if (typeof ev?.position !== 'number') continue
+    if (!validateTimelinePosition(ev.position).ok) continue
+    perEventWrites.push({
+      storyId,
+      fromChapterNumber: chNum,
+      position: ev.position,
+      events: JSON.stringify([ev.description])
+    })
+  }
+
+  // 顶层缺位 + 数组有效 → 用数组第一条 position 作章首
+  if (anchorPosition === null && perEventWrites.length > 0) {
+    anchorPosition = perEventWrites[0].position
+  }
+
+  // 章首 row: 若 anchor 位置尚无 row, 写入一条章首 row 携带 mainEvents 描述
+  // 若数组第一条 position 已是 anchor (典型情况), 把那条 row 的 events
+  // 升级成 mainEvents 描述 (章首 row 应携带章节核心事件, 不只是事件描述)
+  if (anchorPosition !== null) {
+    const eventDescs = (result.mainEvents || []).map(e => e.description)
+    const existingIdx = perEventWrites.findIndex(w => w.position === anchorPosition)
+    if (existingIdx >= 0) {
+      perEventWrites[existingIdx] = {
+        ...perEventWrites[existingIdx],
+        events: JSON.stringify(eventDescs)
+      }
+    } else {
+      perEventWrites.push({
         storyId,
         fromChapterNumber: chNum,
-        position: result.timelinePosition,
+        position: anchorPosition,
         events: JSON.stringify(eventDescs)
       })
-    } else {
-      // 不抛 — 让 archive 流程继续, 仅忽略本条 timeline event
-      // 上层 caller 看 log 即可诊断
-      timelinePosition = null
     }
   }
+  timelineEvents = perEventWrites
+  timelinePosition = anchorPosition
 
   // 7. 摘要
   if (result.summary) {

@@ -89,9 +89,9 @@
           <n-card title="时间线事件" size="small">
             <n-empty v-if="timelineEvents.length === 0" description="暂无时间线事件" />
             <n-space v-for="(te, idx) in timelineEvents" :key="`te-${idx}`" vertical style="width: 100%; margin-bottom: 12px">
-              <n-space justify="space-between" style="width: 100%">
-                <n-input-number v-model:value="te.position" :step="0.0001" placeholder="时间位置(如1.0101)" />
-                <n-button size="small" type="error" @click="removeTimelineEvent(idx)">删除</n-button>
+              <n-space justify="space-between" style="width: 100%; align-items: flex-start">
+                <TimelinePositionInput v-model="te.position" style="flex: 1" />
+                <n-button size="small" type="error" @click="removeTimelineEvent(idx)" style="flex-shrink: 0; margin-top: 4px">删除</n-button>
               </n-space>
               <n-input v-model:value="te.events" type="textarea" :rows="3" placeholder='事件 JSON 数组，如 ["事件1", "事件2"]' />
             </n-space>
@@ -183,9 +183,11 @@ import {
   NSelect, NSlider,
   useDialog
 } from 'naive-ui'
+import { DEFAULT_TIMELINE_POSITION } from '@novel-runtime/shared'
 import type { PendingArchiveData } from '@novel-runtime/shared'
 import EditableGraph from '../components/graph/EditableGraph.vue'
 import DynamicTags from '../components/DynamicTags.vue'
+import TimelinePositionInput from '../components/TimelinePositionInput.vue'
 
 // PendingArchiveData is now imported from @novel-runtime/shared — the
 // single source of truth shared with the server. Adding fields is
@@ -374,7 +376,7 @@ function addTimelineEvent() {
   timelineEvents.value.push({
     storyId: props.chapter.storyId,
     fromChapterNumber: chNum,
-    position: 1.0101,
+    position: DEFAULT_TIMELINE_POSITION,
     events: '[]'
   })
 }

@@ -33,6 +33,8 @@ function buildExtraction(overrides: Partial<MemoryExtractionResult> = {}): Memor
     timelinePosition: null,
     summary: '',
     scenes: [],
+    // timelineEvents 是 AI 响应里的可选字段, 默认空数组保证类型形状一致
+    timelineEvents: [],
     ...overrides
   }
 }
@@ -223,5 +225,139 @@ describe('prepareMemoryWrites — timelinePosition 正常通路', () => {
     const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
     expect(out.timelineEvents).toHaveLength(1)
     expect(out.timelinePosition).toBe(-2.05018)
+  })
+})
+
+/**
+ * prepareMemoryWrites — timelineEvents[] 数组扫描 + 顶层兜底
+ *
+ * 背景: 2026-06-27 用户报告 "时间线一直是空的"。调查发现:
+ *   - AI combined_extract 响应里 timelineEvents 数组存在但每条 position=null
+ *   - 顶层 timelinePosition 也常为 null
+ *   - prepareMemoryWrites 此前只读顶层 timelinePosition, 完全忽略数组
+ *   - slim 模式 prompt 文字弱, AI 不强约束自己填 position
+ *
+ * 修复后行为:
+ *   - 数组里每条带有效 position → 生成独立 TimelineEventWrite
+ *   - 顶层 null + 数组有效 → 用数组第一条 position 作章首锚点
+ *   - 顶层有效 + 数组第一条 position 不等于顶层 → 顶层作为章首 row,
+ *     数组所有 row 保留(可能含后续时间点事件)
+ *   - 顶层 + 数组都 null → 不合成, 输出 timelineEvents=[] + timelinePosition=null
+ *     (合成会污染数据, 让用户看到假锚点)
+ */
+describe('prepareMemoryWrites — timelineEvents[] 扫描 + 顶层兜底', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('顶层 timelinePosition + 空数组 → 当前 1 条 row 行为保留', () => {
+    const result = buildExtraction({
+      timelinePosition: 1.00700,
+      timelineEvents: []
+    })
+    const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
+    expect(out.timelineEvents).toHaveLength(1)
+    expect(out.timelineEvents[0].position).toBe(1.007)
+    expect(out.timelinePosition).toBe(1.007)
+  })
+
+  it('顶层 null + 数组多条事件 → 多条 row, 章首取数组第一条', () => {
+    const result = buildExtraction({
+      timelinePosition: null,
+      mainEvents: [
+        { description: 'main1', participants: ['p'], importance: 6 },
+        { description: 'main2', participants: ['p'], importance: 6 }
+      ],
+      timelineEvents: [
+        { position: 1.00106, description: 'a' },
+        { position: 1.00112, description: 'b' }
+      ]
+    })
+    const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
+    expect(out.timelineEvents).toHaveLength(2)
+    // 章首 = 第一条事件的 position
+    expect(out.timelinePosition).toBe(1.00106)
+    // 第一条 row 是章首 (携 mainEvents 描述)
+    expect(out.timelineEvents[0].position).toBe(1.00106)
+    expect(JSON.parse(out.timelineEvents[0].events)).toEqual(['main1', 'main2'])
+    // 第二条 row 是数组里第二条事件
+    expect(out.timelineEvents[1].position).toBe(1.00112)
+    expect(JSON.parse(out.timelineEvents[1].events)).toEqual(['b'])
+  })
+
+  it('顶层 null + 数组单条 → 1 条章首 row, 携 mainEvents 描述', () => {
+    const result = buildExtraction({
+      timelinePosition: null,
+      mainEvents: [{ description: 'm1', participants: ['p'], importance: 6 }],
+      timelineEvents: [{ position: 1.00106, description: '章首事件' }]
+    })
+    const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
+    expect(out.timelineEvents).toHaveLength(1)
+    expect(out.timelinePosition).toBe(1.00106)
+    expect(JSON.parse(out.timelineEvents[0].events)).toEqual(['m1'])
+  })
+
+  it('顶层有效 + 数组第一条不同位置 → 顶层作章首 row, 数组事件独立写入', () => {
+    const result = buildExtraction({
+      timelinePosition: 1.00106,
+      mainEvents: [{ description: 'm1', participants: ['p'], importance: 6 }],
+      timelineEvents: [
+        { position: 1.00106, description: '章首' },
+        { position: 1.00112, description: 'b' }
+      ]
+    })
+    const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
+    // 章首 row (顶层) + 数组第二条事件 = 2 条 row
+    expect(out.timelineEvents).toHaveLength(2)
+    expect(out.timelinePosition).toBe(1.00106)
+    expect(out.timelineEvents[0].position).toBe(1.00106)
+    expect(JSON.parse(out.timelineEvents[0].events)).toEqual(['m1'])
+    expect(out.timelineEvents[1].position).toBe(1.00112)
+    expect(JSON.parse(out.timelineEvents[1].events)).toEqual(['b'])
+  })
+
+  it('顶层 null + 数组里 position 全 null → 不合成, 输出空', () => {
+    const result = buildExtraction({
+      timelinePosition: null,
+      timelineEvents: [
+        { position: null, description: 'a' },
+        { position: null, description: 'b' }
+      ]
+    })
+    const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
+    expect(out.timelineEvents).toEqual([])
+    expect(out.timelinePosition).toBeNull()
+  })
+
+  it('顶层 null + 空数组 → 行为保留 (不合成)', () => {
+    const result = buildExtraction({
+      timelinePosition: null,
+      timelineEvents: []
+    })
+    const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
+    expect(out.timelineEvents).toEqual([])
+    expect(out.timelinePosition).toBeNull()
+  })
+
+  it('顶层 null + 数组负年 → 数组第一条作章首, 负年透传', () => {
+    const result = buildExtraction({
+      timelinePosition: null,
+      mainEvents: [{ description: '前世记忆', participants: ['p'], importance: 6 }],
+      timelineEvents: [{ position: -2.05018, description: '前世' }]
+    })
+    const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
+    expect(out.timelineEvents).toHaveLength(1)
+    expect(out.timelinePosition).toBe(-2.05018)
+    expect(out.timelineEvents[0].position).toBe(-2.05018)
+  })
+
+  it('顶层 null + 数组里 position 是 NaN → validate 拒, 不写入', () => {
+    const result = buildExtraction({
+      timelinePosition: null,
+      timelineEvents: [{ position: NaN, description: 'x' }]
+    })
+    const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
+    expect(out.timelineEvents).toEqual([])
+    expect(out.timelinePosition).toBeNull()
   })
 })

@@ -12,28 +12,11 @@ import {
   safeJsonParse,
   PreviewRequestSchema,
   GenerateRequestSchema,
-  SelectDraftRequestSchema
+  SelectDraftRequestSchema,
+  formatTimelinePosition
 } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { parseBody, getLastChapter, getOrThrowChapter } from './_helpers.js'
-
-/**
- * 把 Y.DDDHH 单小数点浮点数 position 渲染为人类可读文本。
- * 编码:整数位=年(故事第N年,前史用负数),小数位必须 5 位 DDDHH 拼接(强制 5 位,不足补 0)。
- * 例:1.00106 → "第1年第1天 06时";1.10012 → "第1年第100天 12时";
- *     1.36522 → "第1年第365天 22时";-2.05018 → "前2年第50天 18时"。
- */
-function formatTimelinePosition(position: number): string {
-  const sign = position < 0 ? '前' : ''
-  const abs = Math.abs(position)
-  const [intPart, decPart = ''] = abs.toString().split('.')
-  const year = parseInt(intPart, 10)
-  // 小数位恰好 5 位:DDD(3) + HH(2),不足补 0
-  const padded = (decPart + '00000').slice(0, 5)
-  const day = parseInt(padded.slice(0, 3), 10)
-  const hh = parseInt(padded.slice(3, 5), 10)
-  return `${sign}第${year}年第${day}天 ${String(hh).padStart(2, '0')}时`
-}
 
 /**
  * Generate 流：prompt preview / 多候选 generate / 选 candidate。

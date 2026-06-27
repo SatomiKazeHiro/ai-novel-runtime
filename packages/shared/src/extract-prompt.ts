@@ -234,8 +234,8 @@ importance 评分标准：
 - foreshadowing: 新埋下的伏笔（字符串数组）
 - relationshipChanges: 角色关系变化（字符串数组）
 - characterStatusChanges: 角色状态变化（对象，如 {"张三": {"rank": "初级", "location": "北京", "relationships": {"李四": "兄弟", "王五": "敌对"}}}）。其中 relationships 子键可选，用于表达该角色与其他角色的关系变化。
-- timelinePosition: 本章开篇时间锚点（单小数点浮点数 Y.DDDHH）
-- timelineEvents: 本章内发生在不同时间点的事件（数组，每个元素包含 position 和 description）
+- timelinePosition: 本章开篇时间锚点（**单小数点浮点数，编码 Y.DDDHH**：整数位 Y = 故事第 N 年（故事开始 = 第 1 年，前史/穿越用负数）；小数位必须**恰好 5 位** = DDDHH（3 位天 + 2 位小时），1 年固定 365 天、不区分大小月/闰年，对齐现实公历无意义；如无明确时间则小时段按 5 个范围兜底：早晨=06、中午=12、傍晚=18、夜里=22、凌晨=00；完全没有时间线索时按当章主要事件发生的时间段推断一个最接近的整点（小时）。**严禁返回 -1 占位；真正发生在过去就用负数年。**）
+- timelineEvents: 本章内发生在不同时间点的事件（数组，每个元素包含 position 和 description；**必须返回**，**至少 1 个**即章首事件；章内跨多个明确时间点的情节应分别记录；position 用单小数点 Y.DDDHH 编码；description 简洁描述该时间点发生了什么；例：[{ "position": 1.00106, "description": "李凡清晨重伤醒来" }, { "position": 1.00112, "description": "李凡午时请教赵若曦" }, { "position": 1.00122, "description": "李凡夜里彻修炼功" }]）
 - summary: 本章一句话摘要（50字以内）
 - scenes: 推动剧情的关键地点（对象数组，含 location/description/event/importance）
 

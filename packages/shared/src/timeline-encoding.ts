@@ -32,6 +32,13 @@ export interface TimelinePositionParts {
   hour: number // 0-23
 }
 
+/**
+ * Timeline position 的"占位"默认值。给 UI 输入框初次渲染用,
+ * 避免每个 caller 各写一个魔数 (之前 ReviewingPanel 写 `1.0101` 是格式错误
+ * bug, 应该是 5 位小数的 `1.00106`)。
+ */
+export const DEFAULT_TIMELINE_POSITION = 1.00106
+
 const DAY_MIN = 1
 const DAY_MAX = 365
 const HOUR_MIN = 0

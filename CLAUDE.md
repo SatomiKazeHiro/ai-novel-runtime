@@ -152,6 +152,10 @@ The frontend visualizes this with Cytoscape.
 - Side stories (`isSideStory = true`) are decimal chapters (`1.01`, `1.02`) and can branch from any archived chapter.
 - Deleting an archived chapter cascades: it removes derived data (memories, timeline events, character branch states) that share the same `fromChapterNumber` and rebuilds the graph from the previous chapter snapshot.
 
+### Timeline Position Encoding
+
+`TimelineEvent.position` is stored as a single-decimal **Y.DDDHH** float where the integer part is the year (negative = pre-history) and the decimal part is exactly 5 digits `DDDHH` (day-of-year 1–365 + hour 0–23). Rendered through `formatTimelinePosition()` (currently in `apps/server/src/routes/chapters-generate.ts`); use the same encoding when inserting or comparing positions. Schema migration `20260626000000_timeline_position_encoding` introduced this; pre-migration rows should already be backfilled.
+
 ## Key Conventions
 
 ### Import Rules
@@ -201,12 +205,14 @@ Import each Naive UI component explicitly. Table action columns are rendered wit
 
 - `apps/server/src/server.ts` — entry point: env, queue worker, HTTP listener
 - `apps/server/src/app.ts` — Fastify app assembly
-- `apps/server/src/routes/chapters.ts` — the most complex route set; covers preview, generate, select, archive, develop, chapter-tree
+- `apps/server/src/routes/chapters-*.ts` — chapter API split by concern: `chapters-crud` (create/list/update/delete), `chapters-tree` (chapter-tree endpoint), `chapters-generate` (preview / generate drafts / select), `chapters-archive` (prepare-archive / save-pending-archive-data / archive), and `chapters.ts` (umbrella register + misc). New chapter endpoints should follow this family pattern, not pile into `chapters.ts`.
 - `apps/server/src/services/ai-call-logger.ts` — mandatory wrapper for all AI calls
 - `apps/server/src/services/generate-processor.ts` — queue worker that generates drafts serially
 - `apps/server/src/services/combined-extractor.ts` — archive phase 1: memory + graph + plot extraction
 - `apps/server/src/services/graph-organizer.ts` — archive phase 2: merge global graph with new extraction
+- `apps/server/src/services/graph-snapshot.ts` — `defaultTokenEstimator` + snapshot/delta helpers used by combined-extractor / graph-organizer; estimation vs validation boundary is documented at the top
 - `apps/server/src/services/memory-optimizer.ts` — archive phase 4: global memory fusion
+- `apps/server/src/services/memory-compressor.ts` / `memory-organizer.ts` — memory shaping helpers invoked before/after optimizer
 - `packages/prompt-runtime/src/index.ts` — prompt assembly pipeline
 - `packages/ai-provider/src/index.ts` — provider abstraction and runtime compiler
 - `packages/memory-engine/src/index.ts` — semantic search and memory formatting
@@ -217,7 +223,12 @@ Import each Naive UI component explicitly. Table action columns are rendered wit
 - `AGENTS.md` — broader agent guide with route/service tables and tech-stack detail
 - `Process.md` — narrative walkthrough of the chapter lifecycle and data flow
 - `README.md` — project intro, setup, and deployment notes
+- `docs/DESIGN.md` — design-level rationale and decisions
+- `docs/LOGIC.md` — domain logic notes (timeline encoding, scoring rules, etc.)
+- `docs/ISSUES.md` — P0/P1 issue tracker with file:line citations and resolution commits
 - `docs/sql-reference.md` — SQL reference
+- `docs/superpowers/plans/` — implementation plans produced via superpowers:writing-plans
+- `docs/superpowers/specs/` — brainstorming specs produced via superpowers:brainstorming
 - `KNOWN-ISSUES.md` — known pitfalls (loose types, token-counting fragmentation, etc.) and security caveats (no auth, open CORS, real keys in `.env`)
 
 ## 协作约定
