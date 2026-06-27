@@ -37,7 +37,7 @@
       </n-card>
 
       <!-- 主编辑区 -->
-      <n-tabs type="line" default-value="memories" :animated="true">
+      <n-tabs type="line" default-value="characters" :animated="true">
         <!-- 角色 tab: 角色状态 (2 列 grid + 卡片, 与剧情弧线/时间线节奏一致) -->
         <n-tab-pane name="characters" tab="角色">
           <n-empty v-if="characterStates.length === 0" description="暂无角色状态, 点击下方添加" />
