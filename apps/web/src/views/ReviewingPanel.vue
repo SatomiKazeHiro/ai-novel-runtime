@@ -90,29 +90,34 @@
             <n-empty v-if="timelineEvents.length === 0" description="暂无时间线事件" />
             <n-grid
               v-else
-              cols="2"
-              x-gap="14"
+              cols="1"
               y-gap="14"
               responsive="screen"
               style="margin-bottom: 12px"
             >
               <n-gi v-for="(te, idx) in timelineEvents" :key="`te-${idx}`">
                 <article class="cap-timeline-card cap-rise" :data-rise="String(Math.min(idx + 1, 7))">
-                  <!-- 头部: meta (N° + events count) + position hero -->
+                  <!-- 头部: meta (N° + events count) + 裸露的时间文本 -->
                   <header class="cap-timeline-card__head">
                     <div class="cap-timeline-card__head-meta">
                       <span class="cap-timeline-card__no">N°&nbsp;{{ String(idx + 1).padStart(2, '0') }}<span class="cap-timeline-card__no-sep"> / {{ String(timelineEvents.length).padStart(2, '0') }}</span></span>
                       <div class="cap-timeline-card__head-chips">
-                        <span class="cap-chip is-snow cap-timeline-card__count-chip">
+                        <span class="cap-chip is-blue cap-timeline-card__count-chip">
                           <span class="cap-timeline-card__count-label">事件</span>
                           <span class="cap-timeline-card__count-value">{{ getEventsList(te.events).length }}</span>
                         </span>
                       </div>
                     </div>
+                    <h3 class="cap-timeline-card__pos-time">{{ formatPositionLabel(te.position) }}</h3>
+                  </header>
 
-                    <!-- Position hero: 时间文本 + ? 含义 + 校验 tag -->
-                    <div class="cap-timeline-card__pos-hero">
-                      <span class="cap-timeline-card__pos-time">{{ formatPositionLabel(te.position) }}</span>
+                  <!-- 字段 01: 时间编码 (input + ? 含义 + 校验 tag 横向并排) -->
+                  <div class="cap-timeline-card__field">
+                    <span class="cap-timeline-card__label">01 · 时间编码</span>
+                    <div class="cap-timeline-card__pos-row">
+                      <div class="cap-timeline-card__pos-input">
+                        <TimelinePositionInput v-model="te.position" :preview="false" :controls="false" />
+                      </div>
                       <span
                         class="cap-timeline-card__pos-help"
                         :title="positionHelpText()"
@@ -124,12 +129,6 @@
                         :class="positionValidity(te.position).chipClass"
                       >{{ positionValidity(te.position).label }}</span>
                     </div>
-                  </header>
-
-                  <!-- 字段 01: 时间编码 (可编辑, 无 stepper 按钮 / 无 preview, hero 已承担展示) -->
-                  <div class="cap-timeline-card__field">
-                    <span class="cap-timeline-card__label">01 · 时间编码</span>
-                    <TimelinePositionInput v-model="te.position" :preview="false" :controls="false" />
                   </div>
 
                   <!-- 字段 02: 事件列表 (DynamicTags, 与 Timeline.vue 编辑 modal 同款) -->
@@ -1090,41 +1089,40 @@ defineExpose({ startConfirm, stopConfirm })
   letter-spacing: 0.08em;
 }
 .cap-timeline-card__count-value {
-  color: var(--text-primary);
+  color: var(--accent-link); /* 与 is-blue chip 调色一致: blueprint 蓝 */
   font-weight: var(--weight-bold);
   font-size: 12px;
 }
 
-/* === Position hero — 时刻表的核心识别物 ===
-   设计意图:把解码后的"第N年第N天 NN时"作为视觉主体,加 ? 问号按钮
-   提供编码含义 hover tooltip,末尾 chip 给出实时校验结果。
-   - 浅米色底 (bg-elev) + 1px border, 内嵌于卡片
-   - 18px mono semibold 时间文本作为主视觉 (不再用 22px terracotta 加粗)
-   - ? 圆按钮:中性灰 border, 鼠标悬浮 / focus 时加深 (cursor: help)
-   - 校验 chip 走 cap-chip is-positive / is-error / is-snow 变体
-   字段值变化时不强响动, 保持 specimen 的静态感。 */
-.cap-timeline-card__pos-hero {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  background: var(--bg-elev);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  flex-wrap: wrap;
-  min-width: 0;
-}
+/* === 顶部时间文本: 裸露 h3, 无装饰层 ===
+   跟剧情弧线 cap-arc-card__title 同一层级 (h3),作为卡片的"标题等价物",
+   但不加 bg-elev + border 装饰 (用户反馈 2026-06-27),让视觉更轻。 */
 .cap-timeline-card__pos-time {
+  margin: 0;
   font-family: var(--font-mono);
   font-size: 18px;
   font-weight: var(--weight-semibold);
   color: var(--text-primary);
   letter-spacing: 0.04em;
-  line-height: 1.2;
-  flex: 1 1 auto;
-  min-width: 0;
+  line-height: 1.3;
   word-break: break-word;
   font-variant-numeric: tabular-nums;
+}
+
+/* === 时间编码 input 行: input + ? + validity 横向并排 ===
+   - input 占 flex 1 (所有可用空间)
+   - ? 问号固定 20px 圆按钮, 鼠标悬浮显示 Y.DDDHH 编码含义
+   - validity chip 固定大小, 不带左侧圆点 (override cap-chip::before)
+   整行在卡片字段下, 与其他字段垂直堆叠节奏一致 */
+.cap-timeline-card__pos-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.cap-timeline-card__pos-input {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .cap-timeline-card__pos-help {
   display: inline-flex;
@@ -1154,6 +1152,13 @@ defineExpose({ startConfirm, stopConfirm })
 }
 .cap-timeline-card__pos-validity {
   flex-shrink: 0;
+}
+/* validity chip 去除 cap-chip 默认的左侧圆点 (用户反馈 2026-06-27):
+   这个 chip 是"校验结果"语义, 不需要额外的状态点 (chip 自己的色
+   已经表达了合法 / 非法 / 未设置, 圆点是冗余的)。scoped 到 timeline
+   card 内, 不影响其他 cap-chip。 */
+.cap-timeline-card__pos-validity::before {
+  display: none;
 }
 
 /* === 字段: label + content (与剧情弧线一致) === */
