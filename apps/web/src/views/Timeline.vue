@@ -31,22 +31,22 @@
 
     <n-modal v-model:show="showModal" :title="editingId ? '编辑事件' : '添加事件'" preset="card" style="width: 500px">
       <n-form :model="form" label-placement="left" label-width="80">
-        <n-form-item v-if="!editingId" label="绑定章节" required>
+        <n-form-item label="绑定章节" required>
           <n-select
             v-model:value="form.fromChapterNumber"
             :options="archivedChapterOptions"
-            :disabled="archivedChapterOptions.length === 0"
+            :disabled="!!editingId || archivedChapterOptions.length === 0"
             placeholder="选择已归档章节"
             @update:value="onChapterChange"
           />
-          <n-text v-if="archivedChapterOptions.length === 0" depth="3" style="font-size: 12px; margin-top: 4px; display: block">
+          <n-text v-if="editingId" depth="3" style="font-size: 12px; margin-top: 4px; display: block">
+            编辑模式下章节不可修改 (与 chapterNumber 强绑定, 由 archive 流程维护)。
+          </n-text>
+          <n-text v-else-if="archivedChapterOptions.length === 0" depth="3" style="font-size: 12px; margin-top: 4px; display: block">
             该故事下尚无已归档章节, 无法添加事件 (需先归档至少一个章节)。
           </n-text>
         </n-form-item>
-        <n-form-item v-if="!editingId" label="时间位置" required>
-          <TimelinePositionInput v-model="form.position" />
-        </n-form-item>
-        <n-form-item v-else label="时间位置" required>
+        <n-form-item label="时间位置" required>
           <TimelinePositionInput v-model="form.position" />
         </n-form-item>
         <n-form-item label="事件">
@@ -69,7 +69,7 @@ import { useRoute } from 'vue-router'
 import {
   NSpace, NButton, NModal, NForm, NFormItem, NSelect, NText,
   NTimeline, NTimelineItem, NUl, NLi, NEmpty, NSpin,
-  useDialog
+  useDialog, useMessage
 } from 'naive-ui'
 import { formatTimelinePosition, DEFAULT_TIMELINE_POSITION } from '@novel-runtime/shared'
 import { timelineApi } from '../api/timeline'
@@ -79,6 +79,7 @@ import TimelinePositionInput from '../components/TimelinePositionInput.vue'
 
 const route = useRoute()
 const dialog = useDialog()
+const message = useMessage()
 const events = ref<any[]>([])
 const chapters = ref<any[]>([])
 const loading = ref(false)
@@ -218,17 +219,36 @@ function startEdit(evt: any) {
   showModal.value = true
 }
 
+/**
+ * 把 axios 错误的 server 业务消息提取出来。Fastify route 失败时 body 通常是
+ *   { success: false, error: "..." }
+ * 但 axios 把它包在 err.response.data, fetch 失败 / 网络断时 err.response 不存在。
+ */
+function extractErrorMessage(err: any): string {
+  const data = err?.response?.data
+  if (data && typeof data === 'object' && typeof data.error === 'string') return data.error
+  if (typeof data === 'string' && data) return data
+  return err?.message || '请求失败'
+}
+
 async function handleSave() {
   if (!route.params.storyId) return
-  if (editingId.value) {
-    await timelineApi.update(editingId.value, { position: form.value.position, events: form.value.events })
-  } else {
-    if (form.value.fromChapterNumber == null) return
-    await timelineApi.create(route.params.storyId as string, {
-      fromChapterNumber: form.value.fromChapterNumber,
-      position: form.value.position,
-      events: form.value.events
-    })
+  try {
+    if (editingId.value) {
+      await timelineApi.update(editingId.value, { position: form.value.position, events: form.value.events })
+    } else {
+      if (form.value.fromChapterNumber == null) return
+      await timelineApi.create(route.params.storyId as string, {
+        fromChapterNumber: form.value.fromChapterNumber,
+        position: form.value.position,
+        events: form.value.events
+      })
+    }
+  } catch (err: any) {
+    // 409 (PUT position 冲突) / 400 (业务校验) / 500 都给用户看得懂的提示
+    // 不关 modal, 让用户改完再保存
+    message.error(extractErrorMessage(err))
+    return
   }
   showModal.value = false
   editingId.value = null

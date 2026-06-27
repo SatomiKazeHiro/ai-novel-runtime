@@ -219,6 +219,17 @@ describe('PUT /api/timeline/:eventId — 编辑不改 fromChapterNumber', () => 
     mockPrisma = createMockPrisma({
       timelineEvent: {
         ...createMockPrisma().timelineEvent,
+        // 默认: 找得到 te-1 (current event), 目标 position 不存在
+        findUnique: vi.fn().mockImplementation(async ({ where }: any) => {
+          if (where.id === 'te-1') {
+            return { id: 'te-1', storyId: 's1', fromChapterNumber: 1, position: 1.00106, events: '[]' }
+          }
+          // where.storyId_position — 查 (storyId, position) 冲突
+          if (where.storyId_position) {
+            return null
+          }
+          return null
+        }),
         update: vi.fn().mockImplementation(async ({ where, data }: any) => ({
           id: where.eventId, ...data
         }))
@@ -242,5 +253,58 @@ describe('PUT /api/timeline/:eventId — 编辑不改 fromChapterNumber', () => 
     const updateArg = mockPrisma.timelineEvent.update.mock.calls[0][0]
     // 既不新增也不删 fromChapterNumber
     expect(updateArg.data).not.toHaveProperty('fromChapterNumber')
+  })
+
+  it('returns 409 when target position is occupied by another row (regression: P2002 on PUT move)', async () => {
+    // 模拟: 目标 position 1.00112 已被另一条 row te-other 占用
+    mockPrisma.timelineEvent.findUnique.mockImplementation(async ({ where }: any) => {
+      if (where.id === 'te-1') {
+        return { id: 'te-1', storyId: 's1', fromChapterNumber: 1, position: 1.00106, events: '[]' }
+      }
+      if (where.storyId_position?.storyId === 's1' && where.storyId_position?.position === 1.00112) {
+        return { id: 'te-other', storyId: 's1', fromChapterNumber: 1, position: 1.00112, events: '[]' }
+      }
+      return null
+    })
+    const result = await callHandler(
+      routes, 'PUT', '/api/timeline/:eventId',
+      { position: 1.00112, events: ['moved'] },
+      { eventId: 'te-1' }
+    )
+    expect(result.status).toBe(409)
+    expect(result.body).toEqual(
+      expect.objectContaining({
+        success: false,
+        error: expect.stringMatching(/position.*已被.*占用|conflict|409/i)
+      })
+    )
+    expect(mockPrisma.timelineEvent.update).not.toHaveBeenCalled()
+  })
+
+  it('allows update when body.position === current.position (no conflict, no self-conflict check)', async () => {
+    // body.position 没变, 不查 (storyId, position) 冲突, 走 update
+    const result = await callHandler(
+      routes, 'PUT', '/api/timeline/:eventId',
+      { position: 1.00106, events: ['same position, new events'] },
+      { eventId: 'te-1' }
+    )
+    expect(result.status).not.toBe(409)
+    expect(result.status).not.toBe(500)
+    expect(result.body).toEqual(expect.objectContaining({ success: true }))
+    expect(mockPrisma.timelineEvent.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns 404 when eventId not found', async () => {
+    mockPrisma.timelineEvent.findUnique.mockImplementation(async ({ where }: any) => {
+      if (where.id === 'te-missing') return null
+      return null
+    })
+    const result = await callHandler(
+      routes, 'PUT', '/api/timeline/:eventId',
+      { position: 2.00106, events: ['x'] },
+      { eventId: 'te-missing' }
+    )
+    expect(result.status).toBe(404)
+    expect(mockPrisma.timelineEvent.update).not.toHaveBeenCalled()
   })
 })

@@ -73,9 +73,29 @@ export async function timelineRoutes(app: FastifyInstance) {
   // PUT /api/timeline/:eventId
   //   - 仅改 position / events. 不动 fromChapterNumber (2026-06-27 决定:
   //     Timeline.vue 编辑 modal 不弹章节选择器, 见 docs/ISSUES.md)
+  //   - 改 position 时查 (storyId, position) 冲突, 撞别的 row 返 409, 让用户
+  //     换 position 或先删目标 row (2026-06-27 回归: P2002 → 500)
   app.put('/api/timeline/:eventId', async (request, reply) => {
     const { eventId } = request.params as any
     const body = request.body as any
+
+    const current = await app.prisma.timelineEvent.findUnique({ where: { id: eventId } })
+    if (!current) {
+      return reply.status(404).send({ success: false, error: 'Timeline event not found' })
+    }
+
+    if (body.position !== undefined && body.position !== current.position) {
+      const conflict = await app.prisma.timelineEvent.findUnique({
+        where: { storyId_position: { storyId: current.storyId, position: body.position } }
+      })
+      if (conflict && conflict.id !== eventId) {
+        return reply.status(409).send({
+          success: false,
+          error: `目标 position ${body.position} 已被另一条事件占用 (id=${conflict.id}, fromChapterNumber=${conflict.fromChapterNumber ?? '未绑'}), 请换一个 position 或先删除目标行`
+        })
+      }
+    }
+
     const data: any = {}
     if (body.position !== undefined) data.position = body.position
     if (body.events !== undefined) data.events = JSON.stringify(body.events)
