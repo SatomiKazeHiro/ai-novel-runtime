@@ -95,6 +95,42 @@ describe('PUT /chapters/:chapterId — UpdateChapterRequestSchema', () => {
     )
     expect(mockPrisma.chapter.update).not.toHaveBeenCalled()
   })
+
+  it('persists pendingArchiveData in reviewing state (regression: edit-then-archive)', async () => {
+    // 用户报告 bug: 在 reviewing 阶段编辑记忆重要度/时间线 → 点保存 → 归档,
+    // DB 仍是 prepare-archive 的旧值。根因: chapters-crud.ts PUT 处理函数在
+    // constructing `data` 时漏掉了 pendingArchiveData, 写库时静默丢弃。
+    mockPrisma.chapter.findUnique.mockResolvedValue({
+      id: 'c1', storyId: 's1', status: 'reviewing', title: 't',
+      pendingArchiveData: null
+    })
+    const editedPayload = JSON.stringify({
+      memories: {
+        memories: [{ storyId: 's1', chapterId: 'c1', fromChapterNumber: 1,
+                     layer: 'chapter', content: 'edited content',
+                     tags: '[]', importance: 9 }],
+        characterStates: [],
+        timelineEvents: [{ storyId: 's1', fromChapterNumber: 1, position: 1.00106, events: '["x"]' }],
+        summary: 'edited summary',
+        timelinePosition: 1.00106
+      },
+      graph: { mergedGraph: { nodes: [], edges: [], timestamp: '' }, chapterGraph: { nodes: [], edges: [], timestamp: '' } },
+      plotArcs: [],
+      meta: { extractedAt: '2026-06-27T00:00:00Z', chapterNumber: 1 }
+    })
+
+    const result = await callHandler(
+      routes, 'PUT', '/api/chapters/:chapterId',
+      { pendingArchiveData: editedPayload },
+      { chapterId: 'c1' }
+    )
+
+    expect(result.status).not.toBe(400)
+    expect(result.body).toEqual(expect.objectContaining({ success: true }))
+    expect(mockPrisma.chapter.update).toHaveBeenCalledTimes(1)
+    const updateArg = mockPrisma.chapter.update.mock.calls[0][0]
+    expect(updateArg.data.pendingArchiveData).toBe(editedPayload)
+  })
 })
 
 describe('POST /chapters/:chapterId/preview — PreviewRequestSchema', () => {

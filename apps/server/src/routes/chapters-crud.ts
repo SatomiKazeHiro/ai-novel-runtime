@@ -111,6 +111,7 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
     if (body.sceneMood !== undefined) data.sceneMood = body.sceneMood
     if (body.sceneGoal !== undefined) data.sceneGoal = body.sceneGoal
     if (body.aiProviderConfigId !== undefined) data.aiProviderConfigId = body.aiProviderConfigId || null
+    if (body.pendingArchiveData !== undefined) data.pendingArchiveData = body.pendingArchiveData
 
     // reviewing 状态只允许调整 content 和 pendingArchiveData
     if (chapter.status === 'reviewing') {
