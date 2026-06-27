@@ -198,7 +198,7 @@ import { ref, computed, watch } from 'vue'
 import {
   NCard, NSpace, NTabs, NTabPane, NCollapse, NCollapseItem,
   NInput, NInputNumber, NButton, NEmpty, NDivider, NFormItem, NGrid, NGridItem, NText,
-  NSelect, NSlider,
+  NSelect, NSlider, NTag,
   useDialog
 } from 'naive-ui'
 import { DEFAULT_TIMELINE_POSITION, safeJsonParse } from '@novel-runtime/shared'
