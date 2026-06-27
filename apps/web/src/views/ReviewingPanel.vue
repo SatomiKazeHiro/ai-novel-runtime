@@ -85,16 +85,83 @@
 
         <!-- 时间线 tab -->
         <n-tab-pane name="timeline" tab="时间线">
-          <!-- 时间线编辑器 -->
+          <!-- 时间线编辑器 — Editorial specimen cards (与剧情弧线共享设计语言) -->
           <n-card title="时间线事件" size="small">
             <n-empty v-if="timelineEvents.length === 0" description="暂无时间线事件" />
-            <n-space v-for="(te, idx) in timelineEvents" :key="`te-${idx}`" vertical style="width: 100%; margin-bottom: 12px">
-              <n-space justify="space-between" style="width: 100%; align-items: flex-start">
-                <TimelinePositionInput v-model="te.position" style="flex: 1" />
-                <n-button size="small" type="error" @click="removeTimelineEvent(idx)" style="flex-shrink: 0; margin-top: 4px">删除</n-button>
-              </n-space>
-              <n-input v-model:value="te.events" type="textarea" :rows="3" placeholder='事件 JSON 数组，如 ["事件1", "事件2"]' />
-            </n-space>
+            <n-grid
+              v-else
+              cols="2"
+              x-gap="14"
+              y-gap="14"
+              responsive="screen"
+              style="margin-bottom: 12px"
+            >
+              <n-gi v-for="(te, idx) in timelineEvents" :key="`te-${idx}`">
+                <article class="cap-timeline-card cap-rise" :data-rise="String(Math.min(idx + 1, 7))">
+                  <!-- 头部: meta (N° + events count) + position hero -->
+                  <header class="cap-timeline-card__head">
+                    <div class="cap-timeline-card__head-meta">
+                      <span class="cap-timeline-card__no">N°&nbsp;{{ String(idx + 1).padStart(2, '0') }}<span class="cap-timeline-card__no-sep"> / {{ String(timelineEvents.length).padStart(2, '0') }}</span></span>
+                      <div class="cap-timeline-card__head-chips">
+                        <span class="cap-chip is-snow cap-timeline-card__count-chip">
+                          <span class="cap-timeline-card__count-label">事件</span>
+                          <span class="cap-timeline-card__count-value">{{ parseEventsJson(te.events).count }}</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- Position hero: mono 编码 + 人类解读 -->
+                    <div class="cap-timeline-card__pos-hero">
+                      <div class="cap-timeline-card__pos-value-block">
+                        <span class="cap-timeline-card__pos-prefix">POS ·</span>
+                        <span class="cap-timeline-card__pos-value">{{ formatPositionValue(te.position) }}</span>
+                      </div>
+                      <span class="cap-timeline-card__pos-arrow" aria-hidden="true">↳</span>
+                      <span class="cap-timeline-card__pos-label">{{ formatPositionLabel(te.position) }}</span>
+                    </div>
+                  </header>
+
+                  <!-- 字段 01: 时间编码 (可编辑) -->
+                  <div class="cap-timeline-card__field">
+                    <span class="cap-timeline-card__label">01 · 时间编码</span>
+                    <TimelinePositionInput v-model="te.position" />
+                  </div>
+
+                  <!-- 字段 02: 事件 JSON (rows=10) -->
+                  <div class="cap-timeline-card__field">
+                    <span class="cap-timeline-card__label">02 · 事件列表</span>
+                    <n-input
+                      v-model:value="te.events"
+                      type="textarea"
+                      :rows="10"
+                      :input-props="{ class: 'cap-timeline-card__mono-input' }"
+                      placeholder='事件 JSON 数组，如 ["事件1", "事件2"]'
+                    />
+                    <div class="cap-timeline-card__json-status">
+                      <span
+                        class="cap-chip"
+                        :class="parseEventsJson(te.events).ok ? 'is-positive' : 'is-error'"
+                      >
+                        {{ parseEventsJson(te.events).ok
+                          ? `${parseEventsJson(te.events).count} events · JSON 合法`
+                          : (parseEventsJson(te.events).error || '空') }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <!-- Footer: 删除 -->
+                  <footer class="cap-timeline-card__foot">
+                    <button
+                      type="button"
+                      class="cap-pill is-sm is-danger"
+                      @click="removeTimelineEvent(idx)"
+                    >
+                      删除
+                    </button>
+                  </footer>
+                </article>
+              </n-gi>
+            </n-grid>
             <n-button size="small" dashed block @click="addTimelineEvent">添加时间线事件</n-button>
           </n-card>
         </n-tab-pane>
@@ -305,7 +372,7 @@ import {
   NSelect, NSlider,
   useDialog
 } from 'naive-ui'
-import { DEFAULT_TIMELINE_POSITION, safeJsonParse } from '@novel-runtime/shared'
+import { DEFAULT_TIMELINE_POSITION, formatTimelinePosition, safeJsonParse } from '@novel-runtime/shared'
 import type { PendingArchiveData } from '@novel-runtime/shared'
 import EditableGraph from '../components/graph/EditableGraph.vue'
 import DynamicTags from '../components/DynamicTags.vue'
@@ -456,6 +523,39 @@ function formatSimilarArcNames(similarToJson: string | undefined): string {
     const target = plotArcs.value.find((a: any) => a.existingId === id || a.id === id)
     return target?.name || id.slice(0, 8)
   }).join(', ')
+}
+
+/**
+ * 解析 te.events JSON 字符串, 返回 { ok, count, error } 用于状态 chip 渲染。
+ * - ok=true 且 count>0: 合法 JSON 数组
+ * - ok=true 且 count=0: 合法 JSON 但空数组 (或空字符串)
+ * - ok=false: 解析失败
+ */
+function parseEventsJson(raw: string | null | undefined): { ok: boolean; count: number; error?: string } {
+  if (!raw || !raw.trim()) return { ok: true, count: 0, error: '空' }
+  const parsed = safeJsonParse<unknown>(raw, null)
+  if (parsed == null) return { ok: false, count: 0, error: 'JSON 非法' }
+  if (Array.isArray(parsed)) return { ok: true, count: parsed.length }
+  return { ok: false, count: 0, error: '不是数组' }
+}
+
+/**
+ * 渲染 position 编码值: 把数字格式化成 5 位小数字符串,用于 position hero。
+ * null / NaN / Infinity → 占位 "—"
+ */
+function formatPositionValue(position: number | null | undefined): string {
+  if (position == null || !Number.isFinite(position)) return '—'
+  // toFixed(5) 保证 5 位小数 (与 Y.DDDHH 编码约定一致)
+  return position.toFixed(5)
+}
+
+/**
+ * 渲染 position 人类解读标签, 复用 shared/formatTimelinePosition 拿"第1年第7天 06时"格式。
+ * null / 非法 → "未设置"
+ */
+function formatPositionLabel(position: number | null | undefined): string {
+  if (position == null || !Number.isFinite(position)) return '未设置'
+  return formatTimelinePosition(position)
 }
 
 function isSpecialContent(content?: string): boolean {
@@ -895,6 +995,188 @@ defineExpose({ startConfirm, stopConfirm })
 
 /* === 底部: 删除 === */
 .cap-arc-card__foot {
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* =================================================================
+   Editorial storyboard entry — TIMELINE EVENT CARD
+   ----------------------------------------------------------------
+   与剧情弧线共享 .cap-arc-card 视觉 token (1px pebble border / 6px radius /
+   white card on warm canvas / 18px 20px 16px padding),但骨架对应"时刻表"
+   而非"剧情线":核心身份是 position 坐标,不是 name。
+
+   字段顺序:
+     head  → meta (N° + events count chip) + position hero (mono 编码 + 解读)
+     field → 01 时间编码 (TimelinePositionInput, 可编辑)
+     field → 02 事件列表 (mono textarea, rows=10) + JSON 合法 chip
+     foot  → 删除
+   ================================================================= */
+.cap-timeline-card {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  padding: 18px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color 0.18s ease, transform 0.18s ease;
+  min-width: 0;
+}
+.cap-timeline-card:hover {
+  border-color: var(--color-mid-gray);
+  transform: translateY(-1px);
+}
+
+/* === 头部: meta (序号 + chips) — 与剧情弧线对齐 === */
+.cap-timeline-card__head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cap-timeline-card__head-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 22px;
+}
+.cap-timeline-card__head-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cap-timeline-card__no {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+}
+.cap-timeline-card__no-sep {
+  color: var(--color-mid-gray);
+  font-weight: var(--weight-regular);
+}
+/* count chip: 复用 cap-chip is-snow, 但放大数字部分强化"事件数"语义 */
+.cap-timeline-card__count-chip {
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+.cap-timeline-card__count-label {
+  color: var(--text-tertiary);
+  font-weight: var(--weight-regular);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+.cap-timeline-card__count-value {
+  color: var(--text-primary);
+  font-weight: var(--weight-bold);
+  font-size: 12px;
+}
+
+/* === Position hero — 时刻表的核心识别物 ===
+   设计意图:把 Y.DDDHH 编码当成"印刷标本 / 坐标牌"展示。
+   - 浅米色底 (bg-elev) + 1px border, 内嵌于卡片
+   - 左边 22px mono 加粗 terracotta 编码值 (POS · 1.00700)
+   - 中间 ↳ 箭头作为过渡
+   - 右边 11px dim mono 人类解读 (第1年第7天 06时)
+   字段值变化时不强响动, 保持 specimen 的静态感。 */
+.cap-timeline-card__pos-hero {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.cap-timeline-card__pos-value-block {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+.cap-timeline-card__pos-prefix {
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  color: var(--text-tertiary);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.cap-timeline-card__pos-value {
+  font-size: 22px;
+  font-weight: var(--weight-bold);
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.cap-timeline-card__pos-arrow {
+  font-size: 14px;
+  color: var(--color-mid-gray);
+  line-height: 1;
+  flex-shrink: 0;
+}
+.cap-timeline-card__pos-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: var(--weight-regular);
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+
+/* === 字段: label + content (与剧情弧线一致) === */
+.cap-timeline-card__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.cap-timeline-card__label {
+  font-size: var(--text-caption-size); /* 10px */
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  line-height: 1;
+}
+
+/* === events JSON textarea: mono 字体 + 白底(与剧情弧线 __mono-input 同款) ===
+   避免 Naive UI 默认 n-input 浅灰底,显式覆盖 */
+.cap-timeline-card__mono-input :deep(textarea) {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  letter-spacing: 0.01em;
+  background: var(--bg-card) !important;
+  color: var(--text-primary);
+}
+
+/* === JSON 状态 chip 行 === */
+.cap-timeline-card__json-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* === 底部: 删除(与剧情弧线对齐) === */
+.cap-timeline-card__foot {
   margin-top: 2px;
   padding-top: 10px;
   border-top: 1px solid var(--border-subtle);
