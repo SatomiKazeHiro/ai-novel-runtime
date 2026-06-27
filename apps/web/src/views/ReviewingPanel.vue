@@ -45,32 +45,40 @@
           </header>
         </template>
         <n-empty v-if="characterStates.length === 0" description="暂无角色状态, 点击下方添加" />
-        <ol v-else class="cap-character-card__list">
-          <li
-            v-for="(state, idx) in characterStates"
-            :key="`state-${idx}`"
-            class="cap-character-card__item cap-rise"
-            :data-rise="String(Math.min(idx + 1, 7))"
-          >
-            <div class="cap-character-card__item-head">
-              <span class="cap-character-card__item-no">N°&nbsp;{{ String(idx + 1).padStart(2, '0') }}</span>
-              <input
-                v-model="state.characterId"
-                class="cap-character-card__item-name"
-                placeholder="角色名 / 角色 ID"
-                spellcheck="false"
-              />
-              <button
-                type="button"
-                class="cap-pill is-sm is-danger cap-character-card__item-remove"
-                title="删除该角色状态"
-                aria-label="删除该角色状态"
-                @click="removeCharacterState(idx)"
-              >删除</button>
-            </div>
-            <div class="cap-character-card__item-fields">
-              <label class="cap-character-card__field">
-                <span class="cap-character-card__field-label">状态</span>
+        <n-grid
+          v-else
+          cols="2"
+          x-gap="14"
+          y-gap="14"
+          responsive="screen"
+          class="cap-character-card__grid"
+        >
+          <n-gi v-for="(state, idx) in characterStates" :key="`state-${idx}`">
+            <article class="cap-character-card__item cap-rise" :data-rise="String(Math.min(idx + 1, 7))">
+              <!-- 头部: meta (N° 编号) + 角色名 (大标题等价物) + 删除按钮 -->
+              <header class="cap-character-card__item-head">
+                <div class="cap-character-card__item-meta">
+                  <span class="cap-character-card__item-no">N°&nbsp;{{ String(idx + 1).padStart(2, '0') }}<span class="cap-character-card__item-no-sep"> / {{ String(characterStates.length).padStart(2, '0') }}</span></span>
+                </div>
+                <h3 class="cap-character-card__item-name-wrap">
+                  <input
+                    v-model="state.characterId"
+                    class="cap-character-card__item-name"
+                    placeholder="角色名 / 角色 ID"
+                    spellcheck="false"
+                  />
+                </h3>
+                <button
+                  type="button"
+                  class="cap-pill is-sm is-danger cap-character-card__item-remove"
+                  title="删除该角色状态"
+                  aria-label="删除该角色状态"
+                  @click="removeCharacterState(idx)"
+                >删除</button>
+              </header>
+              <!-- 字段 01: 状态 JSON (单列竖排, 跟剧情弧线/时间线节奏一致) -->
+              <div class="cap-character-card__field">
+                <span class="cap-character-card__field-label">01 · 状态</span>
                 <n-input
                   v-model:value="state.status"
                   type="textarea"
@@ -78,9 +86,10 @@
                   placeholder='{"rank": "...", "location": "..."}'
                   class="cap-character-card__json-input"
                 />
-              </label>
-              <label class="cap-character-card__field">
-                <span class="cap-character-card__field-label">关系</span>
+              </div>
+              <!-- 字段 02: 关系 JSON -->
+              <div class="cap-character-card__field">
+                <span class="cap-character-card__field-label">02 · 关系</span>
                 <n-input
                   v-model:value="state.relationships"
                   type="textarea"
@@ -88,10 +97,10 @@
                   placeholder='{"角色A": "朋友", "角色B": "敌对"}'
                   class="cap-character-card__json-input"
                 />
-              </label>
-            </div>
-          </li>
-        </ol>
+              </div>
+            </article>
+          </n-gi>
+        </n-grid>
         <footer class="cap-character-card__foot">
           <button
             type="button"
@@ -1406,16 +1415,20 @@ defineExpose({ startConfirm, stopConfirm })
 /* =================================================================
    角色状态卡片 — 角色表 (跟剧情弧线/时间线卡片同构, 但走 list 而非 grid)
    ----------------------------------------------------------------
-   设计意图 (2026-06-28):
-     - 之前是 n-card + n-form-item + n-button type=error, 视觉上跟"表单字段"
-       长得一样, 没有"编目感"
-     - 这里走 ① cap-eyebrow 副标 + 大字 title (与剧情弧线头部同节奏)
-       ② 每条角色状态用 <ol> 编号列表 + N° 编号 + 行内可编辑名字 (n-form-item
-          那层 label 壳拿掉, 名字直接是 inline input)
-       ③ 状态/关系 JSON 用 .cap-character-card__json-input 走 mono + 去边框,
-          跟摘要的内嵌 textarea 节奏一致 (但保留细边框, 因为 JSON 需要视觉分组)
-       ④ 按钮从 n-button type=error / n-button dashed block 升级为 cap-pill
-          (与剧情弧线/时间线的删除/添加按钮统一)
+   设计意图 (2026-06-28, 第二次迭代):
+     - 用户反馈希望跟剧情弧线/时间线一致: 2 列 n-grid + 卡片布局
+     - 升级结构: <ol> 列表 → <n-grid cols="2"> + <article> 卡片,
+       卡片视觉 (.cap-character-card__item) 跟 .cap-arc-card / .cap-timeline-card
+       同构 (白底 + 1px border + 6px radius + 18px 20px 16px padding + hover 抬升)
+     - 卡片内 2 字段 (状态 / 关系 JSON) 从原本的 2 栏 grid 改回单列竖排 —
+       窄卡下 2 栏 JSON 输入会非常挤, 单列让 textarea 舒展, 节奏也与
+       .cap-arc-card__field 单列一致
+     - 头部: meta (N° 编号) + 大字角色名 (18px semibold) + 删除 cap-pill,
+       与 .cap-arc-card__head 节奏一致 (meta + 大标题 + 操作)
+     - 字段编号: 01 · 状态 / 02 · 关系 (跟 arc 的 01 · 名称 / 02 · 类型/状态
+       节奏一致)
+     - 按钮: 全部 cap-pill (is-sm is-danger / is-sm is-primary), 与
+       剧情弧线/时间线添加/删除按钮统一
    ================================================================= */
 .cap-character-card {
   position: relative;
@@ -1448,32 +1461,43 @@ defineExpose({ startConfirm, stopConfirm })
   color: var(--text-primary);
   letter-spacing: -0.005em;
 }
-/* 编号列表 (替换 n-space v-for, 拿到真正的 list 语义) */
-.cap-character-card__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+/* 2 列 grid (跟剧情弧线 / 时间线卡片同构) */
+.cap-character-card__grid {
+  margin-bottom: 12px;
 }
+/* 角色状态卡片 — 与 .cap-arc-card / .cap-timeline-card 同构:
+   白底 + 1px pebble border + 6px radius + 18px 20px 16px padding,
+   hover 时 border 升 mid-gray + translateY(-1px), 进入用 cap-rise staggered reveal */
 .cap-character-card__item {
-  background: var(--bg-canvas);
-  border: 1px solid var(--border-subtle);
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-card);
-  padding: 10px 12px 12px;
+  padding: 18px 20px 16px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  transition: border-color 0.15s ease;
+  gap: 12px;
+  min-width: 0;
+  transition: border-color 0.18s ease, transform 0.18s ease;
 }
 .cap-character-card__item:hover {
-  border-color: var(--border-default);
+  border-color: var(--color-mid-gray);
+  transform: translateY(-1px);
 }
+/* 头部: meta (N° 编号) + 大标题等价物 (角色名) + 删除按钮
+   两行布局 — 跟 .cap-arc-card__head (meta + 大标题) 节奏一致 */
 .cap-character-card__item-head {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
+}
+.cap-character-card__item-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 22px;
 }
 .cap-character-card__item-no {
   font-family: var(--font-mono);
@@ -1482,23 +1506,36 @@ defineExpose({ startConfirm, stopConfirm })
   letter-spacing: 0.08em;
   color: var(--text-tertiary);
   text-transform: uppercase;
-  flex-shrink: 0;
 }
-/* 角色名 inline edit: 无边框 + 加重, 像 "档案卡上的名字" */
+.cap-character-card__item-no-sep {
+  color: var(--color-mid-gray);
+  font-weight: var(--weight-regular);
+}
+.cap-character-card__item-remove {
+  flex-shrink: 0;
+  align-self: flex-end;
+}
+/* 角色名 — h3 大标题等价物, 但走 inline input 让用户能直接编辑
+   跟 .cap-arc-card__title / .cap-timeline-card__pos-time 节奏一致 */
+.cap-character-card__item-name-wrap {
+  margin: 0;
+}
 .cap-character-card__item-name {
-  flex: 1 1 auto;
-  min-width: 0;
+  width: 100%;
   background: transparent;
   border: none;
   outline: none;
-  padding: 4px 6px;
+  padding: 0;
   margin: 0;
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 18px;
   font-weight: var(--weight-semibold);
+  line-height: 1.4;
+  letter-spacing: -0.005em;
   color: var(--text-primary);
   border-bottom: 1px solid transparent;
   transition: border-color 0.15s ease;
+  word-break: break-word;
 }
 .cap-character-card__item-name:hover {
   border-bottom-color: var(--border-subtle);
@@ -1511,18 +1548,10 @@ defineExpose({ startConfirm, stopConfirm })
   font-style: italic;
   font-weight: var(--weight-regular);
 }
-.cap-character-card__item-remove {
-  flex-shrink: 0;
-}
-.cap-character-card__item-fields {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
 .cap-character-card__field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 .cap-character-card__field-label {
