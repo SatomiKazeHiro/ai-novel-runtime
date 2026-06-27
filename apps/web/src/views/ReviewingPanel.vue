@@ -117,7 +117,7 @@
                   <!-- 头部: 序号 + 类型/状态 chip + 相似 badge -->
                   <header class="cap-arc-card__head">
                     <div class="cap-arc-card__head-left">
-                      <span class="cap-arc-card__no">N°&nbsp;{{ String(idx + 1).padStart(2, '0') }}<span class="cap-arc-card__no-sep"> / {{ plotArcs.length }}</span></span>
+                      <span class="cap-arc-card__no">N°&nbsp;{{ String(idx + 1).padStart(2, '0') }}<span class="cap-arc-card__no-sep"> / {{ String(plotArcs.length).padStart(2, '0') }}</span></span>
                       <span class="cap-chip" :class="arcTypeChipClass(arc.type)">
                         {{ arc.type === 'main' ? '主线' : '支线' }}
                       </span>
@@ -145,6 +145,7 @@
                     <span class="cap-pencil" />
                     <span class="cap-arc-card__rule-text">DRAFT ENTRY</span>
                     <span class="cap-arc-card__rule-line" />
+                    <span class="cap-arc-card__rule-dot" aria-hidden="true" />
                   </div>
 
                   <!-- 字段: 名称 (inline edit) -->
@@ -776,6 +777,15 @@ defineExpose({ startConfirm, stopConfirm })
   flex: 1;
   height: 1px;
   background: var(--border-default);
+  min-width: 24px;
+}
+/* 右侧装饰小圆点 — 跟左侧 cap-pencil 视觉对称,收尾感 */
+.cap-arc-card__rule-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--border-default);
+  flex-shrink: 0;
 }
 
 /* === 字段: label + content === */
@@ -802,16 +812,26 @@ defineExpose({ startConfirm, stopConfirm })
   line-height: 1;
 }
 
-/* === 名称输入: 大字无 form-item 包裹,直接显示 === */
-.cap-arc-card__name-input {
-  font-weight: var(--weight-semibold) !important;
-}
-
-/* === 类型/状态 chip-row === */
+/* === 类型/状态 chip-row ===
+   Naive UI NSelect 默认 font-size 14px + 12px internal padding,
+   比 NInput 看着大一圈。统一字号到 13px + 收紧 padding,跟 input 视觉对齐。 */
 .cap-arc-card__chip-row {
   display: flex;
   gap: 8px;
   align-items: stretch;
+}
+.cap-arc-card__chip-row :deep(.n-base-selection),
+.cap-arc-card__chip-row :deep(.n-base-selection-input__content) {
+  font-size: 13px;
+}
+.cap-arc-card__chip-row :deep(.n-base-selection-label) {
+  font-size: 13px;
+}
+
+/* === 名称输入: 大字无 form-item 包裹,直接显示 === */
+.cap-arc-card__name-input {
+  font-weight: var(--weight-semibold) !important;
+  font-size: 15px !important;
 }
 
 /* === 进度条: 4px 笔触 visual + 透明 slider overlay + mono % === */
@@ -853,15 +873,18 @@ defineExpose({ startConfirm, stopConfirm })
   height: 4px;
 }
 .cap-arc-card__progress :deep(.n-slider-handle) {
+  width: 14px !important;
+  height: 14px !important;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--color-warm-accent-tint);
+  border-width: 2px;
+  box-shadow: 0 0 0 2px var(--color-warm-accent-tint);
 }
 .cap-arc-card__progress-text {
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: var(--weight-semibold);
   color: var(--text-secondary);
-  min-width: 44px;
+  min-width: 38px;
   text-align: right;
   letter-spacing: 0.02em;
 }
