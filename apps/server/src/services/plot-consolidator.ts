@@ -104,9 +104,9 @@ const ConsolidateResponseSchema = z.object({
 
 type ConsolidateResponse = z.infer<typeof ConsolidateResponseSchema>
 
-/** 粒度约束常量 */
-const MAX_MAIN_ARCS = 1
-const MAX_SIDE_ARCS = 2
+/** 软约束常量 — 超出仅 warn, 不阻塞流程 */
+const SOFT_MAX_MAIN_ARCS = 5
+const SOFT_MAX_SIDE_ARCS = 10
 
 // ---------------------------------------------------------------------------
 // Main entry
@@ -373,18 +373,17 @@ function carryForwardArc(storyId: string, existing: ExistingArcView): Consolidat
 // ---------------------------------------------------------------------------
 
 function validateGranularity(writes: ConsolidatedArcWrite[], app: FastifyInstance): void {
-  const mainCount = writes.filter(w => w.type === 'main' && w.status !== 'completed').length
-  const sideCount = writes.filter(w => w.type === 'side' && w.status !== 'completed').length
+  // 仅统计"活跃追踪中"的 arc (排除 completed / closed 终态)
+  // stale 算活跃 (AI 可能重新激活)
+  const activeStatuses = (s: string) => s !== 'completed' && s !== 'closed'
+  const mainCount = writes.filter(w => w.type === 'main' && activeStatuses(w.status)).length
+  const sideCount = writes.filter(w => w.type === 'side' && activeStatuses(w.status)).length
 
-  if (mainCount > MAX_MAIN_ARCS) {
-    const err = `粒度约束违反: 主线 (type=main) 总数 ${mainCount} 超过上限 ${MAX_MAIN_ARCS}。需调整 updates/newArcs, 合并主线或放弃次要主线。`
-    app.log.error(`[PlotConsolidator] ${err}`)
-    throw new Error(err)
+  if (mainCount > SOFT_MAX_MAIN_ARCS) {
+    app.log.warn(`[PlotConsolidator] main arc count ${mainCount} exceeds soft cap ${SOFT_MAX_MAIN_ARCS}`)
   }
-  if (sideCount > MAX_SIDE_ARCS) {
-    const err = `粒度约束违反: 支线 (type=side) 总数 ${sideCount} 超过上限 ${MAX_SIDE_ARCS}。需调整 updates/newArcs, 合并支线或放弃次要支线。`
-    app.log.error(`[PlotConsolidator] ${err}`)
-    throw new Error(err)
+  if (sideCount > SOFT_MAX_SIDE_ARCS) {
+    app.log.warn(`[PlotConsolidator] side arc count ${sideCount} exceeds soft cap ${SOFT_MAX_SIDE_ARCS}`)
   }
 }
 
