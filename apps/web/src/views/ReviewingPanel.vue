@@ -198,24 +198,24 @@
                     </div>
                   </div>
 
-                  <!-- 当前阶段 / 下一目标 (同行) -->
-                  <div class="cap-arc-card__row">
-                    <div class="cap-arc-card__field">
-                      <span class="cap-arc-card__label">04 · 当前阶段</span>
-                      <n-input
-                        v-model:value="arc.currentStage"
-                        placeholder="当前阶段"
-                        size="small"
-                      />
-                    </div>
-                    <div class="cap-arc-card__field">
-                      <span class="cap-arc-card__label">05 · 下一目标</span>
-                      <n-input
-                        v-model:value="arc.nextGoal"
-                        placeholder="下一目标"
-                        size="small"
-                      />
-                    </div>
+                  <!-- 当前阶段 -->
+                  <div class="cap-arc-card__field">
+                    <span class="cap-arc-card__label">04 · 当前阶段</span>
+                    <n-input
+                      v-model:value="arc.currentStage"
+                      placeholder="当前阶段"
+                      size="small"
+                    />
+                  </div>
+
+                  <!-- 下一目标 -->
+                  <div class="cap-arc-card__field">
+                    <span class="cap-arc-card__label">05 · 下一目标</span>
+                    <n-input
+                      v-model:value="arc.nextGoal"
+                      placeholder="下一目标"
+                      size="small"
+                    />
                   </div>
 
                   <!-- 摘要: textarea 直接编辑 -->
@@ -249,7 +249,7 @@
                     <n-input
                       v-model:value="arc.stages"
                       type="textarea"
-                      :rows="3"
+                      :rows="5"
                       placeholder="阶段记录 JSON"
                       size="small"
                       class="cap-arc-card__mono-input"
@@ -797,14 +797,6 @@ defineExpose({ startConfirm, stopConfirm })
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-}
-.cap-arc-card__row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-@media (max-width: 600px) {
-  .cap-arc-card__row { grid-template-columns: 1fr; }
 }
 .cap-arc-card__label {
   font-size: var(--text-caption-size); /* 10px */
