@@ -160,31 +160,49 @@ function resetForm() {
 }
 
 /**
- * 选中章节后, 把 position 默认填为该章节已有事件的最大 position。
+ * 选中章节后, 把 position 默认填为该章节已有事件的最大 position + 一个 5-digit 步长。
  * 0 个事件 → DEFAULT_TIMELINE_POSITION (1.00106)。
  * 用户可再手动微调。
+ *
+ * 2026-06-27 改动:
+ *   - 步长 0.00001 (Y.DDDHH 编码的最小刻度 = 1 小时), 确保 +1 步仍在合法 DDDHH 范围
+ *   - 加 collision check against 全 story events, 不只是当前章节, 防止跨章节撞 position
+ *     (TimelineEvent unique constraint on (storyId, position))
  */
+const POSITION_STEP = 0.00001  // 1 小时 = Y.DDDHH 编码的最小单位
+
+function nextFreePosition(seed: number, storyEvents: Array<{ position: number }>): number {
+  const taken = new Set(storyEvents.map(e => e.position))
+  let candidate = seed
+  while (taken.has(candidate)) {
+    candidate += POSITION_STEP
+  }
+  return candidate
+}
+
 function onChapterChange(chapterNumber: number | null) {
   if (chapterNumber == null) {
-    form.value.position = DEFAULT_TIMELINE_POSITION
+    form.value.position = nextFreePosition(DEFAULT_TIMELINE_POSITION, events.value)
     return
   }
   const chapterEvents = events.value.filter(
     e => e.fromChapterNumber === chapterNumber
   )
   if (chapterEvents.length === 0) {
-    form.value.position = DEFAULT_TIMELINE_POSITION
+    form.value.position = nextFreePosition(DEFAULT_TIMELINE_POSITION, events.value)
   } else {
-    form.value.position = Math.max(...chapterEvents.map(e => e.position))
+    const max = Math.max(...chapterEvents.map(e => e.position))
+    form.value.position = nextFreePosition(max + POSITION_STEP, events.value)
   }
 }
 
 function openAddModal() {
   editingId.value = null
   resetForm()
-  // 默认绑到第一个已归档章节
+  // 默认绑到 number 最大的已归档章节 (2026-06-27: 用户反馈默认总是第一章很烦)
   if (archivedChapterOptions.value.length > 0) {
-    form.value.fromChapterNumber = archivedChapterOptions.value[0].value
+    const last = archivedChapterOptions.value[archivedChapterOptions.value.length - 1]
+    form.value.fromChapterNumber = last.value
     onChapterChange(form.value.fromChapterNumber)
   }
   showModal.value = true

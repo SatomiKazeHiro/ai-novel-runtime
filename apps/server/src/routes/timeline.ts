@@ -37,6 +37,28 @@ export async function timelineRoutes(app: FastifyInstance) {
       })
     }
 
+    // Merge 语义 (2026-06-27 修复): UI 默认 position 是该章节已有事件的最大 position,
+    // 该 position 已存在 TimelineEvent row, prisma.timelineEvent.create 会抛 P2002
+    // (unique on (storyId, position))。镜像 commitMemoryWrites: 找到已有 row 后
+    // 把新 events 追加到 JSON 数组, update 而非 create。
+    const existing = await app.prisma.timelineEvent.findUnique({
+      where: { storyId_position: { storyId, position: body.position } }
+    })
+    if (existing) {
+      let oldEvents: string[] = []
+      try {
+        const parsed = JSON.parse(existing.events)
+        if (Array.isArray(parsed)) oldEvents = parsed
+      } catch {
+        // 历史脏数据:旧 events 字段不是合法 JSON, 视为空数组追加, 不丢新数据
+      }
+      const event = await app.prisma.timelineEvent.update({
+        where: { id: existing.id },
+        data: { events: JSON.stringify([...oldEvents, ...body.events]) }
+      })
+      return { success: true, data: event }
+    }
+
     const event = await app.prisma.timelineEvent.create({
       data: {
         storyId,

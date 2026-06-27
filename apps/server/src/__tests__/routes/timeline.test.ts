@@ -36,11 +36,18 @@ describe('POST /api/stories/:storyId/timeline — CreateTimelineEventRequestSche
       },
       timelineEvent: {
         ...createMockPrisma().timelineEvent,
+        findUnique: vi.fn().mockResolvedValue(null),  // 默认: 同 position 不存在
         create: vi.fn().mockImplementation(async ({ data }: any) => ({
           id: 'te-new',
           storyId: data.storyId,
           fromChapterNumber: data.fromChapterNumber,
           position: data.position,
+          events: data.events
+        })),
+        update: vi.fn().mockImplementation(async ({ where, data }: any) => ({
+          id: where.id ?? where.eventId ?? 'te-updated',
+          storyId: 's1',
+          position: 1.00106,
           events: data.events
         }))
       }
@@ -164,6 +171,42 @@ describe('POST /api/stories/:storyId/timeline — CreateTimelineEventRequestSche
     )
     expect(result.status).toBe(400)
     expect(mockPrisma.timelineEvent.create).not.toHaveBeenCalled()
+  })
+
+  it('merges events into existing row when (storyId, position) already exists (regression: P2002 on default position)', async () => {
+    // 用户报告 500: 默认 position = 该章节已有事件的最大 position, 该 position 已
+    // 存在 TimelineEvent row, prisma.timelineEvent.create 抛 P2002 (unique on
+    // (storyId, position))。修复: 镜像 commitMemoryWrites 的 merge 语义 —
+    // 找到已有 row, 把新 events 追加到 JSON 数组, update 而非 create。
+    mockPrisma.timelineEvent.findUnique.mockResolvedValue({
+      id: 'te-existing', storyId: 's1',
+      fromChapterNumber: 1, position: 1.00106,
+      events: '["已有事件"]',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    })
+    mockPrisma.timelineEvent.update.mockImplementation(async ({ where, data }: any) => ({
+      id: where.id, storyId: 's1', fromChapterNumber: 1,
+      position: 1.00106, events: data.events
+    }))
+
+    const result = await callHandler(
+      routes, 'POST', '/api/stories/:storyId/timeline',
+      { fromChapterNumber: 1, position: 1.00106, events: ['新事件'] },
+      { storyId: 's1' }
+    )
+
+    expect(result.status).not.toBe(500)
+    expect(result.status).not.toBe(400)
+    expect(result.body).toEqual(expect.objectContaining({ success: true }))
+    // 不调用 create, 走 update
+    expect(mockPrisma.timelineEvent.create).not.toHaveBeenCalled()
+    expect(mockPrisma.timelineEvent.update).toHaveBeenCalledTimes(1)
+    const updateArg = mockPrisma.timelineEvent.update.mock.calls[0][0]
+    expect(updateArg.where.id).toBe('te-existing')
+    // 合并: 已有 + 新
+    const merged = JSON.parse(updateArg.data.events)
+    expect(merged).toEqual(['已有事件', '新事件'])
   })
 })
 
