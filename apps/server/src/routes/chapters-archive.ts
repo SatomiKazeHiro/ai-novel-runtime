@@ -196,8 +196,8 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
           data: chapterMetaUpdate
         })
 
-        // 3. 写入剧情弧线
-        await commitPlotArcWrites(tx, pending.plotArcs)
+        // 3. 写入剧情弧线 (含 lastTouchedChapter 刷新 + stale 检测)
+        await commitPlotArcWrites(tx, chapter.number, pending.plotArcs)
 
         // 4. 写入图谱快照
         const saved = await saveGraphSnapshotAndDelta(tx, chapterId, chapter.storyId, pending.graph)
