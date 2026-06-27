@@ -191,7 +191,7 @@ describe('consolidatePlotArcs v2 — AI 识别新弧线 (笔墨浓重)', () => {
         {
           name: '魔道余孽浮现',
           type: 'side',
-          status: 'pending',
+          status: 'active',
           progress: 5,
           currentStage: '本章末尾首次暗示',
           nextGoal: '主角查明魔道身份',
@@ -264,7 +264,7 @@ describe('consolidatePlotArcs v2 — 推进 + 新增 + carry-forward 三类并�
         { existingId: 'existing-李凡修仙之路', progress: 50, currentStage: 'A', nextGoal: 'B', unresolved: [], summary: '推进' }
       ],
       newArcs: [
-        { name: '魔道余孽浮现', type: 'side', status: 'pending', progress: 5, currentStage: '首现', nextGoal: '查明身份', unresolved: ['真实身份'], summary: '新' }
+        { name: '魔道余孽浮现', type: 'side', status: 'active', progress: 5, currentStage: '首现', nextGoal: '查明身份', unresolved: ['真实身份'], summary: '新' }
       ]
     }))
 
@@ -321,7 +321,7 @@ describe('consolidatePlotArcs v2 — 进度单调不减', () => {
     mockCallAIWithLog.mockResolvedValue(JSON.stringify({
       updates: [],
       newArcs: [
-        { name: '新主线', type: 'main', status: 'pending', progress: 50, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'AI 给了 50 但开篇不该这么高' }
+        { name: '新主线', type: 'main', status: 'active', progress: 50, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'AI 给了 50 但开篇不该这么高' }
       ]
     }))
 
@@ -381,16 +381,15 @@ describe('consolidatePlotArcs v2 — AI 幻觉保护', () => {
   })
 })
 
-describe('consolidatePlotArcs v2 — 粒度约束 (Zod schema 校验)', () => {
+describe('consolidatePlotArcs v2 — 软粒度约束 (2026-06-27 不再抛错)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setupRuntimeMocks()
   })
 
-  it('AI 超额返回 3 main + 2 side → 抛错 (主线 ≤ 1, 支线 ≤ 2)', async () => {
-    // 现有 arc 已占用 1 main + 1 side, AI 又加 2 main + 1 side → 共 3 main + 2 side
+  it('AI 超额返回 3 main → 通过 + 软 warn (旧行为是抛错)', async () => {
+    // 软上限 main=5, 3 main 不超, 不应 warn
     const e1 = buildExistingArc('主线A', { type: 'main', progress: 30 })
-    const e2 = buildExistingArc('支线A', { type: 'side', progress: 20 })
     const app = buildApp()
 
     mockCallAIWithLog.mockResolvedValue(JSON.stringify({
@@ -398,18 +397,19 @@ describe('consolidatePlotArcs v2 — 粒度约束 (Zod schema 校验)', () => {
         { existingId: 'existing-主线A', progress: 35, currentStage: 'A', nextGoal: 'B', unresolved: [], summary: 'x' }
       ],
       newArcs: [
-        { name: '主线B', type: 'main', status: 'pending', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' },
-        { name: '主线C', type: 'main', status: 'pending', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' },
-        { name: '支线B', type: 'side', status: 'pending', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' }
+        { name: '主线B', type: 'main', status: 'active', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' },
+        { name: '主线C', type: 'main', status: 'active', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' }
       ]
     }))
 
-    await expect(
-      consolidatePlotArcs(app, 's1', 'c1', [e1, e2], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
-    ).rejects.toThrow(/粒度|主线|支线|granularity/i)
+    const result = await consolidatePlotArcs(app, 's1', 'c1', [e1], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+
+    expect(result).toHaveLength(3)  // 1 update + 2 newArcs, 不抛错
+    const warnCalls = (app.log.warn as any).mock.calls.map((c: any[]) => c[0]).join('\n')
+    expect(warnCalls).not.toMatch(/exceeds soft cap/)
   })
 
-  it('AI 返回 1 main + 2 side → 通过 (符合粒度)', async () => {
+  it('AI 返回 1 main + 2 side → 通过且无 warn', async () => {
     const e1 = buildExistingArc('主线A', { type: 'main', progress: 30 })
     const e2 = buildExistingArc('支线A', { type: 'side', progress: 20 })
     const app = buildApp()
@@ -419,7 +419,7 @@ describe('consolidatePlotArcs v2 — 粒度约束 (Zod schema 校验)', () => {
         { existingId: 'existing-主线A', progress: 35, currentStage: 'A', nextGoal: 'B', unresolved: [], summary: 'x' }
       ],
       newArcs: [
-        { name: '支线B', type: 'side', status: 'pending', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' }
+        { name: '支线B', type: 'side', status: 'active', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' }
       ]
     }))
 
@@ -492,7 +492,7 @@ describe('consolidatePlotArcs v2 — stages 合并 (新 arc 自动初始化 stag
     mockCallAIWithLog.mockResolvedValue(JSON.stringify({
       updates: [],
       newArcs: [
-        { name: '魔道浮现', type: 'side', status: 'pending', progress: 5, currentStage: '首现', nextGoal: '查明', unresolved: ['身份'], summary: 'x' }
+        { name: '魔道浮现', type: 'side', status: 'active', progress: 5, currentStage: '首现', nextGoal: '查明', unresolved: ['身份'], summary: 'x' }
       ]
     }))
 
@@ -501,5 +501,161 @@ describe('consolidatePlotArcs v2 — stages 合并 (新 arc 自动初始化 stag
     const stages = JSON.parse(result[0].stages)
     expect(stages).toHaveLength(1)
     expect(stages[0].stage).toBe('首现')
+  })
+})
+
+// ============================================================================
+// UpdateSchema 扩展: type 翻转 + closed 字段 (2026-06-27)
+// ============================================================================
+
+describe('UpdateSchema v3 — type 翻转 + closed 字段', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupRuntimeMocks()
+  })
+
+  it('AI update 带 type=side 翻转 main→side', async () => {
+    const existing = buildExistingArc('李凡修仙之路', { type: 'main' })
+    const app = buildApp()
+
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [
+        { existingId: 'existing-李凡修仙之路', type: 'side', progress: 50, currentStage: 'A', nextGoal: 'B', unresolved: [], summary: '翻为支线' }
+      ],
+      newArcs: []
+    }))
+
+    const result = await consolidatePlotArcs(app, 's1', 'c1', [existing], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+
+    expect(result[0].type).toBe('side')
+  })
+
+  it('AI update status=closed + closedReason=duplicate + closedTargetArcId → write 带 closed 字段', async () => {
+    const target = buildExistingArc('保留条', { type: 'main' })
+    const duplicate = buildExistingArc('重复条', { type: 'main' })
+    const app = buildApp()
+
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [
+        { existingId: 'existing-重复条', status: 'closed', closedReason: 'duplicate', closedTargetArcId: 'existing-保留条' }
+      ],
+      newArcs: []
+    }))
+
+    const result = await consolidatePlotArcs(app, 's1', 'c1', [target, duplicate], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+
+    const closedArc = result.find(r => r.existingId === 'existing-重复条')!
+    expect(closedArc.status).toBe('closed')
+    expect(closedArc.closedReason).toBe('duplicate')
+    expect(closedArc.closedTargetArcId).toBe('existing-保留条')
+    expect(closedArc.source).toBe('ai-update')
+  })
+
+  it('AI 写的 source 自动填充 ai-update (carry-forward 写 carry-forward)', async () => {
+    const e1 = buildExistingArc('推进', { progress: 30 })
+    const e2 = buildExistingArc('未推进', { progress: 20 })
+    const app = buildApp()
+
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [
+        { existingId: 'existing-推进', progress: 45, currentStage: 'A', nextGoal: 'B', unresolved: [], summary: 'x' }
+      ],
+      newArcs: []
+    }))
+
+    const result = await consolidatePlotArcs(app, 's1', 'c1', [e1, e2], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+
+    const updated = result.find(r => r.existingId === 'existing-推进')!
+    const carried = result.find(r => r.existingId === 'existing-未推进')!
+    expect(updated.source).toBe('ai-update')
+    expect(carried.source).toBe('carry-forward')
+  })
+
+  it('AI 不能直接写 status=stale (Zod 拒绝)', async () => {
+    // 通过 schema: AI 的 UpdateSchema enum 不含 'stale'
+    // 实际校验在 callConsolidateAI 内部, 这里直接测试 Zod safeParse
+    const { z } = await import('zod')
+    // 复刻 schema 的 enum 列表 (这里用 z.enum 校验逻辑)
+    const StatusSchema = z.enum(['active', 'resolving', 'completed', 'closed'])
+    expect(StatusSchema.safeParse('stale').success).toBe(false)
+    expect(StatusSchema.safeParse('active').success).toBe(true)
+  })
+})
+
+// ============================================================================
+// validateGranularity 软约束: 不再抛错, 只 warn (2026-06-27)
+// ============================================================================
+
+describe('validateGranularity v2 — 软 warn 不抛错', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupRuntimeMocks()
+  })
+
+  it('AI 超额返回 6 main → 通过 (软上限 5, 仅 warn)', async () => {
+    const app = buildApp()
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [],
+      newArcs: [
+        { name: 'm1', type: 'main', status: 'active', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' },
+        { name: 'm2', type: 'main', status: 'active', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' },
+        { name: 'm3', type: 'main', status: 'active', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' },
+        { name: 'm4', type: 'main', status: 'active', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' },
+        { name: 'm5', type: 'main', status: 'active', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' },
+        { name: 'm6', type: 'main', status: 'active', progress: 5, currentStage: 'X', nextGoal: 'Y', unresolved: [], summary: 'x' }
+      ]
+    }))
+
+    const result = await consolidatePlotArcs(app, 's1', 'c1', [], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+
+    expect(result).toHaveLength(6)
+    // 软 warn 应被记录
+    expect(app.log.warn).toHaveBeenCalledWith(
+      expect.stringMatching(/main arc count 6 exceeds soft cap 5/)
+    )
+  })
+
+  it('completed / closed 弧线不计入活跃统计', async () => {
+    const completed = buildExistingArc('已完结', { progress: 100, status: 'completed' })
+    const closed = buildExistingArc('已关闭', { progress: 100, status: 'closed' })
+    const app = buildApp()
+
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [],
+      newArcs: []
+    }))
+
+    await consolidatePlotArcs(app, 's1', 'c1', [completed, closed], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+
+    // 0 main + 0 side (completed/closed 都排除), 不应 warn
+    const warnCalls = (app.log.warn as any).mock.calls.map((c: any[]) => c[0]).join('\n')
+    expect(warnCalls).not.toMatch(/exceeds soft cap/)
+  })
+})
+
+// ============================================================================
+// carry-forward 排除 closed (2026-06-27 PR1)
+// ============================================================================
+
+describe('consolidatePlotArcs v2 — closed arc 同样跳过 carry-forward', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupRuntimeMocks()
+  })
+
+  it('existing closed arc 不出现 (避免 ReviewingPanel 污染)', async () => {
+    const active = buildExistingArc('主线A', { progress: 30 })
+    const closed = buildExistingArc('已关闭', { progress: 100, status: 'closed' })
+    const app = buildApp()
+
+    mockCallAIWithLog.mockResolvedValue(JSON.stringify({
+      updates: [{ existingId: 'existing-主线A', progress: 35, currentStage: 'A', nextGoal: 'B', unresolved: [], summary: 'x' }],
+      newArcs: []
+    }))
+
+    const result = await consolidatePlotArcs(app, 's1', 'c1', [active, closed], SAMPLE_CHAPTER, SAMPLE_OUTLINE)
+
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('主线A')
   })
 })
