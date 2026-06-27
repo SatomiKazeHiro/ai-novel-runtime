@@ -113,6 +113,15 @@ export interface PendingPlotArcWrite {
   summary: string
   isNew: boolean
   existingId?: string
+  // Distinguishes AI updates from carry-forward writes so commit can
+  // refresh `lastTouchedChapter` only for the former.
+  source?: 'ai-update' | 'carry-forward'
+  // When status is 'closed', why the AI closed this arc.
+  closedReason?: string
+  // When status is 'closed' as a duplicate, points at the arc it merged into.
+  closedTargetArcId?: string
+  // Jaccard tag from dedup fallback: similar existing arc ids, JSON-encoded array.
+  similarToExistingIds?: string
 }
 
 /**
