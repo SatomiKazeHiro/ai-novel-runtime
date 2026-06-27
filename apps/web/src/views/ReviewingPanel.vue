@@ -10,9 +10,50 @@
 
     <n-space vertical size="large" style="width: 100%">
 
+      <!-- 本章级常驻区: 摘要 + 角色状态 (跨 tab 通用, 不藏在记忆tab 内) -->
+      <n-card title="本章摘要" size="small">
+        <n-input
+          v-model:value="summary"
+          type="textarea"
+          :rows="2"
+          placeholder="一句话摘要"
+        />
+      </n-card>
+      <n-card title="角色状态" size="small">
+        <n-empty v-if="characterStates.length === 0" description="暂无角色状态" />
+        <n-space
+          v-for="(state, idx) in characterStates"
+          :key="`state-${idx}`"
+          vertical
+          style="width: 100%; margin-bottom: 12px"
+        >
+          <n-space justify="space-between" style="width: 100%">
+            <n-text strong>{{ state.characterId }}</n-text>
+            <n-button size="small" type="error" @click="removeCharacterState(idx)">删除</n-button>
+          </n-space>
+          <n-form-item label="状态 JSON" label-placement="left" style="margin-bottom: 8px">
+            <n-input
+              v-model:value="state.status"
+              type="textarea"
+              :rows="3"
+              placeholder='{"rank": "...", "location": "..."}'
+            />
+          </n-form-item>
+          <n-form-item label="关系 JSON" label-placement="left">
+            <n-input
+              v-model:value="state.relationships"
+              type="textarea"
+              :rows="2"
+              placeholder='{"角色A": "朋友", "角色B": "敌对"}'
+            />
+          </n-form-item>
+        </n-space>
+        <n-button size="small" dashed block @click="addCharacterState">添加角色状态</n-button>
+      </n-card>
+
       <!-- 主编辑区 -->
       <n-tabs type="line" default-value="memories" :animated="true">
-        <!-- 记忆 tab：记忆编辑器 + 角色状态 -->
+        <!-- 记忆 tab: 提取的记忆 (主/次事件 + 情绪/伏笔/关系). 摘要/角色状态已上移到 banner 下 -->
         <n-tab-pane name="memories" tab="记忆">
           <n-space vertical size="large" style="width: 100%">
             <!-- 记忆编辑器 -->
@@ -54,31 +95,7 @@
                     </n-space>
                   </n-collapse-item>
                 </n-collapse>
-
-                <n-divider />
-
-                <n-form-item label="本章摘要" label-placement="left">
-                  <n-input v-model:value="summary" type="textarea" :rows="2" placeholder="一句话摘要" />
-                </n-form-item>
               </n-space>
-            </n-card>
-
-            <!-- 角色状态编辑器 -->
-            <n-card title="角色状态" size="small">
-              <n-empty v-if="characterStates.length === 0" description="暂无角色状态" />
-              <n-space v-for="(state, idx) in characterStates" :key="`state-${idx}`" vertical style="width: 100%; margin-bottom: 12px">
-                <n-space justify="space-between" style="width: 100%">
-                  <n-text strong>{{ state.characterId }}</n-text>
-                  <n-button size="small" type="error" @click="removeCharacterState(idx)">删除</n-button>
-                </n-space>
-                <n-form-item label="状态 JSON" label-placement="left" style="margin-bottom: 8px">
-                  <n-input v-model:value="state.status" type="textarea" :rows="3" placeholder='{"rank": "...", "location": "..."}' />
-                </n-form-item>
-                <n-form-item label="关系 JSON" label-placement="left">
-                  <n-input v-model:value="state.relationships" type="textarea" :rows="2" placeholder='{"角色A": "朋友", "角色B": "敌对"}' />
-                </n-form-item>
-              </n-space>
-              <n-button size="small" dashed block @click="addCharacterState">添加角色状态</n-button>
             </n-card>
           </n-space>
         </n-tab-pane>
@@ -104,7 +121,7 @@
                       <span class="cap-timeline-card__no">N°&nbsp;{{ String(idx + 1).padStart(2, '0') }}<span class="cap-timeline-card__no-sep"> / {{ String(timelineEvents.length).padStart(2, '0') }}</span></span>
                       <div class="cap-timeline-card__head-chips">
                         <span class="cap-chip is-blue cap-timeline-card__count-chip">
-                          <span class="cap-timeline-card__count-label">事件</span>
+                          <span class="cap-timeline-card__count-label">事件数</span>
                           <span class="cap-timeline-card__count-value">{{ getEventsList(te.events).length }}</span>
                         </span>
                       </div>
@@ -362,7 +379,7 @@
 import { ref, computed, watch } from 'vue'
 import {
   NCard, NSpace, NTabs, NTabPane, NCollapse, NCollapseItem,
-  NInput, NInputNumber, NButton, NEmpty, NDivider, NFormItem, NGrid, NGi, NText,
+  NInput, NInputNumber, NButton, NEmpty, NFormItem, NGrid, NGi, NText,
   NSelect, NSlider,
   useDialog
 } from 'naive-ui'
@@ -1123,7 +1140,7 @@ defineExpose({ startConfirm, stopConfirm })
   min-width: 0;
 }
 .cap-timeline-card__pos-input {
-  flex: 1 1 auto;
+  /*flex: 1 1 auto;*/
   min-width: 0;
 }
 .cap-timeline-card__pos-help {
@@ -1188,12 +1205,6 @@ defineExpose({ startConfirm, stopConfirm })
    - 每个 n-tag: 100% 宽, 右 margin 0, 底 margin 6px 分隔
    - tag content: 解除 max-width / nowrap 限制, 让长文本自然换行显示
    - input (n-dynamic-tags 自带) 仍走 inline, 用户能继续添加新 tag */
-.cap-timeline-card__events-list {
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-card);
-  background: var(--bg-card);
-  padding: 10px 12px;
-}
 .cap-timeline-card__events-list :deep(.n-dynamic-tags) {
   display: flex;
   flex-direction: column;
@@ -1213,6 +1224,7 @@ defineExpose({ startConfirm, stopConfirm })
   overflow: visible;
   text-overflow: clip;
   word-break: break-word;
+  line-height: 16px;
 }
 .cap-timeline-card__events-list :deep(.n-dynamic-tags .n-tag__close) {
   margin-left: 8px;
