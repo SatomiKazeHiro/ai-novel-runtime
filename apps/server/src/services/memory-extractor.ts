@@ -328,14 +328,17 @@ export function prepareMemoryWrites(
 
   // 章首 row: 若 anchor 位置尚无 row, 写入一条章首 row 携带 mainEvents 描述
   // 若数组第一条 position 已是 anchor (典型情况), 把那条 row 的 events
-  // 升级成 mainEvents 描述 (章首 row 应携带章节核心事件, 不只是事件描述)
+  // 合并: mainEvents 描述 + 原数组 row 的描述 (不覆盖, 避免丢失章首的原文表述)
+  // mainEvents 空时退化为保留原数组 row 的描述
   if (anchorPosition !== null) {
     const eventDescs = (result.mainEvents || []).map(e => e.description)
     const existingIdx = perEventWrites.findIndex(w => w.position === anchorPosition)
     if (existingIdx >= 0) {
+      const originalEvents = safeJsonParse<string[]>(perEventWrites[existingIdx].events, [])
+      const merged = [...eventDescs, ...originalEvents]
       perEventWrites[existingIdx] = {
         ...perEventWrites[existingIdx],
-        events: JSON.stringify(eventDescs)
+        events: JSON.stringify(merged)
       }
     } else {
       perEventWrites.push({
@@ -346,7 +349,43 @@ export function prepareMemoryWrites(
       })
     }
   }
-  timelineEvents = perEventWrites
+  // 同 fromChapterNumber 范围内聚类去重 (2026-06-27 兜底):
+  //   AI 在 mainEvents / timelineEvents 用不同措辞写同一事件 (Jaccard ≈ 0.7+),
+  //   直接落库会产生"看似不同但语义相同"的 row。聚类用 tokenSet + jaccardSimilarity
+  //   (已有 helper, @novel-runtime/shared), 阈值 0.7。匹配到现有 row 就把新 events
+  //   合并到该 row.events 数组, 不匹配独立成 row。
+  //   历史数据不回填, 只影响未来 archive。
+  const JACCARD_THRESHOLD = 0.7
+  const clustered: TimelineEventWrite[] = []
+  for (const candidate of perEventWrites) {
+    const candidateEvents = safeJsonParse<string[]>(candidate.events, [])
+    let mergedInto: TimelineEventWrite | null = null
+    for (const existing of clustered) {
+      const existingEvents = safeJsonParse<string[]>(existing.events, [])
+      for (const candDesc of candidateEvents) {
+        const candSet = tokenSet(candDesc)
+        for (const ed of existingEvents) {
+          const sim = jaccardSimilarity(candSet, tokenSet(ed))
+          if (sim >= JACCARD_THRESHOLD) {
+            mergedInto = existing
+            break
+          }
+        }
+        if (mergedInto) break
+      }
+      if (mergedInto) break
+    }
+    if (mergedInto) {
+      const mergedEvents = [
+        ...safeJsonParse<string[]>(mergedInto.events, []),
+        ...candidateEvents
+      ]
+      mergedInto.events = JSON.stringify(mergedEvents)
+    } else {
+      clustered.push(candidate)
+    }
+  }
+  timelineEvents = clustered
   timelinePosition = anchorPosition
 
   // 7. 摘要
@@ -413,16 +452,31 @@ export async function commitMemoryWrites(
   }
 
   // 3. 写入 TimelineEvent (compound key: storyId + position)
+  //    合并去重 (2026-06-27): 同 (storyId, position) 已存在 row 时, 朴素拼接
+  //    events JSON 数组会让相似措辞 (Jaccard ≥ 0.7) 在同一 row 内重复。
+  //    典型场景: 章节重新归档, 旧 events + 新 events 在同 row 叠加。
+  //    兜底: 合并前按 Jaccard 去重, 保留老 entries (历史优先)。
+  const MERGE_JACCARD_THRESHOLD = 0.7
   for (const te of data.timelineEvents) {
     const existing = await tx.timelineEvent.findUnique({
       where: { storyId_position: { storyId: te.storyId, position: te.position } }
     })
     if (existing) {
-      const oldEvents = safeJsonParse(existing.events, [])
-      const newEvents = safeJsonParse(te.events, [])
+      const oldEvents = safeJsonParse<string[]>(existing.events, [])
+      const newEvents = safeJsonParse<string[]>(te.events, [])
+      // 预计算老 entries 的 token Set, 减少重复 tokenize
+      const oldTokenSets = oldEvents.map(e => ({ text: e, set: tokenSet(e) }))
+      const dedupedNew: string[] = []
+      for (const newDesc of newEvents) {
+        const newSet = tokenSet(newDesc)
+        const isDup = oldTokenSets.some(ot =>
+          jaccardSimilarity(newSet, ot.set) >= MERGE_JACCARD_THRESHOLD
+        )
+        if (!isDup) dedupedNew.push(newDesc)
+      }
       await tx.timelineEvent.update({
         where: { id: existing.id },
-        data: { events: JSON.stringify([...oldEvents, ...newEvents]) }
+        data: { events: JSON.stringify([...oldEvents, ...dedupedNew]) }
       })
     } else {
       await tx.timelineEvent.create({ data: te })

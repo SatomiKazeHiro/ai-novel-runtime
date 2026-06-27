@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { prepareMemoryWrites, type MemoryExtractionResult } from '../services/memory-extractor.js'
+import { prepareMemoryWrites, commitMemoryWrites, type MemoryExtractionResult } from '../services/memory-extractor.js'
 
 /**
  * prepareMemoryWrites — importance clamp 兜底
@@ -277,9 +277,9 @@ describe('prepareMemoryWrites — timelineEvents[] 扫描 + 顶层兜底', () =>
     expect(out.timelineEvents).toHaveLength(2)
     // 章首 = 第一条事件的 position
     expect(out.timelinePosition).toBe(1.00106)
-    // 第一条 row 是章首 (携 mainEvents 描述)
+    // 第一条 row 是章首 (携 mainEvents 描述 + 原数组第一条描述)
     expect(out.timelineEvents[0].position).toBe(1.00106)
-    expect(JSON.parse(out.timelineEvents[0].events)).toEqual(['main1', 'main2'])
+    expect(JSON.parse(out.timelineEvents[0].events)).toEqual(['main1', 'main2', 'a'])
     // 第二条 row 是数组里第二条事件
     expect(out.timelineEvents[1].position).toBe(1.00112)
     expect(JSON.parse(out.timelineEvents[1].events)).toEqual(['b'])
@@ -294,7 +294,8 @@ describe('prepareMemoryWrites — timelineEvents[] 扫描 + 顶层兜底', () =>
     const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
     expect(out.timelineEvents).toHaveLength(1)
     expect(out.timelinePosition).toBe(1.00106)
-    expect(JSON.parse(out.timelineEvents[0].events)).toEqual(['m1'])
+    // 章首 row: mainEvents 描述 + 原数组描述 (合并语义, 2026-06-27)
+    expect(JSON.parse(out.timelineEvents[0].events)).toEqual(['m1', '章首事件'])
   })
 
   it('顶层有效 + 数组第一条不同位置 → 顶层作章首 row, 数组事件独立写入', () => {
@@ -311,7 +312,8 @@ describe('prepareMemoryWrites — timelineEvents[] 扫描 + 顶层兜底', () =>
     expect(out.timelineEvents).toHaveLength(2)
     expect(out.timelinePosition).toBe(1.00106)
     expect(out.timelineEvents[0].position).toBe(1.00106)
-    expect(JSON.parse(out.timelineEvents[0].events)).toEqual(['m1'])
+    // 章首 row: mainEvents 描述 + 数组第一条描述 (合并语义, 2026-06-27)
+    expect(JSON.parse(out.timelineEvents[0].events)).toEqual(['m1', '章首'])
     expect(out.timelineEvents[1].position).toBe(1.00112)
     expect(JSON.parse(out.timelineEvents[1].events)).toEqual(['b'])
   })
@@ -359,5 +361,234 @@ describe('prepareMemoryWrites — timelineEvents[] 扫描 + 顶层兜底', () =>
     const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
     expect(out.timelineEvents).toEqual([])
     expect(out.timelinePosition).toBeNull()
+  })
+})
+
+/**
+ * prepareMemoryWrites — 同 fromChapterNumber 范围内 timelineEvents 聚类
+ *
+ * 背景 (2026-06-27): 用户反馈 TimelineEvent 列表里出现大量描述重复的 row,
+ * 根因不是 schema 也不是写入, 而是 AI 在 mainEvents 数组 / timelineEvents
+ * 数组里用不同措辞写同一事件。例如 "李凡三次自行筑基失败后, 吞服赵若曦所赠
+ * 【筑基丹】成功筑基" 与 "李凡三次筑基失败后服用赵若曦所赠筑基丹, 凭借外力
+ * 筑基成功" 是同一事件, 但因为措辞变体, 落库后变成 2 条 row。
+ *
+ * 兜底方案: prepareMemoryWrites 输出 timelineEvents 前, 对同 fromChapterNumber
+ * 范围内的 row 做 Jaccard 聚类 (阈值 0.7) — 复用 tokenSet + jaccardSimilarity
+ * (已有, memory-extractor.ts:53)。匹配到现有 row 就把新 events 合并, 不匹配
+ * 独立成 row。不同 fromChapterNumber 不互相聚类 (跨章节, 语义独立)。
+ *
+ * 历史数据不回填, 只影响未来 archive。
+ */
+describe('prepareMemoryWrites — timelineEvents 同 fromChapterNumber 聚类去重', () => {
+  it('同 chapter 内两条 description 措辞变体 (Jaccard ≈ 0.74) → 聚到一条 row', () => {
+    const result = buildExtraction({
+      timelinePosition: null,
+      timelineEvents: [
+        { position: 1.00106, description: '李凡三次筑基失败后吞服赵若曦所赠筑基丹成功筑基' },
+        { position: 1.00112, description: '李凡三次筑基失败后服用赵若曦所赠筑基丹凭借外力筑基成功' }
+      ]
+    })
+    const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
+    // 两条应聚成一条 (后写合并到先写)
+    expect(out.timelineEvents).toHaveLength(1)
+    const merged = JSON.parse(out.timelineEvents[0].events)
+    expect(merged).toHaveLength(2)
+    expect(merged).toContain('李凡三次筑基失败后吞服赵若曦所赠筑基丹成功筑基')
+    expect(merged).toContain('李凡三次筑基失败后服用赵若曦所赠筑基丹凭借外力筑基成功')
+  })
+
+  it('同 chapter 内 description 完全不同 (Jaccard < 0.7) → 独立成两条 row', () => {
+    const result = buildExtraction({
+      timelinePosition: null,
+      timelineEvents: [
+        { position: 1.00106, description: '李凡与赵若曦切磋武艺' },
+        { position: 1.00112, description: '张望霜发现赵若曦频繁探望李凡并禁足她' }
+      ]
+    })
+    const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
+    expect(out.timelineEvents).toHaveLength(2)
+  })
+
+  it('同 chapter 内一组措辞变体聚类 + 一组独立 → 2 条 row (3 描述变 2 row)', () => {
+    // 第一组: 筑基 (变体1+变体2 Jaccard ≈ 0.74)
+    // 第二组: 完全独立
+    const result = buildExtraction({
+      timelinePosition: null,
+      timelineEvents: [
+        { position: 1.00106, description: '李凡三次筑基失败后吞服赵若曦所赠筑基丹成功筑基' },
+        { position: 1.00112, description: '李凡三次筑基失败后服用赵若曦所赠筑基丹凭借外力筑基成功' },
+        { position: 1.00200, description: '赵若曦因频繁前往外门陪李凡修行被师父张望霜发现并禁足' }
+      ]
+    })
+    const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
+    // 3 条输入: 筑基 2 条聚成 1 row, 独立 1 条 = 2 row
+    expect(out.timelineEvents).toHaveLength(2)
+    const allEvents = out.timelineEvents.flatMap(r => JSON.parse(r.events))
+    expect(allEvents).toHaveLength(3)
+  })
+
+  it('不同 fromChapterNumber 各自独立 (跨章节不聚类, 即使 description 相似)', () => {
+    // 章节 1 和 章节 2 都提到"筑基", 不应合并
+    const out1 = prepareMemoryWrites(STORY_ID, CHAPTER_ID, buildExtraction({
+      timelinePosition: null,
+      timelineEvents: [{ position: 1.00106, description: '李凡三次筑基失败后吞服赵若曦所赠筑基丹成功筑基' }]
+    }), 1)
+    const out2 = prepareMemoryWrites(STORY_ID, CHAPTER_ID, buildExtraction({
+      timelinePosition: null,
+      timelineEvents: [{ position: 2.00106, description: '李凡三次筑基失败后服用赵若曦所赠筑基丹凭借外力筑基成功' }]
+    }), 2)
+    expect(out1.timelineEvents).toHaveLength(1)
+    expect(out2.timelineEvents).toHaveLength(1)
+    // 两次调用各自有 1 条 row, 没有跨调用聚合 (聚类是单次 prepareMemoryWrites 内)
+  })
+
+  it('章首 row (措辞与数组 row 相似 ≈ 0.74) → 数组 row 合并到章首 row', () => {
+    // 顶层 timelinePosition 1.00106 → 章首 row, 携带 mainEvents 描述
+    // 数组里 1.00106 row 措辞与章首 row 数组描述变体 → 聚到章首 row
+    const result = buildExtraction({
+      timelinePosition: 1.00106,
+      mainEvents: [{ description: '李凡三次筑基失败后吞服赵若曦所赠筑基丹成功筑基', participants: ['李凡', '赵若曦'], importance: 8 }],
+      timelineEvents: [
+        { position: 1.00106, description: '李凡三次筑基失败后服用赵若曦所赠筑基丹凭借外力筑基成功' }
+      ]
+    })
+    const out = prepareMemoryWrites(STORY_ID, CHAPTER_ID, result, 1)
+    // 章首 row 应包含 mainEvents 描述 + 数组描述合并 (2 条 events)
+    expect(out.timelineEvents).toHaveLength(1)
+    const merged = JSON.parse(out.timelineEvents[0].events)
+    expect(merged).toContain('李凡三次筑基失败后吞服赵若曦所赠筑基丹成功筑基')  // mainEvents 描述
+    expect(merged).toContain('李凡三次筑基失败后服用赵若曦所赠筑基丹凭借外力筑基成功')  // timelineEvents 描述
+  })
+})
+
+/**
+ * commitMemoryWrites — 同 (storyId, position) 合并时去重描述
+ *
+ * 背景 (2026-06-27): commitMemoryWrites 在 (storyId, position) 已存在时
+ * 朴素拼接 events JSON 数组, 但如果老 row 与新 events 里有相似措辞
+ * (Jaccard ≥ 0.7), 就会在同一个 row.events 数组里制造"看似不同但语义相同"
+ * 的重复条目。典型场景:
+ *   - 章节重新归档: 旧 events + 新 events 在同一 row 叠加
+ *   - 历史脏数据修复: 之前 cluster 未跑前写入了相似描述
+ *
+ * 兜底: 合并时按 Jaccard 阈值 0.7 去重, 保留先到的描述 (历史记录优先)。
+ */
+describe('commitMemoryWrites — timelineEvent 同 position 合并描述去重', () => {
+  it('新 events 与老 events 措辞变体 (Jaccard ≈ 0.74) → 合并后只保留老 entries', async () => {
+    const findUnique = vi.fn().mockResolvedValue({
+      id: 'te-existing', storyId: STORY_ID,
+      fromChapterNumber: 1, position: 1.00106,
+      events: JSON.stringify(['李凡三次筑基失败后吞服赵若曦所赠筑基丹成功筑基']),
+      createdAt: new Date(), updatedAt: new Date()
+    })
+    const update = vi.fn().mockImplementation(async ({ where, data }: any) => ({
+      id: where.id, storyId: STORY_ID, fromChapterNumber: 1,
+      position: 1.00106, events: data.events
+    }))
+    const tx: any = { timelineEvent: { findUnique, update } }
+
+    await commitMemoryWrites(tx, CHAPTER_ID, STORY_ID, {
+      memories: [],
+      characterStates: [],
+      timelineEvents: [{
+        storyId: STORY_ID, fromChapterNumber: 1, position: 1.00106,
+        events: JSON.stringify(['李凡三次筑基失败后服用赵若曦所赠筑基丹凭借外力筑基成功'])
+      }],
+      summary: '',
+      timelinePosition: 1.00106
+    })
+
+    expect(update).toHaveBeenCalledTimes(1)
+    const updateArg = update.mock.calls[0][0]
+    const merged = JSON.parse(updateArg.data.events)
+    // 老 entries 优先 (保留历史), 新相似条目被丢弃
+    expect(merged).toEqual(['李凡三次筑基失败后吞服赵若曦所赠筑基丹成功筑基'])
+  })
+
+  it('新 events 包含独立描述 + 措辞变体 → 合并后保留独立 + 老 entries (变体丢弃)', async () => {
+    const findUnique = vi.fn().mockResolvedValue({
+      id: 'te-existing', storyId: STORY_ID,
+      fromChapterNumber: 1, position: 1.00106,
+      events: JSON.stringify(['李凡三次筑基失败后吞服赵若曦所赠筑基丹成功筑基']),
+      createdAt: new Date(), updatedAt: new Date()
+    })
+    const update = vi.fn().mockImplementation(async ({ where, data }: any) => ({
+      id: where.id, storyId: STORY_ID, fromChapterNumber: 1,
+      position: 1.00106, events: data.events
+    }))
+    const tx: any = { timelineEvent: { findUnique, update } }
+
+    await commitMemoryWrites(tx, CHAPTER_ID, STORY_ID, {
+      memories: [],
+      characterStates: [],
+      timelineEvents: [{
+        storyId: STORY_ID, fromChapterNumber: 1, position: 1.00106,
+        events: JSON.stringify([
+          '李凡三次筑基失败后服用赵若曦所赠筑基丹凭借外力筑基成功',  // 与老相似
+          '张望霜发现赵若曦频繁探望李凡并禁足她'  // 独立
+        ])
+      }],
+      summary: '',
+      timelinePosition: 1.00106
+    })
+
+    const merged = JSON.parse(update.mock.calls[0][0].data.events)
+    expect(merged).toEqual([
+      '李凡三次筑基失败后吞服赵若曦所赠筑基丹成功筑基',
+      '张望霜发现赵若曦频繁探望李凡并禁足她'
+    ])
+  })
+
+  it('新 events 全部独立 (与老都不同) → 朴素拼接', async () => {
+    const findUnique = vi.fn().mockResolvedValue({
+      id: 'te-existing', storyId: STORY_ID,
+      fromChapterNumber: 1, position: 1.00106,
+      events: JSON.stringify(['老描述A']),
+      createdAt: new Date(), updatedAt: new Date()
+    })
+    const update = vi.fn().mockImplementation(async ({ where, data }: any) => ({
+      id: where.id, storyId: STORY_ID, fromChapterNumber: 1,
+      position: 1.00106, events: data.events
+    }))
+    const tx: any = { timelineEvent: { findUnique, update } }
+
+    await commitMemoryWrites(tx, CHAPTER_ID, STORY_ID, {
+      memories: [],
+      characterStates: [],
+      timelineEvents: [{
+        storyId: STORY_ID, fromChapterNumber: 1, position: 1.00106,
+        events: JSON.stringify(['新描述B', '新描述C'])
+      }],
+      summary: '',
+      timelinePosition: 1.00106
+    })
+
+    const merged = JSON.parse(update.mock.calls[0][0].data.events)
+    expect(merged).toEqual(['老描述A', '新描述B', '新描述C'])
+  })
+
+  it('(storyId, position) 不存在 → 直接 create, 不调 update', async () => {
+    const findUnique = vi.fn().mockResolvedValue(null)
+    const create = vi.fn().mockImplementation(async ({ data }: any) => ({
+      id: 'te-new', storyId: STORY_ID, fromChapterNumber: 1,
+      position: 1.00106, events: data.events
+    }))
+    const update = vi.fn()
+    const tx: any = { timelineEvent: { findUnique, create, update } }
+
+    await commitMemoryWrites(tx, CHAPTER_ID, STORY_ID, {
+      memories: [],
+      characterStates: [],
+      timelineEvents: [{
+        storyId: STORY_ID, fromChapterNumber: 1, position: 1.00106,
+        events: JSON.stringify(['新事件'])
+      }],
+      summary: '',
+      timelinePosition: 1.00106
+    })
+
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(update).not.toHaveBeenCalled()
   })
 })
