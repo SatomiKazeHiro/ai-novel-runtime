@@ -34,6 +34,9 @@ export async function commitPlotArcWrites(tx: any, writes: PendingPlotArcWrite[]
 
 /**
  * 获取当前活跃（进行中/待收尾）的剧情弧线，用于注入 Prompt
+ *
+ * active + resolving + stale 注入 prompt；completed / closed 不注入。
+ * stale 视作"活跃"是因为 AI 可能在新章节重新激活它（spec §1.1）。
  */
 export async function getActivePlotArcs(
   prisma: any,
@@ -42,7 +45,7 @@ export async function getActivePlotArcs(
   const arcs = await prisma.plotArc.findMany({
     where: {
       storyId,
-      status: { in: ['active', 'resolving', 'pending'] }
+      status: { in: ['active', 'resolving', 'stale'] }
     },
     orderBy: [
       { type: 'asc' }, // main 在前
