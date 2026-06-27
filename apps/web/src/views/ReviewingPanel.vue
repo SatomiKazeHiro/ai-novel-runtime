@@ -140,9 +140,8 @@
                   <!-- 大标题 -->
                   <h3 class="cap-arc-card__title">{{ arc.name || '(未命名)' }}</h3>
 
-                  <!-- 薄分隔线 + cap-pencil + DRAFT eyebrow -->
+                  <!-- 薄分隔线 + DRAFT eyebrow + 右侧圆点收尾 -->
                   <div class="cap-arc-card__rule">
-                    <span class="cap-pencil" />
                     <span class="cap-arc-card__rule-text">DRAFT ENTRY</span>
                     <span class="cap-arc-card__rule-line" />
                     <span class="cap-arc-card__rule-dot" aria-hidden="true" />
@@ -834,7 +833,9 @@ defineExpose({ startConfirm, stopConfirm })
   font-size: 15px !important;
 }
 
-/* === 进度条: 4px 笔触 visual + 透明 slider overlay + mono % === */
+/* === 进度条: 4px 笔触 visual + 透明 slider overlay + mono % ===
+   把 n-slider 内部 rail/fill 完全 display:none,只保留 handle 做拖拽交互。
+   视觉完全交给自定义 track + fill,避免两层 bar 重叠。*/
 .cap-arc-card__progress {
   position: relative;
   display: flex;
@@ -860,17 +861,18 @@ defineExpose({ startConfirm, stopConfirm })
   border-radius: var(--radius-pill);
   transition: width 0.25s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
+/* n-slider 只做交互,视觉全部让位 */
 .cap-arc-card__progress :deep(.n-slider) {
   flex: 1;
   height: 28px;
+  position: relative;
 }
-.cap-arc-card__progress :deep(.n-slider-rail) {
-  background: transparent !important;
-  height: 4px;
-}
+.cap-arc-card__progress :deep(.n-slider-rail),
 .cap-arc-card__progress :deep(.n-slider-fill) {
-  background: transparent !important;
-  height: 4px;
+  display: none !important;
+}
+.cap-arc-card__progress :deep(.n-slider-handle-wrapper) {
+  height: 28px;
 }
 .cap-arc-card__progress :deep(.n-slider-handle) {
   width: 14px !important;
@@ -909,13 +911,12 @@ defineExpose({ startConfirm, stopConfirm })
   background: transparent;
 }
 
-/* === JSON 字段: 等宽字体块 === */
+/* === JSON 字段: 等宽字体(保留和普通输入框一致的卡片底色) === */
 .cap-arc-card__mono-input :deep(textarea) {
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
   letter-spacing: 0.01em;
-  background: var(--bg-section); /* stone-gray, 像"原始笔记" */
 }
 
 /* === 底部: 删除 === */
