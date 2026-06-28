@@ -182,7 +182,8 @@ const UpdateSchema = z.object({
   existingId: z.string(),
   type: z.enum(['main', 'side']).optional(),              // ← 新增：AI 可翻转 type
   progress: z.number().min(0).max(100).optional(),
-  status: z.enum(['active', 'resolving', 'completed', 'closed', 'stale']).optional(),
+  status: z.enum(['active', 'resolving', 'completed', 'closed']).optional(),
+                                                              // 注：'stale' 是代码自动设置, AI 不直接写
   currentStage: z.string().optional(),
   nextGoal: z.string().optional(),
   unresolved: z.array(z.string()).optional(),
@@ -202,8 +203,11 @@ const UpdateSchema = z.object({
 // 旧：throw new Error(...)
 // 新：app.log.warn + 通过
 function validateGranularity(writes: ConsolidatedArcWrite[], app: FastifyInstance): void {
-  const mainCount = writes.filter(w => w.type === 'main' && !['completed', 'closed'].includes(w.status)).length
-  const sideCount = writes.filter(w => w.type === 'side' && !['completed', 'closed'].includes(w.status)).length
+  // 仅统计"活跃追踪中"的 arc (排除 completed / closed 终态)
+  // stale 算活跃 (AI 可能重新激活)
+  const activeStatuses = (s: string) => s !== 'completed' && s !== 'closed'
+  const mainCount = writes.filter(w => w.type === 'main' && activeStatuses(w.status)).length
+  const sideCount = writes.filter(w => w.type === 'side' && activeStatuses(w.status)).length
   if (mainCount > 5) {  // 软上限：5 条主线（远高于 1 但仍 warn）
     app.log.warn(`[PlotConsolidator] main arc count ${mainCount} exceeds soft cap 5`)
   }
@@ -213,7 +217,7 @@ function validateGranularity(writes: ConsolidatedArcWrite[], app: FastifyInstanc
 }
 ```
 
-软上限 5/10 是保险丝——超过极端情况 log warn 提醒，不阻塞流程。日常情况远低于此。
+软上限 5/10 是保险丝——超过极端情况 log warn 提醒，不阻塞流程。日常情况远低于此。`stale` 计入活跃（仍在追踪）。
 
 ### 3.4 getActivePlotArcs 过滤扩展（plot-extractor.ts:42-50）
 
@@ -229,7 +233,12 @@ const ACTIVE_STATUSES = ['active', 'resolving', 'stale']
 旧：carry-forward 走 update 路径，自动刷 updatedAt
 新：carry-forward 仍走 update 路径刷 updatedAt，但**不动 lastTouchedChapter**——这个字段只在 AI update 路径刷新
 
-实现：carryForwardArc 构造 write 时 status/progress/currentStage 等都不动（已有），保持 lastTouchedChapter 字段不变。Prisma update 不显式 set lastTouchedChapter 就不动它。
+实现：每个 PendingPlotArcWrite 加一个 `source: 'ai-update' | 'carry-forward'` 字段：
+- AI 通过 updates[] 生成的 write → `source='ai-update'`
+- carryForwardArc 构造的 write → `source='carry-forward'`
+- commitPlotArcWrites 只对 `source='ai-update'` 的 write 刷新 `lastTouchedChapter`
+
+不靠"字段是否变化"判断（字段相同的情况常见），用显式 source flag 区分。
 
 ### 3.6 AI prompt 段调整（plot-consolidator.ts:258）
 
@@ -263,7 +272,7 @@ export async function commitPlotArcWrites(
   chapterNumber: number,            // ← 新增：用于 lastTouchedChapter 刷新
   writes: PendingPlotArcWrite[]
 ): Promise<void> {
-  // 1. 准备 existing arcs 列表 (Jaccard 比对 + lastTouchedChapter 刷新)
+  // 1. 准备 existing arcs 列表 (Jaccard 比对)
   const allArcs = await tx.plotArc.findMany({ select: { id: true, name: true, summary: true } })
   const existingForJaccard = allArcs.map(a => ({
     id: a.id,
@@ -290,9 +299,13 @@ export async function commitPlotArcWrites(
         }
       })
     } else if (w.existingId) {
+      // 仅 AI 主动推进时刷新 lastTouchedChapter, carry-forward 不刷
+      const updateData = w.source === 'ai-update'
+        ? { ...data, lastTouchedChapter: chapterNumber }
+        : data
       await tx.plotArc.update({
         where: { id: w.existingId },
-        data: { ...data, lastTouchedChapter: chapterNumber }
+        data: updateData
       })
     }
   }
@@ -346,11 +359,17 @@ export interface PendingPlotArcWrite {
   summary: string
   isNew: boolean
   existingId?: string
-  // 新增（可选）：
-  closedReason?: string            // 'duplicate' | 其他
-  closedTargetArcId?: string       // 关闭时指向被合并到的 arc
+  source?: 'ai-update' | 'carry-forward'   // ← 新增：commit 区分是否刷 lastTouchedChapter
+  closedReason?: string                    // 'duplicate' | 其他
+  closedTargetArcId?: string               // 关闭时指向被合并到的 arc
+  similarToExistingIds?: string            // ← 新增：Jaccard tag (UI badge 用), JSON-encoded 数组
 }
 ```
+
+**source 字段填充规则**：
+- `consolidatePlotArcs` 构造 write 时填：`source = 'ai-update'`（来自 updates[]）或 `'carry-forward'`（来自 carryForwardArc）
+- `newArcFromAI` 构造的 write：`isNew=true`，`source` 不填（commit 路径不读 source）
+- ReviewingPanel 用户编辑时不改 source 字段（保留 AI 决定的原值）
 
 ### 5.2 PlotArcView 类型扩展
 
@@ -431,9 +450,15 @@ function formatSimilarArcNames(similarToJson: string): string {
 ```
 
 UI 实现：
-- pendingArchiveData 里 newArc 的 similarToExistingIds 已经是 string
+- pendingArchiveData 里 newArc 的 similarToExistingIds 已经是 string（来自 commit 计算，详见 4.1 节）
 - 对应的 existing arc 在 localData.plotArcs 里也能找到（同一批 pendingPlotArcWrite）
 - 如果找不到对应 name 就退化成 id 前 8 位
+
+**关键**：similarToExistingIds 在 prepare-archive 阶段是 **空字符串**（commit 还没跑），UI 在 reviewing 态打开时不会看到 badge。
+只有用户编辑时（chaptersApi.savePendingArchiveData）调用的 commit 路径写过这个字段。
+ReviewingPanel 展示的是当前 pendingArchiveData 的内容，所以新弧线在 reviewing 阶段不显示 similarity badge（这是可接受的——用户在 confirm 前看不到，confirm 后 DB 写入，下一次编辑时显示）。
+
+> **本期范围妥协**：ReviewingPanel badge 仅在重新打开已归档章节的 pendingArchiveData 时可见。新弧线首次创建时不可见。如果用户认为必须首次可见，需要把 Jaccard 计算下沉到 consolidatePlotArcs 里（spec 范围外，本次不做）。
 
 ### 6.4 不做的事（TODO 标记）
 
@@ -465,11 +490,11 @@ UI 实现：
 commitPlotArcWrites：
 - isNew=true 时 Jaccard 命中 → similarToExistingIds 写入 existing ids
 - isNew=true 时 Jaccard 不命中 → similarToExistingIds = []
-- isNew=false 时 update 路径刷新 lastTouchedChapter
-- carry-forward 路径不刷新 lastTouchedChapter
-- stale 检测：currentChapterNumber - lastTouchedChapter > 5 → 转 stale
+- isNew=false 时 source='ai-update' → update 路径刷新 lastTouchedChapter
+- isNew=false 时 source='carry-forward' → update 路径不刷新 lastTouchedChapter
+- stale 检测：currentChapterNumber - lastTouchedChapter > 5 且 status in [active, resolving] → 转 stale
 - stale 已是 stale → 不重复触发
-- completed / closed 弧线不参与 stale 检测
+- completed / closed / stale 弧线不参与 stale 检测
 
 Jaccard 边界：
 - name 完全相同 + summary 完全相同 → Jaccard = 1.0 → 命中
