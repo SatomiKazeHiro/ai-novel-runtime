@@ -438,10 +438,11 @@ model V2Character {
   slug          String
   name          String
   isProtagonist Boolean  @default(false)
-  appearance    String?
-  temperament   String?
-  personality   String?
-  speechStyle   String?
+  identity      String   @default("[]")
+  appearance    String   @default("[]")
+  temperament   String   @default("[]")
+  personality   String   @default("[]")
+  speechStyle   String   @default("[]")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -455,13 +456,13 @@ model V2CharacterSnapshot {
   id            String   @id @default(uuid())
   characterId   String
   chapterNumber Int
-  identity      String?
-  appearance    String?
-  temperament   String?
-  personality   String?
-  speechStyle   String?
-  relationships String?
-  status        String?
+  identity      String   @default("[]")
+  appearance    String   @default("[]")
+  temperament   String   @default("[]")
+  personality   String   @default("[]")
+  speechStyle   String   @default("[]")
+  relationships String   @default("{}")
+  status        String   @default("{}")
   createdAt     DateTime @default(now())
 
   character     V2Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
