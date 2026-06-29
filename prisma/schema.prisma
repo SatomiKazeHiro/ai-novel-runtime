@@ -399,3 +399,183 @@ model PromptLog {
   @@index([storyId, createdAt])
   @@index([callType, createdAt])
 }
+
+// ============================================================
+// V2 模型 — 物理隔离，与 V1 表无 Prisma relation
+// ============================================================
+
+enum V2MemoryType {
+  global
+  chapter
+  scene
+  temporary
+}
+
+enum V2MemoryCategory {
+  relationship_change
+  foreshadowing
+  emotional_change
+  event_memory
+}
+
+enum V2PlotArcStatus {
+  active
+  interrupted
+  completed
+  closed
+}
+
+enum V2ChapterStatus {
+  draft
+  generating
+  analyzing
+  archived
+}
+
+model V2Character {
+  id            String   @id @default(uuid())
+  storyId       String
+  slug          String
+  name          String
+  isProtagonist Boolean  @default(false)
+  appearance    String?
+  temperament   String?
+  personality   String?
+  speechStyle   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  snapshots     V2CharacterSnapshot[]
+
+  @@unique([storyId, slug])
+  @@index([storyId])
+}
+
+model V2CharacterSnapshot {
+  id            String   @id @default(uuid())
+  characterId   String
+  chapterNumber Int
+  identity      String?
+  appearance    String?
+  temperament   String?
+  personality   String?
+  speechStyle   String?
+  relationships String?
+  status        String?
+  createdAt     DateTime @default(now())
+
+  character     V2Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+
+  @@index([characterId, chapterNumber])
+}
+
+model V2Memory {
+  id                  String           @id @default(uuid())
+  storyId             String
+  type                V2MemoryType
+  category            V2MemoryCategory
+  content             String
+  importance          Int              @default(4)
+  participants        String?
+  originChapterNumber Int?
+  isActive            Boolean          @default(true)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  @@index([storyId, type])
+  @@index([storyId, category])
+  @@index([storyId, isActive])
+}
+
+model V2MemoryMergeLog {
+  id              String   @id @default(uuid())
+  storyId         String
+  chapterNumber   Int
+  inputMemoryIds  String
+  outputMemoryIds String
+  createdAt       DateTime @default(now())
+
+  @@index([storyId, chapterNumber])
+}
+
+model V2PlotArc {
+  id                      String          @id @default(uuid())
+  storyId                 String
+  title                   String
+  description             String
+  status                  V2PlotArcStatus @default(active)
+  isMainline              Boolean         @default(false)
+  firstChapterNumber      Int
+  lastUpdateChapterNumber Int
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+
+  @@index([storyId, status])
+}
+
+model V2PlotArcDraft {
+  id          String          @id @default(uuid())
+  plotArcId   String?
+  chapterId   String
+  action      String
+  title       String
+  description String
+  status      V2PlotArcStatus
+  isMainline  Boolean
+  mergeInfo   String?
+  createdAt   DateTime        @default(now())
+}
+
+model V2Chapter {
+  id          String          @id @default(uuid())
+  storyId     String
+  number      Float
+  title       String
+  content     String          @default("")
+  contentHash String          @default("")
+  status      V2ChapterStatus @default(draft)
+  analysisId  String?
+  config      String          @default("{}")
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  drafts      V2Draft[]
+
+  @@unique([storyId, number])
+  @@index([storyId, status])
+}
+
+model V2Draft {
+  id        String   @id @default(uuid())
+  chapterId String
+  content   String   @default("")
+  status    String   @default("generating")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  chapter   V2Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  @@index([chapterId])
+}
+
+model V2TimelineAnchor {
+  id       String @id @default(uuid())
+  storyId  String
+  position Float
+  label    String
+
+  events   V2TimelineEvent[]
+
+  @@index([storyId])
+}
+
+model V2TimelineEvent {
+  id             String @id @default(uuid())
+  anchorId       String
+  chapterNumber  Int
+  description    String
+
+  anchor         V2TimelineAnchor @relation(fields: [anchorId], references: [id], onDelete: Cascade)
+
+  @@index([anchorId])
+}
