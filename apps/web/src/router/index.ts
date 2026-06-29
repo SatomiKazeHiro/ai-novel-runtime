@@ -17,6 +17,7 @@ import ModelManager from '../views/ModelManager.vue'
 import PromptLogs from '../views/PromptLogs.vue'
 import ChapterReader from '../views/ChapterReader.vue'
 import V2Characters from '../views-v2/V2Characters.vue'
+import V2CharacterDetail from '../views-v2/V2CharacterDetail.vue'
 import V2LoreBook from '../views-v2/V2LoreBook.vue'
 import V2Chapters from '../views-v2/V2Chapters.vue'
 import V2ChapterDesign from '../views-v2/V2ChapterDesign.vue'
@@ -60,6 +61,7 @@ const routes = [
     component: NovelDesignV2Layout,
     children: [
       { path: 'characters',   name: 'V2Characters',      component: V2Characters },
+      { path: 'characters/:charId', name: 'V2CharacterDetail', component: V2CharacterDetail },
       { path: 'lore',         name: 'V2LoreBook',        component: V2LoreBook },
       { path: 'chapters',     name: 'V2Chapters',        component: V2Chapters },
       { path: 'chapters/:chapterId/design', name: 'V2ChapterDesign', component: V2ChapterDesign },
