@@ -18,5 +18,6 @@ export const v2ChaptersApi = {
   detail: (chapterId: string) => v2Api.get<any>(`/chapters/${chapterId}`),
   create: (data: V2ChapterCreate) => v2Api.post<any>('/chapters', data),
   update: (chapterId: string, data: V2ChapterUpdate) => v2Api.put<any>(`/chapters/${chapterId}`, data),
-  remove: (chapterId: string) => v2Api.delete(`/chapters/${chapterId}`)
+  remove: (chapterId: string) => v2Api.delete(`/chapters/${chapterId}`),
+  generateConfig: (chapterId: string) => v2Api.post<any>(`/chapters/${chapterId}/config`)
 }

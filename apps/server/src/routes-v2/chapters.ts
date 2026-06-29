@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { sha256 } from '../services-v2/hash.js'
+import { getDefaultConfig } from '../services-v2/config-defaults.js'
 
 export async function v2ChapterRoutes(app: FastifyInstance) {
   // GET /api/v2/chapters?storyId=xxx
@@ -99,6 +100,24 @@ export async function v2ChapterRoutes(app: FastifyInstance) {
       data
     })
     return { success: true, data: chapter }
+  })
+
+  // POST /api/v2/chapters/:chapterId/config — 生成并保存默认配置
+  app.post('/chapters/:chapterId/config', async (request) => {
+    const { chapterId } = request.params as { chapterId: string }
+    const existing = await app.prisma.v2Chapter.findUnique({ where: { id: chapterId } })
+    if (!existing) {
+      return { success: false, error: '章节不存在' }
+    }
+    if (existing.status === 'archived') {
+      return { success: false, error: '已归档章节不可修改配置' }
+    }
+    const config = await getDefaultConfig(app.prisma, existing.storyId)
+    await app.prisma.v2Chapter.update({
+      where: { id: chapterId },
+      data: { config: JSON.stringify(config) }
+    })
+    return { success: true, data: config }
   })
 
   // DELETE /api/v2/chapters/:chapterId
