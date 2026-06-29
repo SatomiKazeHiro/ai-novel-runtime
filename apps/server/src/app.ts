@@ -26,6 +26,7 @@ import { initRuntimeProfile } from './services/runtime-profile-init.js'
 import { initWorkerTasks } from './services/worker-task-init.js'
 import { createGenerateProcessor } from './services/generate-processor.js'
 import { registerGenerateProcessor } from './queue/index.js'
+import { v2Routes } from './routes-v2/index.js'
 
 export async function buildApp() {
   const app = Fastify({
@@ -82,6 +83,9 @@ export async function buildApp() {
   await app.register(workerTaskRoutes)
   await app.register(aiProviderRoutes)
   await app.register(promptLogRoutes)
+
+  // V2 routes — 物理隔离，prefix /api/v2
+  await app.register(v2Routes, { prefix: '/api/v2' })
 
   // Global error handler
   app.setErrorHandler((error: any, request, reply) => {
