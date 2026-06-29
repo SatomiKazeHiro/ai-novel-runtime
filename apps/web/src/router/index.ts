@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import SimpleLayout from '../views/SimpleLayout.vue'
 import NovelDesignLayout from '../views/NovelDesignLayout.vue'
+import NovelDesignV2Layout from '../views-v2/NovelDesignV2Layout.vue'
 import Dashboard from '../views/Dashboard.vue'
 import Stories from '../views/Stories.vue'
 import Characters from '../views/Characters.vue'
@@ -15,6 +16,17 @@ import StoryWorkerTask from '../views/StoryWorkerTask.vue'
 import ModelManager from '../views/ModelManager.vue'
 import PromptLogs from '../views/PromptLogs.vue'
 import ChapterReader from '../views/ChapterReader.vue'
+import V2Characters from '../views-v2/V2Characters.vue'
+import V2LoreBook from '../views-v2/V2LoreBook.vue'
+import V2Chapters from '../views-v2/V2Chapters.vue'
+import V2ChapterDesign from '../views-v2/V2ChapterDesign.vue'
+import V2ChapterReader from '../views-v2/V2ChapterReader.vue'
+import V2PlotArcs from '../views-v2/V2PlotArcs.vue'
+import V2Memory from '../views-v2/V2Memory.vue'
+import V2Graph from '../views-v2/V2Graph.vue'
+import V2Timeline from '../views-v2/V2Timeline.vue'
+import V2StoryWorkerTask from '../views-v2/V2StoryWorkerTask.vue'
+import V2PromptLogs from '../views-v2/V2PromptLogs.vue'
 
 const routes = [
   {
@@ -41,6 +53,23 @@ const routes = [
       { path: 'timeline', name: 'Timeline', component: Timeline },
       { path: 'worker-tasks', name: 'StoryWorkerTasks', component: StoryWorkerTask },
       { path: 'prompt-logs', name: 'PromptLogs', component: PromptLogs }
+    ]
+  },
+  {
+    path: '/novel-design-v2/:storyId',
+    component: NovelDesignV2Layout,
+    children: [
+      { path: 'characters',   name: 'V2Characters',      component: V2Characters },
+      { path: 'lore',         name: 'V2LoreBook',        component: V2LoreBook },
+      { path: 'chapters',     name: 'V2Chapters',        component: V2Chapters },
+      { path: 'chapters/:chapterId/design', name: 'V2ChapterDesign', component: V2ChapterDesign },
+      { path: 'reader',       name: 'V2ChapterReader',   component: V2ChapterReader },
+      { path: 'plot-arcs',    name: 'V2PlotArcs',        component: V2PlotArcs },
+      { path: 'memory',       name: 'V2Memory',          component: V2Memory },
+      { path: 'graph',        name: 'V2Graph',           component: V2Graph },
+      { path: 'timeline',     name: 'V2Timeline',        component: V2Timeline },
+      { path: 'worker-tasks', name: 'V2StoryWorkerTasks', component: V2StoryWorkerTask },
+      { path: 'prompt-logs',  name: 'V2PromptLogs',      component: V2PromptLogs }
     ]
   },
   // 旧路由重定向
