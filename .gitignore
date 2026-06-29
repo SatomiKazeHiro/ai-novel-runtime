@@ -6,6 +6,8 @@ build
 *.log
 prisma/dev.db
 prisma/dev.db-journal
+prisma/dev.db-shm
+prisma/dev.db-wal
 
 # 运行时上传的封面
 apps/server/uploads/
