@@ -94,6 +94,7 @@ CREATE TABLE "V2Chapter" (
     "status" TEXT NOT NULL DEFAULT 'draft',
     "analysisId" TEXT,
     "config" TEXT NOT NULL DEFAULT '{}',
+    "pendingAnalysis" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL
 );

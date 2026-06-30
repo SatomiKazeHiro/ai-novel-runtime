@@ -87,10 +87,50 @@
             </div>
           </div>
 
-          <!-- 分析区 (Phase 4d) -->
-          <div class="cap-card" style="margin-bottom: 16px; opacity: 0.5">
-            <h2 class="cap-eyebrow" style="margin-top: 0">AI 分析</h2>
-            <p class="cap-body-sm" style="color: var(--text-tertiary)">Phase 4d 实现 — 5 路独立分析（角色/记忆/弧线/时间线/图谱）</p>
+          <!-- 分析区 -->
+          <div class="cap-card" style="margin-bottom: 16px">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px">
+              <h2 class="cap-eyebrow" style="margin: 0">AI 分析</h2>
+              <n-button
+                v-if="chapter.status === 'draft' && analysis"
+                size="small"
+                type="primary"
+                @click="saveAnalysis"
+                :loading="savingAnalysis"
+              >
+                保存分析
+              </n-button>
+            </div>
+
+            <p v-if="!analysis" class="cap-body-sm" style="color: var(--text-tertiary); margin-bottom: 12px">
+              执行下方各维度分析后，点击"保存分析"锁定分析版本。
+            </p>
+
+            <!-- 分析状态 -->
+            <div v-if="analysis" class="analysis-status" style="margin-bottom: 12px; font-size: 12px; color: var(--text-tertiary)">
+              分析版本：
+              <span :style="{ color: analysisId === chapter.contentHash ? 'var(--color-positive)' : 'var(--color-negative)' }">
+                {{ analysisId ? analysisId.substring(0, 8) + '...' : '未保存' }}
+              </span>
+              <span v-if="analysisId !== chapter.contentHash" style="color: var(--color-negative); margin-left: 8px">正文已修改，分析可能过时</span>
+            </div>
+
+            <div class="analyzer-grid">
+              <div class="analyzer-item" v-for="btn in analyzerBtns" :key="btn.key">
+                <n-button
+                  size="tiny"
+                  @click="runAnalyzer(btn.key)"
+                  :loading="analyzing === btn.key"
+                  :disabled="!!(analyzing || chapter.status === 'archived')"
+                  :type="analysis?.[btn.resultKey] ? 'info' : 'default'"
+                >
+                  {{ btn.label }}
+                </n-button>
+                <span class="analyzer-result">
+                  {{ analyzerResultText(btn.key) }}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -132,11 +172,60 @@
             </p>
           </div>
 
-          <!-- 归档操作 (Phase 4d) -->
-          <div class="cap-card" style="opacity: 0.5">
+          <!-- 归档操作 -->
+          <div class="cap-card">
             <h2 class="cap-eyebrow" style="margin-top: 0">归档</h2>
-            <p class="cap-body-sm" style="color: var(--text-tertiary)">Phase 4d 实现 — hash 校验 + 二次确认 + 事务写入</p>
+            <p class="cap-body-sm" style="color: var(--text-tertiary); margin-bottom: 12px">
+              归档后正文锁定，信息写入数据库。需先完成分析并保存。
+            </p>
+            <n-button
+              type="primary"
+              size="small"
+              @click="doArchive"
+              :loading="archiving"
+              :disabled="!analysis || chapter.status === 'archived'"
+              block
+            >
+              {{ chapter.status === 'archived' ? '已归档' : '归档' }}
+            </n-button>
           </div>
+
+          <!-- 归档确认弹窗 -->
+          <n-modal v-model:show="showArchiveModal" title="归档确认" preset="card" style="width: 480px">
+            <template v-if="archiveStep === 1 && hashMismatch">
+              <p style="color: var(--color-negative); margin-bottom: 12px">
+                正文已修改但未重新分析（正文哈希与分析版本不一致）。
+              </p>
+              <p style="margin-bottom: 16px">是否继续归档？建议先重新分析以确保数据一致。</p>
+              <n-space justify="end">
+                <n-button @click="showArchiveModal = false">取消</n-button>
+                <n-button type="warning" @click="archiveStep = 2">继续归档</n-button>
+              </n-space>
+            </template>
+
+            <template v-else-if="archiveStep <= 2 && newCharacters.length > 0">
+              <p style="margin-bottom: 8px">归档将新增以下角色：</p>
+              <ul style="margin-bottom: 16px; padding-left: 20px">
+                <li v-for="c in newCharacters" :key="c.slug">
+                  <strong>{{ c.name }}</strong>（{{ c.slug }}）
+                  <span v-if="c.identity?.length"> — {{ c.identity.join('、') }}</span>
+                </li>
+              </ul>
+              <n-space justify="end">
+                <n-button @click="showArchiveModal = false">取消</n-button>
+                <n-button type="primary" @click="archiveStep = 3">确认</n-button>
+              </n-space>
+            </template>
+
+            <template v-else>
+              <p style="margin-bottom: 12px">即将归档，归档后章节内容锁定不可修改。</p>
+              <p style="color: var(--text-tertiary); font-size: 12px; margin-bottom: 16px">是否继续？</p>
+              <n-space justify="end">
+                <n-button @click="showArchiveModal = false">取消</n-button>
+                <n-button type="primary" style="margin-left: 24px" @click="confirmArchive">确认归档</n-button>
+              </n-space>
+            </template>
+          </n-modal>
         </div>
       </div>
     </template>
@@ -146,7 +235,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NButton, NInput, NTag, NPopconfirm } from 'naive-ui'
+import { NButton, NInput, NTag, NModal, NSpace, NPopconfirm } from 'naive-ui'
 import { v2ChaptersApi } from '../api-v2/chapters'
 
 const statusLabels: Record<string, string> = {
@@ -166,6 +255,27 @@ const content = ref('')
 const saveMsg = ref('')
 const drafts = ref<any[]>([])
 const activeControllers = new Map<string, AbortController>()
+
+// 分析
+const analysis = ref<any>(null)
+const analysisId = ref<string | null>(null)
+const analyzing = ref<string | null>(null)
+const savingAnalysis = ref(false)
+const hashMismatch = ref(false)
+const newCharacters = ref<any[]>([])
+
+// 归档
+const archiving = ref(false)
+const showArchiveModal = ref(false)
+const archiveStep = ref(1)
+
+const analyzerBtns = [
+  { key: 'characters', label: '角色', resultKey: 'characters' },
+  { key: 'memories', label: '记忆', resultKey: 'memories' },
+  { key: 'plotArcs', label: '剧情弧线', resultKey: 'plotArcs' },
+  { key: 'timeline', label: '时间线', resultKey: 'timeline' },
+  { key: 'graph', label: '图谱', resultKey: 'graph' },
+]
 
 const generatingCount = computed(() => drafts.value.filter(d => d.status === 'generating').length)
 
@@ -344,9 +454,143 @@ function adoptDraft(draft: any) {
   setTimeout(() => { saveMsg.value = '' }, 3000)
 }
 
-watch(() => route.params.chapterId, () => { loadChapter(); loadDrafts() })
+// ── 分析 ──
+
+async function loadAnalysis() {
+  const chapterId = route.params.chapterId as string
+  if (!chapterId) return
+  try {
+    const res = await v2ChaptersApi.getAnalysis(chapterId)
+    if (res.data.data) {
+      analysis.value = res.data.data.analysis
+      analysisId.value = res.data.data.analysisId
+      hashMismatch.value = res.data.data.isStale
+    }
+  } catch { /* 静默 */ }
+}
+
+function analyzerResultText(key: string) {
+  if (!analysis.value) return ''
+  const data = analysis.value[key]
+  if (!data) return '未分析'
+
+  switch (key) {
+    case 'characters': {
+      const items = data.items || []
+      const newCount = items.filter((c: any) => c.isNew).length
+      return `已分析 (${items.length} 个角色${newCount > 0 ? `，${newCount} 个新角色` : ''})`
+    }
+    case 'memories': {
+      const c = (data.chapterMemories || []).length
+      const g = (data.globalMemories || []).length
+      const s = (data.sceneMemories || []).length
+      return `已分析 (章节${c} + 全局${g} + 场景${s})`
+    }
+    case 'plotArcs': {
+      const arcs = data.arcs || []
+      const create = arcs.filter((a: any) => a.action === 'create').length
+      const update = arcs.filter((a: any) => a.action === 'update').length
+      return `已分析 (新增${create} + 更新${update})`
+    }
+    case 'timeline':
+      return '已分析 (空)'
+    case 'graph':
+      return '已分析 (空)'
+    default:
+      return '已分析'
+  }
+}
+
+async function runAnalyzer(key: string) {
+  const chapterId = route.params.chapterId as string
+  if (!chapterId || analyzing.value) return
+
+  analyzing.value = key
+  try {
+    const apiMap: Record<string, (id: string) => Promise<any>> = {
+      characters: v2ChaptersApi.analyzeCharacters,
+      memories: v2ChaptersApi.analyzeMemories,
+      plotArcs: v2ChaptersApi.analyzePlotArcs,
+      timeline: v2ChaptersApi.analyzeTimeline,
+      graph: v2ChaptersApi.analyzeGraph
+    }
+    await apiMap[key](chapterId)
+    // 重新加载分析结果
+    await loadAnalysis()
+  } catch { /* 静默 */ } finally {
+    analyzing.value = null
+  }
+}
+
+async function saveAnalysis() {
+  const chapterId = route.params.chapterId as string
+  if (!chapterId) return
+  savingAnalysis.value = true
+  try {
+    await v2ChaptersApi.saveAnalysis(chapterId)
+    await loadAnalysis()
+    // 同时刷新 chapter 状态
+    const res = await v2ChaptersApi.detail(chapterId)
+    chapter.value = res.data.data
+  } catch { /* 静默 */ } finally {
+    savingAnalysis.value = false
+  }
+}
+
+// ── 归档 ──
+
+async function doArchive() {
+  const chapterId = route.params.chapterId as string
+  if (!chapterId) return
+
+  // 先加载最新的分析状态
+  await loadAnalysis()
+
+  // 重置步骤
+  archiveStep.value = 1
+
+  // 加载 new characters
+  try {
+    const res = await v2ChaptersApi.preArchive(chapterId)
+    if (res.data.data) {
+      hashMismatch.value = res.data.data.hashMismatch
+      newCharacters.value = res.data.data.newCharacters || []
+    }
+  } catch { /* 静默 */ }
+
+  // 决定第一步
+  if (hashMismatch.value) {
+    archiveStep.value = 1
+  } else if (newCharacters.value.length > 0) {
+    archiveStep.value = 2
+  } else {
+    archiveStep.value = 3
+  }
+
+  showArchiveModal.value = true
+}
+
+async function confirmArchive() {
+  const chapterId = route.params.chapterId as string
+  if (!chapterId) return
+  archiving.value = true
+  showArchiveModal.value = false
+  try {
+    await v2ChaptersApi.archive(chapterId)
+    // 刷新章节
+    const res = await v2ChaptersApi.detail(chapterId)
+    chapter.value = res.data.data
+    analysis.value = null
+    analysisId.value = null
+    newCharacters.value = []
+  } catch { /* 静默 */ } finally {
+    archiving.value = false
+  }
+}
+
+watch(() => route.params.chapterId, () => { loadChapter(); loadDrafts(); loadAnalysis() })
 onMounted(() => {
-  if (route.params.chapterId) { loadChapter(); loadDrafts() }
+  if (route.params.chapterId) { loadChapter(); loadDrafts(); loadAnalysis() }
 })
 </script>
 
@@ -414,5 +658,25 @@ onMounted(() => {
   word-break: break-word;
   margin: 0;
   color: var(--text-primary);
+}
+.analyzer-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.analyzer-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.analyzer-result {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+.analysis-status {
+  padding: 6px 10px;
+  background: var(--bg-subtle);
+  border-radius: 4px;
+  font-family: monospace;
 }
 </style>

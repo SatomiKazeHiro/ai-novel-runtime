@@ -535,9 +535,10 @@ model V2Chapter {
   content     String          @default("")
   contentHash String          @default("")
   status      V2ChapterStatus @default(draft)
-  analysisId  String?
-  config      String          @default("{}")
-  createdAt   DateTime        @default(now())
+  analysisId       String?
+  config           String          @default("{}")
+  pendingAnalysis  String?
+  createdAt        DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
   drafts      V2Draft[]

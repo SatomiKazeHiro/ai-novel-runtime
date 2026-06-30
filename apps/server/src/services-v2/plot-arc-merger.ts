@@ -1,14 +1,33 @@
-// V2 剧情弧线合并器 — 阶段 4 实现
+import type { V2ExtractedPlotArc } from './plot-arc-extractor.js'
 
 export interface V2PlotArcMergeInput {
-  newArcs: { action: string; plotArcId?: string; title: string; description: string; status: string; isMainline: boolean }[]
+  newArcs: V2ExtractedPlotArc[]
   existingArcs: { id: string; title: string; description: string; status: string; isMainline: boolean }[]
 }
 
 export interface V2PlotArcMergeResult {
-  mergedArcs: { id?: string; action: string; title: string; description: string; status: string; isMainline: boolean }[]
+  mergedArcs: { id?: string; action: string; title: string; description: string; status: string; isMainline: boolean; mergeTargetId?: string }[]
 }
 
-export async function mergePlotArcs(_input: V2PlotArcMergeInput): Promise<V2PlotArcMergeResult> {
-  throw new Error('Not implemented: mergePlotArcs — 阶段 4 实现')
+export function mergePlotArcs(input: V2PlotArcMergeInput): V2PlotArcMergeResult {
+  const mergedArcs = input.newArcs.map(arc => {
+    // 查找匹配的已有弧线
+    let matchedExisting: typeof input.existingArcs[0] | undefined
+
+    if (arc.plotArcId) {
+      matchedExisting = input.existingArcs.find(a => a.id === arc.plotArcId)
+    }
+
+    return {
+      id: matchedExisting?.id,
+      action: arc.action,
+      title: arc.title,
+      description: arc.description,
+      status: arc.status,
+      isMainline: arc.isMainline,
+      mergeTargetId: arc.mergeInfo || undefined
+    }
+  })
+
+  return { mergedArcs }
 }

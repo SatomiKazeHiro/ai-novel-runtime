@@ -28,5 +28,16 @@ export const v2ChaptersApi = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal
-    })
+    }),
+  // 分析
+  getAnalysis: (chapterId: string) => v2Api.get<any>(`/chapters/${chapterId}/analysis`),
+  analyzeCharacters: (chapterId: string) => v2Api.post<any>(`/chapters/${chapterId}/analyze/characters`),
+  analyzeMemories: (chapterId: string) => v2Api.post<any>(`/chapters/${chapterId}/analyze/memories`),
+  analyzePlotArcs: (chapterId: string) => v2Api.post<any>(`/chapters/${chapterId}/analyze/plot-arcs`),
+  analyzeTimeline: (chapterId: string) => v2Api.post<any>(`/chapters/${chapterId}/analyze/timeline`),
+  analyzeGraph: (chapterId: string) => v2Api.post<any>(`/chapters/${chapterId}/analyze/graph`),
+  saveAnalysis: (chapterId: string) => v2Api.post<any>(`/chapters/${chapterId}/save-analysis`),
+  // 归档
+  preArchive: (chapterId: string) => v2Api.get<any>(`/chapters/${chapterId}/pre-archive`),
+  archive: (chapterId: string) => v2Api.post<any>(`/chapters/${chapterId}/archive`)
 }
