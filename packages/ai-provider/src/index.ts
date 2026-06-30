@@ -225,7 +225,89 @@ export class OpenAICompatibleProvider implements AIProvider {
   }
 
   async *streamGenerate(prompt: string, options?: any): AsyncIterable<string> {
-    yield `[${this.config.name}] streaming not yet implemented`
+    const model = this.config.model
+    const temperature = options?.temperature ?? this.config.temperature ?? 0.7
+    const maxTokens = options?.maxTokens ?? this.config.maxTokens ?? 4096
+    const systemContent = options?.system ?? '你是一位专精长篇小说创作的资深作者，擅长构建完整的世界观、人物关系与情节张力。'
+    const signal = options?.signal as AbortSignal | undefined
+
+    const apiKey = this.config.apiKey
+    const baseUrl = this.getBaseUrl()
+    if (!apiKey) {
+      throw new Error(`${this.config.name} API key is not configured`)
+    }
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), options?.timeoutMs ?? 120000)
+
+    // 如果调用方传了 signal，串联它
+    if (signal) {
+      signal.addEventListener('abort', () => controller.abort(), { once: true })
+    }
+
+    let response: Response
+    try {
+      response = await fetch(`${baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: this.getAuthHeaders(),
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemContent },
+            { role: 'user', content: prompt }
+          ],
+          temperature,
+          max_tokens: maxTokens,
+          stream: true
+        })
+      })
+    } finally {
+      clearTimeout(timeout)
+    }
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`${this.config.name} API error (${response.status}): ${errorText}`)
+    }
+
+    const reader = response.body?.getReader()
+    if (!reader) {
+      throw new Error(`${this.config.name}: response body is not readable`)
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        // 保留最后一个不完整的行
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed || !trimmed.startsWith('data:')) continue
+
+          const data = trimmed.slice(5).trim()
+          if (data === '[DONE]') return
+
+          try {
+            const parsed = JSON.parse(data)
+            const delta = parsed.choices?.[0]?.delta?.content
+            if (delta) yield delta
+          } catch {
+            // 某些行可能不是合法 JSON（注释、空 data 等），跳过
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock()
+    }
   }
 
   async embedding(text: string): Promise<number[]> {

@@ -39,10 +39,52 @@
             </div>
           </div>
 
-          <!-- 生成区 (Phase 4c) -->
-          <div class="cap-card" style="margin-bottom: 16px; opacity: 0.5">
-            <h2 class="cap-eyebrow" style="margin-top: 0">候选生成</h2>
-            <p class="cap-body-sm" style="color: var(--text-tertiary)">Phase 4c 实现 — SSE 流式生成多候选文章</p>
+          <!-- 生成区 -->
+          <div class="cap-card" style="margin-bottom: 16px">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px">
+              <h2 class="cap-eyebrow" style="margin: 0">候选生成</h2>
+              <n-button
+                v-if="chapter.status !== 'archived'"
+                size="small"
+                type="primary"
+                @click="startGeneration"
+                :disabled="generatingCount >= 3"
+              >
+                生成候选 ({{ generatingCount }}/3)
+              </n-button>
+            </div>
+
+            <p v-if="drafts.length === 0" class="cap-body-sm" style="color: var(--text-tertiary)">
+              点击"生成候选"开始 AI 写作，每次生成一个候选文章。
+            </p>
+
+            <div
+              v-for="draft in drafts"
+              :key="draft.id"
+              class="draft-card"
+              :class="{ 'draft-card--generating': draft.status === 'generating' }"
+            >
+              <div class="draft-card__head">
+                <span class="draft-card__label">
+                  候选 {{ draft.id.substring(0, 8) }}
+                  <n-tag v-if="draft.status === 'generating'" type="warning" size="tiny" :bordered="false">生成中</n-tag>
+                  <n-tag v-else-if="draft.status === 'completed'" type="success" size="tiny" :bordered="false">已完成</n-tag>
+                  <n-tag v-else-if="draft.status === 'failed'" type="error" size="tiny" :bordered="false">失败</n-tag>
+                </span>
+                <span class="draft-card__actions">
+                  <n-button v-if="draft.status === 'completed'" size="tiny" @click="adoptDraft(draft)" style="margin-right: 4px">采用</n-button>
+                  <n-popconfirm @positive-click="draft.status === 'generating' ? cancelGeneration(draft.id) : deleteDraft(draft.id)">
+                    <template #trigger><n-button size="tiny" type="error">删除</n-button></template>
+                    {{ draft.status === 'generating' ? '确定终止生成并删除吗？' : '确定删除该候选吗？' }}
+                  </n-popconfirm>
+                </span>
+              </div>
+              <div class="draft-card__body">
+                <pre v-if="draft.content" class="draft-content">{{ draft.content }}</pre>
+                <p v-else-if="draft.status === 'generating'" style="color: var(--text-tertiary); font-style: italic">等待 AI 响应...</p>
+                <p v-else-if="draft.status === 'failed'" style="color: var(--color-negative)">生成失败</p>
+              </div>
+            </div>
           </div>
 
           <!-- 分析区 (Phase 4d) -->
@@ -104,7 +146,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NButton, NInput, NTag } from 'naive-ui'
+import { NButton, NInput, NTag, NPopconfirm } from 'naive-ui'
 import { v2ChaptersApi } from '../api-v2/chapters'
 
 const statusLabels: Record<string, string> = {
@@ -122,6 +164,10 @@ const saving = ref(false)
 const configLoading = ref(false)
 const content = ref('')
 const saveMsg = ref('')
+const drafts = ref<any[]>([])
+const activeControllers = new Map<string, AbortController>()
+
+const generatingCount = computed(() => drafts.value.filter(d => d.status === 'generating').length)
 
 const parsedConfig = computed(() => {
   const raw = chapter.value?.config
@@ -175,9 +221,132 @@ async function generateConfig() {
   } finally { configLoading.value = false }
 }
 
-watch(() => route.params.chapterId, () => { loadChapter() })
+async function loadDrafts() {
+  const chapterId = route.params.chapterId as string
+  if (!chapterId) return
+  try {
+    const res = await v2ChaptersApi.listDrafts(chapterId)
+    drafts.value = res.data.data ?? []
+  } catch { /* 静默 */ }
+}
+
+async function startGeneration() {
+  const chapterId = route.params.chapterId as string
+  if (!chapterId || generatingCount.value >= 3) return
+
+  // 先占位一个 generating draft，等 SSE 返回 draftId 后再替换
+  const placeholderId = `pending-${Date.now()}`
+  const placeholderDraft = { id: placeholderId, content: '', status: 'generating' }
+  drafts.value.push(placeholderDraft)
+
+  const controller = new AbortController()
+  activeControllers.set(placeholderId, controller)
+
+  try {
+    const response = await v2ChaptersApi.generateStream(chapterId, controller.signal)
+    if (!response.ok) {
+      // 替换占位
+      const idx = drafts.value.findIndex(d => d.id === placeholderId)
+      if (idx >= 0) drafts.value[idx] = { ...placeholderDraft, status: 'failed' }
+      return
+    }
+
+    const reader = response.body?.getReader()
+    if (!reader) {
+      const idx = drafts.value.findIndex(d => d.id === placeholderId)
+      if (idx >= 0) drafts.value[idx] = { ...placeholderDraft, status: 'failed' }
+      return
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      // SSE 消息以 \n\n 分隔
+      const messages = buffer.split('\n\n')
+      buffer = messages.pop() || ''
+
+      for (const msg of messages) {
+        const lines = msg.split('\n')
+        let eventName = ''
+        let eventData = ''
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (trimmed.startsWith('event:')) eventName = trimmed.slice(6).trim()
+          else if (trimmed.startsWith('data:')) eventData = trimmed.slice(5).trim()
+        }
+
+        if (!eventData) continue
+
+        try {
+          const payload = JSON.parse(eventData)
+          const draftId = payload.draftId
+
+          // 首个带真实 draftId 的消息，替换占位 ID
+          if (draftId && placeholderId !== draftId) {
+            const idx = drafts.value.findIndex(d => d.id === placeholderId)
+            if (idx >= 0) drafts.value[idx] = { ...drafts.value[idx], id: draftId }
+            activeControllers.delete(placeholderId)
+            activeControllers.set(draftId, controller)
+          }
+
+          const targetId = draftId || placeholderId
+          const idx = drafts.value.findIndex(d => d.id === targetId)
+          if (idx < 0) continue
+
+          if (eventName === 'draft-chunk') {
+            drafts.value[idx] = { ...drafts.value[idx], content: (drafts.value[idx].content || '') + payload.delta }
+          } else if (eventName === 'draft-done') {
+            drafts.value[idx] = { ...drafts.value[idx], status: 'completed', content: drafts.value[idx].content || '' }
+          } else if (eventName === 'draft-error') {
+            drafts.value[idx] = { ...drafts.value[idx], status: 'failed' }
+          }
+        } catch { /* skip parse errors */ }
+      }
+    }
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      // 用户手动取消，直接从列表移除
+      drafts.value = drafts.value.filter(d => d.id !== placeholderId)
+    } else {
+      const idx = drafts.value.findIndex(d => d.id === placeholderId)
+      if (idx >= 0) drafts.value[idx] = { ...placeholderDraft, status: 'failed' }
+    }
+  } finally {
+    activeControllers.delete(placeholderId)
+  }
+}
+
+function cancelGeneration(draftId: string) {
+  const controller = activeControllers.get(draftId)
+  if (controller) {
+    controller.abort()
+    activeControllers.delete(draftId)
+  }
+  // 也删掉 draft 行
+  v2ChaptersApi.deleteDraft(draftId).catch(() => {})
+  drafts.value = drafts.value.filter(d => d.id !== draftId)
+}
+
+async function deleteDraft(draftId: string) {
+  await v2ChaptersApi.deleteDraft(draftId)
+  drafts.value = drafts.value.filter(d => d.id !== draftId)
+}
+
+function adoptDraft(draft: any) {
+  content.value = draft.content
+  saveMsg.value = '已采用候选内容到正文编辑区，记得保存正文'
+  setTimeout(() => { saveMsg.value = '' }, 3000)
+}
+
+watch(() => route.params.chapterId, () => { loadChapter(); loadDrafts() })
 onMounted(() => {
-  if (route.params.chapterId) loadChapter()
+  if (route.params.chapterId) { loadChapter(); loadDrafts() }
 })
 </script>
 
@@ -205,5 +374,45 @@ onMounted(() => {
 .config-val {
   font-weight: var(--weight-semibold);
   color: var(--color-ink-black);
+}
+.draft-card {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.draft-card--generating {
+  border-color: var(--color-warning);
+  background: var(--color-warning-bg, #fff8e1);
+}
+.draft-card__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.draft-card__label {
+  font-size: 13px;
+  font-weight: var(--weight-semibold);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.draft-card__actions {
+  display: flex;
+  align-items: center;
+}
+.draft-card__body {
+  max-height: 300px;
+  overflow-y: auto;
+}
+.draft-content {
+  font-family: var(--font-serif);
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  color: var(--text-primary);
 }
 </style>
