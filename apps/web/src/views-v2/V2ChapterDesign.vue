@@ -134,8 +134,32 @@
           </div>
         </div>
 
-        <!-- 右栏：配置 + 操作 -->
+        <!-- 右栏：大纲 + 配置 + 操作 -->
         <div class="design-side">
+          <!-- 大纲编辑 -->
+          <div class="cap-card" style="margin-bottom: 16px">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
+              <h2 class="cap-eyebrow" style="margin: 0">大纲</h2>
+              <n-button
+                v-if="chapter.status !== 'archived'"
+                size="tiny"
+                @click="saveOutline"
+                :loading="savingOutline"
+              >保存</n-button>
+            </div>
+            <n-input
+              v-model:value="outline"
+              type="textarea"
+              :rows="3"
+              placeholder="本章大纲，将作为输入拼入生成 prompt..."
+              :disabled="chapter.status === 'archived'"
+              style="font-size: 13px; line-height: 1.6"
+            />
+            <p style="font-size: 11px; color: var(--text-tertiary); margin: 4px 0 0">
+              大纲作为 AI 生成的输入因子，不直接产生正文。
+            </p>
+          </div>
+
           <div class="cap-card" style="margin-bottom: 16px">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px">
               <h2 class="cap-eyebrow" style="margin: 0">Prompt 配置</h2>
@@ -253,6 +277,8 @@ const saving = ref(false)
 const configLoading = ref(false)
 const content = ref('')
 const saveMsg = ref('')
+const outline = ref('')
+const savingOutline = ref(false)
 const drafts = ref<any[]>([])
 const activeControllers = new Map<string, AbortController>()
 
@@ -303,6 +329,13 @@ async function loadChapter() {
     const res = await v2ChaptersApi.detail(chapterId)
     chapter.value = res.data.data
     content.value = chapter.value?.content || ''
+    // 解析大纲
+    try {
+      const config = typeof chapter.value?.config === 'string'
+        ? JSON.parse(chapter.value.config)
+        : (chapter.value?.config || {})
+      outline.value = config.outline || ''
+    } catch { outline.value = '' }
   } finally { loading.value = false }
 }
 
@@ -317,6 +350,20 @@ async function saveContent() {
     saveMsg.value = '正文已保存'
     setTimeout(() => { saveMsg.value = '' }, 2000)
   } finally { saving.value = false }
+}
+
+async function saveOutline() {
+  const chapterId = route.params.chapterId as string
+  if (!chapterId) return
+  savingOutline.value = true
+  try {
+    const config = parsedConfig.value || {}
+    config.outline = outline.value
+    const res = await v2ChaptersApi.update(chapterId, { config })
+    chapter.value = res.data.data
+    saveMsg.value = '大纲已保存'
+    setTimeout(() => { saveMsg.value = '' }, 2000)
+  } finally { savingOutline.value = false }
 }
 
 async function generateConfig() {
