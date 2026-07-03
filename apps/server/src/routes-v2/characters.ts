@@ -61,7 +61,7 @@ export async function v2CharacterRoutes(app: FastifyInstance) {
   })
 
   // PUT /api/v2/characters/:charId
-  app.put('/characters/:charId', async (request) => {
+  app.put('/characters/:charId', async (request, reply) => {
     const { charId } = request.params as { charId: string }
     const body = request.body as any
     const data: any = {}
@@ -79,19 +79,33 @@ export async function v2CharacterRoutes(app: FastifyInstance) {
         data
       })
       return { success: true, data: character }
-    } catch {
-      return { success: false, error: '角色不存在' }
+    } catch (err: any) {
+      if (err?.code === 'P2025') {
+        return reply.code(404).send({ success: false, error: '角色不存在' })
+      }
+      if (err?.code === 'P2002') {
+        return reply.code(409).send({ success: false, error: `标识冲突: ${err.meta?.target || 'slug 已存在'}` })
+      }
+      app.log.error(`[V2] 更新角色 ${charId} 失败: ${err?.message}`)
+      return reply.code(500).send({ success: false, error: '更新角色失败' })
     }
   })
 
   // DELETE /api/v2/characters/:charId
-  app.delete('/characters/:charId', async (request) => {
+  app.delete('/characters/:charId', async (request, reply) => {
     const { charId } = request.params as { charId: string }
     try {
       await app.prisma.v2Character.delete({ where: { id: charId } })
       return { success: true }
-    } catch {
-      return { success: false, error: '角色不存在' }
+    } catch (err: any) {
+      if (err?.code === 'P2025') {
+        return reply.code(404).send({ success: false, error: '角色不存在' })
+      }
+      if (err?.code === 'P2003') {
+        return reply.code(409).send({ success: false, error: '该角色存在关联数据（快照/记忆），无法删除' })
+      }
+      app.log.error(`[V2] 删除角色 ${charId} 失败: ${err?.message}`)
+      return reply.code(500).send({ success: false, error: '删除角色失败' })
     }
   })
 }
