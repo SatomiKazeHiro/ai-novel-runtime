@@ -1,6 +1,6 @@
-import { resolveProvider } from '../services/ai-provider-init.js'
 import { truncateByParagraph } from '@novel-runtime/prompt-runtime'
-import { fail, ok, type ExtractorResult } from './extractor-types.js'
+import { runAiExtraction } from './extractor-base.js'
+import type { ExtractorResult } from './extractor-types.js'
 
 export interface V2ExtractedPlotArc {
   action: 'create' | 'update' | 'close'
@@ -73,46 +73,24 @@ export async function extractPlotArcs(
     .replace('{existingArcs}', arcList || '（暂无）')
     .replace('{content}', truncated)
 
-  const resolved = await resolveProvider(prisma, storyId)
-  if (!resolved?.provider?.generate) {
-    return fail('未配置 AI provider')
-  }
-
-  let raw: string
-  try {
-    raw = await resolved.provider.generate(prompt, { system: SYSTEM, temperature: 0.3 })
-  } catch (err: any) {
-    return fail(`AI 调用失败: ${err?.message || '未知错误'}`)
-  }
-  const parsed = parseAIJson(raw)
-
-  if (!Array.isArray(parsed)) {
-    return fail('AI 返回数据格式错误：期望数组')
-  }
-
-  const arcs: V2ExtractedPlotArc[] = parsed.map((item: any) => ({
-    action: ['create', 'update', 'close'].includes(item.action) ? item.action : 'create',
-    plotArcId: item.plotArcId || undefined,
-    title: item.title || '',
-    description: item.description || '',
-    status: ['active', 'interrupted', 'completed', 'closed'].includes(item.status) ? item.status : 'active',
-    isMainline: !!item.isMainline,
-    mergeInfo: item.mergeInfo || undefined
-  }))
-
-  return ok({ arcs })
-}
-
-function parseAIJson(raw: string): any {
-  let text = raw.trim()
-  if (text.startsWith('```')) {
-    text = text.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '')
-  }
-  try { return JSON.parse(text) } catch {
-    const arrMatch = text.match(/\[[\s\S]*\]/)
-    if (arrMatch) {
-      try { return JSON.parse(arrMatch[0]) } catch { /* fall through */ }
+  return runAiExtraction<V2PlotArcExtractResult>({
+    prisma,
+    storyId,
+    system: SYSTEM,
+    prompt,
+    context: 'plot-arc-extractor',
+    validate: (raw) => {
+      if (!Array.isArray(raw)) return null
+      const arcs: V2ExtractedPlotArc[] = raw.map((item: any) => ({
+        action: ['create', 'update', 'close'].includes(item.action) ? item.action : 'create',
+        plotArcId: item.plotArcId || undefined,
+        title: item.title || '',
+        description: item.description || '',
+        status: ['active', 'interrupted', 'completed', 'closed'].includes(item.status) ? item.status : 'active',
+        isMainline: !!item.isMainline,
+        mergeInfo: item.mergeInfo || undefined
+      }))
+      return { arcs }
     }
-    return null
-  }
+  })
 }

@@ -1,6 +1,6 @@
-import { resolveProvider } from '../services/ai-provider-init.js'
 import { truncateByParagraph } from '@novel-runtime/prompt-runtime'
-import { fail, ok, type ExtractorResult } from './extractor-types.js'
+import { runAiExtraction } from './extractor-base.js'
+import type { ExtractorResult } from './extractor-types.js'
 import type { GraphData } from './graph-types.js'
 
 export async function extractGraph(
@@ -9,9 +9,6 @@ export async function extractGraph(
   content: string,
   contentCharBudget: number
 ): Promise<ExtractorResult<GraphData>> {
-  const resolved = await resolveProvider(prisma, storyId)
-  if (!resolved?.provider?.generate) return fail('未配置 AI provider')
-
   // 按 model contextLength 动态算的预算 + 段落级截断 (替代 8000 字硬切)
   const truncated = truncateByParagraph(content, contentCharBudget)
 
@@ -70,28 +67,27 @@ ${truncated}
   ]
 }`
 
-  let raw: string
-  try {
-    raw = await resolved.provider.generate(userMessage, {
-      system: systemMessage,
-      temperature: 0.3
-    })
-  } catch (err: any) {
-    return fail(`AI 调用失败: ${err?.message || '未知错误'}`)
-  }
+  return runAiExtraction<GraphData>({
+    prisma,
+    storyId,
+    system: systemMessage,
+    prompt: userMessage,
+    context: 'graph-extractor',
+    validate: (raw) => {
+      if (!raw || typeof raw !== 'object') return null
+      const r = raw as any
 
-  const parsed = parseAIJson(raw)
-  if (!parsed || typeof parsed !== 'object') return fail('AI 返回数据格式错误：期望对象')
+      const nodes = Array.isArray(r.nodes)
+        ? r.nodes.map(normalizeNode).filter((n: any) => n.importance >= 4)
+        : []
+      const nodeKeys = new Set(nodes.map((n: any) => n.key))
+      const edges = Array.isArray(r.edges)
+        ? r.edges.map(normalizeEdge).filter((e: any) => nodeKeys.has(e.fromKey) && nodeKeys.has(e.toKey))
+        : []
 
-  const nodes = Array.isArray(parsed.nodes)
-    ? parsed.nodes.map(normalizeNode).filter((n: any) => n.importance >= 4)
-    : []
-  const nodeKeys = new Set(nodes.map((n: any) => n.key))
-  const edges = Array.isArray(parsed.edges)
-    ? parsed.edges.map(normalizeEdge).filter((e: any) => nodeKeys.has(e.fromKey) && nodeKeys.has(e.toKey))
-    : []
-
-  return ok({ nodes, edges })
+      return { nodes, edges }
+    }
+  })
 }
 
 function normalizeNode(raw: any): any {
@@ -110,20 +106,5 @@ function normalizeEdge(raw: any): any {
     fromKey: (raw.fromKey || '').toLowerCase().replace(/\s+/g, '-'),
     toKey: (raw.toKey || '').toLowerCase().replace(/\s+/g, '-'),
     relation: (raw.relation || '关联').slice(0, 8)
-  }
-}
-
-function parseAIJson(raw: string): any {
-  let text = raw.trim()
-  if (text.startsWith('```')) {
-    text = text.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '')
-  }
-  try { return JSON.parse(text) } catch {
-    // 尝试提取第一个 JSON 对象
-    const objMatch = text.match(/\{[\s\S]*\}/)
-    if (objMatch) {
-      try { return JSON.parse(objMatch[0]) } catch { /* fall through */ }
-    }
-    return null
   }
 }

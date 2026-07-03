@@ -1,6 +1,6 @@
-import { resolveProvider } from '../services/ai-provider-init.js'
 import { truncateByParagraph } from '@novel-runtime/prompt-runtime'
-import { fail, ok, type ExtractorResult } from './extractor-types.js'
+import { runAiExtraction } from './extractor-base.js'
+import type { ExtractorResult } from './extractor-types.js'
 
 export interface V2ExtractedCharacter {
   name: string
@@ -36,7 +36,7 @@ export async function extractCharacters(
   // 按 model contextLength 动态算的预算 + 段落级截断 (替代 8000 字硬切)
   const truncated = truncateByParagraph(content, contentCharBudget)
 
-  const systemMessage =`你是一位专精长篇小说角色分析的专业编辑。你需要从给定的小说正文中提取所有出场角色及其属性变化。
+  const systemMessage = `你是一位专精长篇小说角色分析的专业编辑。你需要从给定的小说正文中提取所有出场角色及其属性变化。
 返回严格的 JSON 格式，不要包含任何解释、markdown 标记或额外文字。`
 
   const userMessage = `请分析以下小说章节正文，提取所有出场角色的信息。
@@ -69,70 +69,46 @@ ${truncated}
 返回格式示例：
 [{"name":"张三","slug":"zhang-san","identity":["散修"],"appearance":[],"temperament":["冷静"],"personality":[],"speechStyle":[],"relationships":{"李四":"初次见面"},"status":{"修为":"突破元婴"},"matchedName":"张三"}]`
 
-  const resolved = await resolveProvider(prisma, storyId)
-  if (!resolved?.provider?.generate) {
-    return fail('未配置 AI provider')
-  }
+  return runAiExtraction<V2CharacterExtractResult>({
+    prisma,
+    storyId,
+    system: systemMessage,
+    prompt: userMessage,
+    context: 'character-extractor',
+    validate: (raw) => {
+      if (!Array.isArray(raw)) return null
+      const nameToId = new Map<string, string>(existingChars.map((c: any) => [c.name as string, c.id as string]))
+      const slugToId = new Map<string, string>(existingChars.map((c: any) => [c.slug as string, c.id as string]))
 
-  let raw: string
-  try {
-    raw = await resolved.provider.generate(userMessage, { system: systemMessage, temperature: 0.3 })
-  } catch (err: any) {
-    return fail(`AI 调用失败: ${err?.message || '未知错误'}`)
-  }
-  const extracted = parseAIJson(raw)
+      const characters: V2ExtractedCharacter[] = raw.map((item: any) => {
+        const matchedName = item.matchedName || null
+        let matchedId: string | null = null
 
-  if (!Array.isArray(extracted)) {
-    return fail('AI 返回数据格式错误：期望数组')
-  }
+        if (matchedName) {
+          matchedId = nameToId.get(matchedName) ?? slugToId.get(matchedName) ?? null
+        }
+        if (!matchedId && item.name) {
+          matchedId = nameToId.get(item.name) ?? slugToId.get(item.name) ?? null
+        }
 
-  const nameToId = new Map<string, string>(existingChars.map((c: any) => [c.name as string, c.id as string]))
-  const slugToId = new Map<string, string>(existingChars.map((c: any) => [c.slug as string, c.id as string]))
+        return {
+          name: item.name || '',
+          slug: item.slug || toSlug(item.name || ''),
+          identity: ensureArr(item.identity),
+          appearance: ensureArr(item.appearance),
+          temperament: ensureArr(item.temperament),
+          personality: ensureArr(item.personality),
+          speechStyle: ensureArr(item.speechStyle),
+          relationships: ensureObj(item.relationships),
+          status: ensureObj(item.status),
+          matchedCharacterId: matchedId,
+          isNew: !matchedId
+        }
+      })
 
-  const characters: V2ExtractedCharacter[] = extracted.map((item: any) => {
-    const matchedName = item.matchedName || null
-    let matchedId: string | null = null
-
-    if (matchedName) {
-      matchedId = nameToId.get(matchedName) ?? slugToId.get(matchedName) ?? null
-    }
-    // fallback: match by name or slug directly
-    if (!matchedId && item.name) {
-      matchedId = nameToId.get(item.name) ?? slugToId.get(item.name) ?? null
-    }
-
-    return {
-      name: item.name || '',
-      slug: item.slug || toSlug(item.name || ''),
-      identity: ensureArr(item.identity),
-      appearance: ensureArr(item.appearance),
-      temperament: ensureArr(item.temperament),
-      personality: ensureArr(item.personality),
-      speechStyle: ensureArr(item.speechStyle),
-      relationships: ensureObj(item.relationships),
-      status: ensureObj(item.status),
-      matchedCharacterId: matchedId,
-      isNew: !matchedId
+      return { characters }
     }
   })
-
-  return ok({ characters })
-}
-
-function parseAIJson(raw: string): any {
-  let text = raw.trim()
-  // 去掉可能的 markdown 代码块包装
-  if (text.startsWith('```')) {
-    text = text.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '')
-  }
-  try { return JSON.parse(text) } catch {
-    // 尝试提取第一个 JSON 数组
-    const arrMatch = text.match(/\[[\s\S]*\]/)
-    if (arrMatch) {
-      try { return JSON.parse(arrMatch[0]) } catch { /* fall through */ }
-    }
-    return null
-  }
 }
 
 function ensureArr(v: any): string[] {

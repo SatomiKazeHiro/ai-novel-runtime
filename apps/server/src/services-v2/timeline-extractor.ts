@@ -1,6 +1,6 @@
-import { resolveProvider } from '../services/ai-provider-init.js'
 import { truncateByParagraph } from '@novel-runtime/prompt-runtime'
-import { fail, ok, type ExtractorResult } from './extractor-types.js'
+import { runAiExtraction } from './extractor-base.js'
+import type { ExtractorResult } from './extractor-types.js'
 
 export interface V2ExtractedTimelineEvent {
   title: string
@@ -62,56 +62,35 @@ ${truncated}
 返回格式示例：
 {"events":[{"title":"许青拜师","summary":"许青在青玄宗大殿正式拜青玄真人为师","participants":"许青,青玄真人","location":"青玄宗大殿","importance":"major","timeExpression":{"raw":"三日后","type":"relative","confidence":"high"},"narrativeOrder":1}],"defaultAnchorName":"主线"}`
 
-  const resolved = await resolveProvider(prisma, storyId)
-  if (!resolved?.provider?.generate) {
-    return fail('未配置 AI provider')
-  }
+  return runAiExtraction<V2TimelineExtractResult>({
+    prisma,
+    storyId,
+    system: systemMessage,
+    prompt: userMessage,
+    context: 'timeline-extractor',
+    validate: (raw) => {
+      if (!raw || typeof raw !== 'object') return null
+      const r = raw as any
+      const events: V2ExtractedTimelineEvent[] = (r.events || []).map((item: any, i: number) => ({
+        title: item.title || `事件${i + 1}`,
+        summary: item.summary || '',
+        participants: item.participants || '',
+        location: item.location || '',
+        importance: ['major', 'normal', 'minor'].includes(item.importance) ? item.importance : 'normal',
+        timeExpression: item.timeExpression && typeof item.timeExpression === 'object'
+          ? {
+              raw: item.timeExpression.raw || '',
+              type: ['relative', 'absolute', 'era', 'ambiguous', 'none'].includes(item.timeExpression.type) ? item.timeExpression.type : 'none',
+              confidence: ['high', 'medium', 'low'].includes(item.timeExpression.confidence) ? item.timeExpression.confidence : 'medium'
+            }
+          : null,
+        narrativeOrder: typeof item.narrativeOrder === 'number' ? item.narrativeOrder : i + 1
+      }))
 
-  let raw: string
-  try {
-    raw = await resolved.provider.generate(userMessage, { system: systemMessage, temperature: 0.3 })
-  } catch (err: any) {
-    return fail(`AI 调用失败: ${err?.message || '未知错误'}`)
-  }
-
-  const parsed = parseAIJson(raw)
-
-  if (!parsed || typeof parsed !== 'object') {
-    return fail('AI 返回数据格式错误：期望对象')
-  }
-
-  const events: V2ExtractedTimelineEvent[] = (parsed.events || []).map((item: any, i: number) => ({
-    title: item.title || `事件${i + 1}`,
-    summary: item.summary || '',
-    participants: item.participants || '',
-    location: item.location || '',
-    importance: ['major', 'normal', 'minor'].includes(item.importance) ? item.importance : 'normal',
-    timeExpression: item.timeExpression && typeof item.timeExpression === 'object'
-      ? {
-          raw: item.timeExpression.raw || '',
-          type: ['relative', 'absolute', 'era', 'ambiguous', 'none'].includes(item.timeExpression.type) ? item.timeExpression.type : 'none',
-          confidence: ['high', 'medium', 'low'].includes(item.timeExpression.confidence) ? item.timeExpression.confidence : 'medium'
-        }
-      : null,
-    narrativeOrder: typeof item.narrativeOrder === 'number' ? item.narrativeOrder : i + 1
-  }))
-
-  return ok({
-    events,
-    defaultAnchorName: parsed.defaultAnchorName || '主线'
-  })
-}
-
-function parseAIJson(raw: string): any {
-  let text = raw.trim()
-  if (text.startsWith('```')) {
-    text = text.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '')
-  }
-  try { return JSON.parse(text) } catch {
-    const objMatch = text.match(/\{[\s\S]*\}/)
-    if (objMatch) {
-      try { return JSON.parse(objMatch[0]) } catch { /* fall through */ }
+      return {
+        events,
+        defaultAnchorName: r.defaultAnchorName || '主线'
+      }
     }
-    return null
-  }
+  })
 }

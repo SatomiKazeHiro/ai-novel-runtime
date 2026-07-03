@@ -1,6 +1,6 @@
-import { resolveProvider } from '../services/ai-provider-init.js'
 import { truncateByParagraph } from '@novel-runtime/prompt-runtime'
-import { fail, ok, type ExtractorResult } from './extractor-types.js'
+import { runAiExtraction } from './extractor-base.js'
+import { ok, type ExtractorResult } from './extractor-types.js'
 
 export interface V2ExtractedMemory {
   type: 'global' | 'chapter' | 'scene' | 'temporary'
@@ -82,6 +82,12 @@ const MERGE_USER = `请合并以下全局记忆。
 
 返回合并后的全局记忆 JSON 数组，格式与输入一致。`
 
+interface RawExtract {
+  chapterMemories: V2ExtractedMemory[]
+  sceneMemories: V2ExtractedMemory[]
+  newGlobals: V2ExtractedMemory[]
+}
+
 export async function extractMemories(
   prisma: any,
   storyId: string,
@@ -89,11 +95,6 @@ export async function extractMemories(
   content: string,
   contentCharBudget: number
 ): Promise<ExtractorResult<V2MemoryExtractResult>> {
-  const resolved = await resolveProvider(prisma, storyId)
-  if (!resolved?.provider?.generate) {
-    return fail('未配置 AI provider')
-  }
-
   // 加载已有全局记忆
   const existingGlobals = await prisma.v2Memory.findMany({
     where: { storyId, type: 'global', isActive: true },
@@ -112,39 +113,42 @@ export async function extractMemories(
     .replace('{content}', truncated)
     .replace('{existingGlobals}', globalSummary)
 
-  let raw: string
-  try {
-    raw = await resolved.provider.generate(extractPrompt, { system: EXTRACT_SYSTEM, temperature: 0.3 })
-  } catch (err: any) {
-    return fail(`AI 调用失败: ${err?.message || '未知错误'}`)
-  }
-  const extracted = parseAIJson(raw)
+  const extractResult = await runAiExtraction<RawExtract>({
+    prisma,
+    storyId,
+    system: EXTRACT_SYSTEM,
+    prompt: extractPrompt,
+    context: 'memory-extractor[extract]',
+    validate: (raw) => {
+      if (!raw || typeof raw !== 'object') return null
+      const r = raw as any
+      return {
+        chapterMemories: (r.chapterMemories || []).map(normalizeMemory),
+        sceneMemories: (r.sceneMemories || []).map(normalizeMemory),
+        newGlobals: (r.globalMemories || []).map(normalizeMemory)
+      }
+    }
+  })
+  if (!extractResult.ok) return extractResult
 
-  if (!extracted || typeof extracted !== 'object') {
-    return fail('AI 返回数据格式错误：期望对象')
-  }
+  let { chapterMemories, sceneMemories, newGlobals } = extractResult.data
 
-  const chapterMemories: V2ExtractedMemory[] = (extracted.chapterMemories || []).map(normalizeMemory)
-  const sceneMemories: V2ExtractedMemory[] = (extracted.sceneMemories || []).map(normalizeMemory)
-  let newGlobals: V2ExtractedMemory[] = (extracted.globalMemories || []).map(normalizeMemory)
-
-  // 第二次 AI 调用：合并全局记忆
+  // 第二次 AI 调用：合并全局记忆 (条件触发)
   if (newGlobals.length > 0 && existingGlobals.length > 0) {
     const mergePrompt = MERGE_USER
       .replace('{existingGlobals}', globalSummary)
       .replace('{newGlobals}', newGlobals.map(m => `[${m.category}] ${m.content} (重要度:${m.importance})`).join('\n'))
 
-    let mergeRaw: string
-    try {
-      mergeRaw = await resolved.provider.generate(mergePrompt, { system: MERGE_SYSTEM, temperature: 0.3 })
-    } catch (err: any) {
-      return fail(`AI 合并全局记忆失败: ${err?.message || '未知错误'}`)
-    }
-    const merged = parseAIJson(mergeRaw)
-    if (!Array.isArray(merged)) {
-      return fail('AI 合并全局记忆返回数据格式错误：期望数组')
-    }
-    newGlobals = merged.map(normalizeMemory)
+    const mergeResult = await runAiExtraction<V2ExtractedMemory[]>({
+      prisma,
+      storyId,
+      system: MERGE_SYSTEM,
+      prompt: mergePrompt,
+      context: 'memory-extractor[merge]',
+      validate: (raw) => Array.isArray(raw) ? raw.map(normalizeMemory) : null
+    })
+    if (!mergeResult.ok) return mergeResult
+    newGlobals = mergeResult.data
   }
 
   return ok({ chapterMemories, globalMemories: newGlobals, sceneMemories })
@@ -168,18 +172,4 @@ function clampImportance(v: any): number {
   const n = typeof v === 'number' ? v : parseInt(v, 10)
   if (!Number.isFinite(n)) return 4
   return Math.max(0, Math.min(10, Math.round(n)))
-}
-
-function parseAIJson(raw: string): any {
-  let text = raw.trim()
-  if (text.startsWith('```')) {
-    text = text.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '')
-  }
-  try { return JSON.parse(text) } catch {
-    const objMatch = text.match(/\{[\s\S]*\}/)
-    if (objMatch) {
-      try { return JSON.parse(objMatch[0]) } catch { /* fall through */ }
-    }
-    return null
-  }
 }
