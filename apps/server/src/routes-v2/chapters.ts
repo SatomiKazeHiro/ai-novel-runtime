@@ -267,10 +267,12 @@ export async function v2ChapterRoutes(app: FastifyInstance) {
 
     let systemMessage: string
     let userMessage: string
+    let runtimeDegraded = false
     try {
       const assembled = await assemblePrompt(app.prisma, existing.storyId, config, contextLength)
       systemMessage = assembled.systemMessage
       userMessage = assembled.userMessage
+      runtimeDegraded = assembled.runtimeDegraded === true
     } catch (err: any) {
       return reply.status(422).send({ success: false, error: `数据完整性错误: ${err.message}` })
     }
@@ -284,7 +286,8 @@ export async function v2ChapterRoutes(app: FastifyInstance) {
         estimatedSystemTokens: estSystem,
         estimatedUserTokens: estUser,
         estimatedTotalTokens: estSystem + estUser,
-        contextBudget: contextLength
+        contextBudget: contextLength,
+        runtimeDegraded
       }
     }
   })
@@ -385,10 +388,12 @@ export async function v2ChapterRoutes(app: FastifyInstance) {
 
     let systemMessage: string
     let userMessage: string
+    let runtimeDegraded = false
     try {
       const assembled = await assemblePrompt(app.prisma, existing.storyId, config, contextLength)
       systemMessage = assembled.systemMessage
       userMessage = assembled.userMessage
+      runtimeDegraded = assembled.runtimeDegraded === true
     } catch (err: any) {
       return reply.status(422).send({ success: false, error: `数据完整性错误: ${err.message}` })
     }
@@ -446,6 +451,14 @@ export async function v2ChapterRoutes(app: FastifyInstance) {
     }
 
     send('draft-start', { draftId: draft.id })
+
+    // 运行时降级提示：assemblePrompt fallback 到 FALLBACK_SYSTEM 时告知前端
+    if (runtimeDegraded) {
+      send('runtime-warning', {
+        draftId: draft.id,
+        message: 'AI 写作人格加载失败，已使用通用 fallback。生成质量可能下降。'
+      })
+    }
 
     let resolved: any = null
     let logId: string | null = null

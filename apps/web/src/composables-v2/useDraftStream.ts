@@ -89,6 +89,9 @@ export function useDraftStream(
               drafts.value[idx] = { ...drafts.value[idx], status: 'completed', content: drafts.value[idx].content || '' }
             } else if (eventName === 'draft-error') {
               drafts.value[idx] = { ...drafts.value[idx], status: 'failed' }
+            } else if (eventName === 'runtime-warning') {
+              // AI 写作人格降级：作者看到 warning，不阻断
+              onNotify?.(payload?.message || 'AI 写作人格加载失败，已使用通用 fallback', 'warning')
             }
           } catch (parseErr: any) {
             console.warn(`[V2-SSE] 事件解析失败: ${parseErr?.message || parseErr} | data: ${eventData.slice(0, 100)}`)

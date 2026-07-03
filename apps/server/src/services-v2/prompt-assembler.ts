@@ -9,6 +9,10 @@ const FALLBACK_SYSTEM = `你是一位专精长篇小说创作的资深作者，�
 export interface AssembledPrompt {
   systemMessage: string
   userMessage: string
+  /** Runtime profile / worker task 加载失败时为 true。系统已 fallback 到 FALLBACK_SYSTEM，
+   *  作者写作人格/行为约束/jailbreak 全部丢失，AI 静默降级。
+   *  调用方应通过 SSE 事件或响应字段告知用户。 */
+  runtimeDegraded?: boolean
 }
 
 export async function assemblePrompt(
@@ -17,15 +21,20 @@ export async function assemblePrompt(
   config: V2PromptConfig,
   contextLength: number = 64000
 ): Promise<AssembledPrompt> {
-  // System message: 动态编译（identity + behavior + jailbreak + workerTask），失败回退硬编码
+  // System message: 动态编译（identity + behavior + jailbreak + workerTask）
+  // 失败不阻断（fallback 到 FALLBACK_SYSTEM 保持可用），但标记 degraded 让前端提示
   let systemMessage = FALLBACK_SYSTEM
+  let runtimeDegraded = false
   try {
     const base = await loadRuntimeBase(storyId, prisma)
     const task = await loadWorkerTask(storyId, 'generation', prisma)
     const compiler = new RuntimePromptCompiler()
     const compiled = compiler.compile(base, task, '')
     systemMessage = compiled.systemMessage
-  } catch { /* 回退到 FALLBACK_SYSTEM */ }
+  } catch (err: any) {
+    runtimeDegraded = true
+    console.error(`[V2-Runtime] assemblePrompt 降级到 FALLBACK_SYSTEM: ${err?.message || err}`)
+  }
 
   // User message: 有条件才拼接
   const sections: string[] = []
@@ -159,7 +168,8 @@ export async function assemblePrompt(
 
   return {
     systemMessage,
-    userMessage: budgetedSections.join('\n\n')
+    userMessage: budgetedSections.join('\n\n'),
+    runtimeDegraded
   }
 }
 
