@@ -287,7 +287,7 @@ V2 不需要上锁 = 实际有效态只有 3 个（`draft` / `analyzing` / `arch
 ---
 
 - **Prompt 装配 token 公式**：`Math.floor(contextLength * 0.85) * 2` 把字符数当 token，对长 prompt 严重超限。contextLength=64000 → maxChars=108800 字符 ≈ 54000 token（OK），但如果 contextLength=32000 → maxChars=54400 字符 ≈ 27200 token（OK），对 prompt 实际是 char/2.5~3 的中英文混合文本可能仍偏紧。
-- **5 路分析并发数**：`chapters-analysis.ts:92-93` `Promise.all` 5 路并发，**没有总 timeout**，最坏情况 5 个 AI 同时挂 5 分钟。
+- **5 路分析并发数**：`chapters-analysis.ts:92-93` `Promise.all` 5 路并发。**实测 baseline 是 max-of ≈ 120s**（不是 5 分钟），原因：`packages/ai-provider/src/index.ts:241` `setTimeout(() => controller.abort(), options?.timeoutMs ?? 120000)` 给每路 AI 调用兜了 120s，5 路并发是 **max-of 而非 sum-of**。**前端再多加一层总兜底**：`apps/web/src/api-v2/chapters.ts:55-79` `analyzeFetch` helper 用 `AbortController` 强制 180s 上限（见 [§6.3](#63--设计偏离-spec) "5 路并发" 行 → Q10）—— 防止 server 端在异常路径（DB hang / 解析挂死）下永远不返回，前端用户可感知的"卡住"场景被截断成 `{success: false, error: '分析超时...'}`。
 
 ### 6.4 💀 死代码 / 死表
 
@@ -401,7 +401,7 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 - [x] **Q6**: V2 4 状态 vs V1 8 状态（§6.3）— **有意偏离**，砍掉 4 个 V1 必经 feature（评分/选最佳/ReviewingPanel/reject）；调研结论落 [§6.3](#63--设计偏离-spec)。新会话不再问。
 - [x] **Q7**: V1/V2 extractor 近似重复（§6.7）— **抽 V2 内部公共层**（方案 D）。`apps/server/src/services-v2/extractor-base.ts` (`runAiExtraction<T>` + `parseAIJson`) 替代 5 份复制粘贴；V1 不动（V1 是参考留档，最终会清除）。commit `1f69418`。
 - [x] **Q9**: V2 1.01 侧线支持 — **暂缓** (2026-07-04)。调研发现 V2 没有 `isSideStory` 字段 / 没有 `fromChapterNumber` / 无侧线 UI / 无 route 处理；schema Float 是"留可能性"的非有意设计。**触发条件**：V2 章节生成流程（生成 → 分析 → 归档）端到端走通 + 持续运行无返工后重评；届时如确认不需要侧线则 schema 改 Int，如需要则走 §6 风格完整迁移（加 `isSideStory` + `fromChapterNumber` + UI）。
-- [ ] **Q10**: 5 路分析并发（§6.3）— 是否加总 timeout + 单路 timeout？
+- [x] **Q10**: 5 路分析并发（§6.3）— **前端加 180s total deadline，不加 per-extractor timeout**。决策依据：provider 层 `setTimeout(() => controller.abort(), 120000)` 在 [§6.3](#63--设计偏离-spec) 已经兜住每路 AI 调用，per-extractor timeout 与之高度重叠几乎冗余；唯一用户可感知的"长时间无响应"是 server 异常路径（DB/parse hang），前端裸 fetch 用 AbortController 在 180s 截断为 `{success:false, error:'分析超时...'}` 让用户可关页 / 单路重抽 fail 项。落地：`apps/web/src/api-v2/chapters.ts` 新增 `ANALYZE_TIMEOUT_MS=180_000` + `analyzeFetch` helper，`analyze`/`analyzeSingle` 共用。
 
 ### 7.5 大文件拆分（结构性）
 
@@ -420,6 +420,7 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 
 ### 批 1（必做，低风险）
 - ✅ 修 V2Timeline.vue 崩溃（Q1，commit `7882b84`）
+- ✅ 前端 analyze 180s total deadline（Q10，commit 见 §7.4）— 防止 server 异常路径 hang 时前端永久无响应
 - ⏸️ 清理 `chapters-generate.ts` 桩文件 — **Q4 决定保留**
 - ⏸️ 删除 / 保留 `characters/memories/plot-arcs-analysis.ts` 桩文件 — **Q4 决定保留**
 
@@ -504,4 +505,4 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 
 ## 10. 一句话总结
 
-V2 是 V1 的**工具化重写**：4 态状态机（故意偏离 V1 8 态以绕开锁定）、并行 5 路分析、3 步确认归档、配置面板作为核心交互入口。**Phase 0-6 全部完成 (2026-07-03)**。**已落实**：Q1（崩溃修复）、Q2（archive 守卫）、Q3（runtime degraded 透传）、Q4（死表保留）、Q5（C/D/E + A/B 类静默兜底；仅 graph-organizer 无 provider 路径留 warn）、Q6（4 态 vs 8 状态：调研结论落 [§6.3](#63--设计偏离-spec)）、Q7（V2 内部 5 extractor 抽公共层 `extractor-base.ts`，commit `1f69418`；V1 不动 = 参考留档最终清除）、Q8（动态 budget）。**仍待决策**：Q9（暂缓, 触发条件见 §7.4）、Q10-Q13。
+V2 是 V1 的**工具化重写**：4 态状态机（故意偏离 V1 8 态以绕开锁定）、并行 5 路分析、3 步确认归档、配置面板作为核心交互入口。**Phase 0-6 全部完成 (2026-07-03)**。**已落实**：Q1（崩溃修复）、Q2（archive 守卫）、Q3（runtime degraded 透传）、Q4（死表保留）、Q5（C/D/E + A/B 类静默兜底；仅 graph-organizer 无 provider 路径留 warn）、Q6（4 态 vs 8 状态：调研结论落 [§6.3](#63--设计偏离-spec)）、Q7（V2 内部 5 extractor 抽公共层 `extractor-base.ts`，commit `1f69418`；V1 不动 = 参考留档最终清除）、Q8（动态 budget）、Q10（前端 analyze 180s total deadline；per-extractor timeout 不加 = 与 provider 120s 高度重叠冗余；详见 [§6.3 "5 路分析并发数"](#63--设计偏离-spec)）。**仍待决策**：Q9（暂缓, 触发条件见 §7.4）、Q11-Q13。
