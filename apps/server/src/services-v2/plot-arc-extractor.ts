@@ -1,4 +1,5 @@
 import { resolveProvider } from '../services/ai-provider-init.js'
+import { fail, ok, type ExtractorResult } from './extractor-types.js'
 
 export interface V2ExtractedPlotArc {
   action: 'create' | 'update' | 'close'
@@ -53,7 +54,7 @@ export async function extractPlotArcs(
   prisma: any,
   storyId: string,
   content: string
-): Promise<V2PlotArcExtractResult> {
+): Promise<ExtractorResult<V2PlotArcExtractResult>> {
   const existingArcs = await prisma.v2PlotArc.findMany({
     where: { storyId },
     orderBy: { firstChapterNumber: 'asc' }
@@ -63,20 +64,28 @@ export async function extractPlotArcs(
     `${i + 1}. [编号:${a.id}] 【${a.title}】${a.description || ''} 状态:${a.status} ${a.isMainline ? '(主线)' : ''}`
   ).join('\n')
 
+  // 截断过长内容（8000 字），避免 token 超限
+  const truncated = content.length > 8000 ? content.substring(0, 8000) : content
+
   const prompt = PROMPT
     .replace('{existingArcs}', arcList || '（暂无）')
-    .replace('{content}', content)
+    .replace('{content}', truncated)
 
   const resolved = await resolveProvider(prisma, storyId)
   if (!resolved?.provider?.generate) {
-    return { arcs: [] }
+    return fail('未配置 AI provider')
   }
 
-  const raw = await resolved.provider.generate(prompt, { system: SYSTEM, temperature: 0.3 })
+  let raw: string
+  try {
+    raw = await resolved.provider.generate(prompt, { system: SYSTEM, temperature: 0.3 })
+  } catch (err: any) {
+    return fail(`AI 调用失败: ${err?.message || '未知错误'}`)
+  }
   const parsed = parseAIJson(raw)
 
   if (!Array.isArray(parsed)) {
-    return { arcs: [] }
+    return fail('AI 返回数据格式错误：期望数组')
   }
 
   const arcs: V2ExtractedPlotArc[] = parsed.map((item: any) => ({
@@ -89,7 +98,7 @@ export async function extractPlotArcs(
     mergeInfo: item.mergeInfo || undefined
   }))
 
-  return { arcs }
+  return ok({ arcs })
 }
 
 function parseAIJson(raw: string): any {

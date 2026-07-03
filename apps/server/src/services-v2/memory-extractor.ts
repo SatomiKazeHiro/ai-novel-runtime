@@ -1,4 +1,5 @@
 import { resolveProvider } from '../services/ai-provider-init.js'
+import { fail, ok, type ExtractorResult } from './extractor-types.js'
 
 export interface V2ExtractedMemory {
   type: 'global' | 'chapter' | 'scene' | 'temporary'
@@ -85,10 +86,10 @@ export async function extractMemories(
   storyId: string,
   chapterNumber: number,
   content: string
-): Promise<V2MemoryExtractResult> {
+): Promise<ExtractorResult<V2MemoryExtractResult>> {
   const resolved = await resolveProvider(prisma, storyId)
   if (!resolved?.provider?.generate) {
-    return { chapterMemories: [], globalMemories: [], sceneMemories: [] }
+    return fail('未配置 AI provider')
   }
 
   // 加载已有全局记忆
@@ -101,16 +102,24 @@ export async function extractMemories(
     ? existingGlobals.map((m: any) => `[${m.category}] ${m.content} (重要度:${m.importance})`).join('\n')
     : '（暂无）'
 
+  // 截断过长内容（8000 字），避免 token 超限
+  const truncated = content.length > 8000 ? content.substring(0, 8000) : content
+
   // 第一次 AI 调用：提取章节记忆
   const extractPrompt = EXTRACT_USER
-    .replace('{content}', content)
+    .replace('{content}', truncated)
     .replace('{existingGlobals}', globalSummary)
 
-  const raw = await resolved.provider.generate(extractPrompt, { system: EXTRACT_SYSTEM, temperature: 0.3 })
+  let raw: string
+  try {
+    raw = await resolved.provider.generate(extractPrompt, { system: EXTRACT_SYSTEM, temperature: 0.3 })
+  } catch (err: any) {
+    return fail(`AI 调用失败: ${err?.message || '未知错误'}`)
+  }
   const extracted = parseAIJson(raw)
 
   if (!extracted || typeof extracted !== 'object') {
-    return { chapterMemories: [], globalMemories: [], sceneMemories: [] }
+    return fail('AI 返回数据格式错误：期望对象')
   }
 
   const chapterMemories: V2ExtractedMemory[] = (extracted.chapterMemories || []).map(normalizeMemory)
@@ -123,14 +132,20 @@ export async function extractMemories(
       .replace('{existingGlobals}', globalSummary)
       .replace('{newGlobals}', newGlobals.map(m => `[${m.category}] ${m.content} (重要度:${m.importance})`).join('\n'))
 
-    const mergeRaw = await resolved.provider.generate(mergePrompt, { system: MERGE_SYSTEM, temperature: 0.3 })
-    const merged = parseAIJson(mergeRaw)
-    if (Array.isArray(merged)) {
-      newGlobals = merged.map(normalizeMemory)
+    let mergeRaw: string
+    try {
+      mergeRaw = await resolved.provider.generate(mergePrompt, { system: MERGE_SYSTEM, temperature: 0.3 })
+    } catch (err: any) {
+      return fail(`AI 合并全局记忆失败: ${err?.message || '未知错误'}`)
     }
+    const merged = parseAIJson(mergeRaw)
+    if (!Array.isArray(merged)) {
+      return fail('AI 合并全局记忆返回数据格式错误：期望数组')
+    }
+    newGlobals = merged.map(normalizeMemory)
   }
 
-  return { chapterMemories, globalMemories: newGlobals, sceneMemories }
+  return ok({ chapterMemories, globalMemories: newGlobals, sceneMemories })
 }
 
 function normalizeMemory(raw: any): V2ExtractedMemory {

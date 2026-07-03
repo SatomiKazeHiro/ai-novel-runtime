@@ -1,4 +1,5 @@
 import { resolveProvider } from '../services/ai-provider-init.js'
+import { fail, ok, type ExtractorResult } from './extractor-types.js'
 
 export interface V2ExtractedCharacter {
   name: string
@@ -22,7 +23,7 @@ export async function extractCharacters(
   prisma: any,
   storyId: string,
   content: string
-): Promise<V2CharacterExtractResult> {
+): Promise<ExtractorResult<V2CharacterExtractResult>> {
   const existingChars = await prisma.v2Character.findMany({
     where: { storyId },
     select: { id: true, name: true, slug: true }
@@ -30,7 +31,10 @@ export async function extractCharacters(
 
   const existingList = existingChars.map((c: any) => `- ${c.name}（标识: ${c.slug}）`).join('\n')
 
-  const systemMessage = `你是一位专精长篇小说角色分析的专业编辑。你需要从给定的小说正文中提取所有出场角色及其属性变化。
+  // 截断过长内容（8000 字），避免 token 超限
+  const truncated = content.length > 8000 ? content.substring(0, 8000) : content
+
+  const systemMessage =`你是一位专精长篇小说角色分析的专业编辑。你需要从给定的小说正文中提取所有出场角色及其属性变化。
 返回严格的 JSON 格式，不要包含任何解释、markdown 标记或额外文字。`
 
   const userMessage = `请分析以下小说章节正文，提取所有出场角色的信息。
@@ -39,7 +43,7 @@ export async function extractCharacters(
 ${existingList || '（暂无）'}
 
 【正文】
-${content}
+${truncated}
 
 请返回 JSON 数组，每个角色包含以下字段：
 - name: 角色姓名
@@ -65,14 +69,19 @@ ${content}
 
   const resolved = await resolveProvider(prisma, storyId)
   if (!resolved?.provider?.generate) {
-    return { characters: [] }
+    return fail('未配置 AI provider')
   }
 
-  const raw = await resolved.provider.generate(userMessage, { system: systemMessage, temperature: 0.3 })
+  let raw: string
+  try {
+    raw = await resolved.provider.generate(userMessage, { system: systemMessage, temperature: 0.3 })
+  } catch (err: any) {
+    return fail(`AI 调用失败: ${err?.message || '未知错误'}`)
+  }
   const extracted = parseAIJson(raw)
 
   if (!Array.isArray(extracted)) {
-    return { characters: [] }
+    return fail('AI 返回数据格式错误：期望数组')
   }
 
   const nameToId = new Map<string, string>(existingChars.map((c: any) => [c.name as string, c.id as string]))
@@ -105,7 +114,7 @@ ${content}
     }
   })
 
-  return { characters }
+  return ok({ characters })
 }
 
 function parseAIJson(raw: string): any {
