@@ -93,6 +93,22 @@ Frontend polling: after submitting generation, the UI polls `draftsApi.list` eve
 
 The `ReviewingPanel` is mounted inside `apps/web/src/views/Chapters.vue` once `currentChapter.status === 'reviewing'`; it does not poll — saving and confirming are explicit user actions.
 
+### V2 Chapter Lifecycle (parallel rewrite)
+
+A parallel rewrite of the chapter workflow lives under `apps/server/src/{routes-v2,services-v2}/` and `apps/web/src/{views-v2,composables-v2,api-v2}/`, on route prefix `/api/v2/...`. **V2 is the actively-developed implementation** — V1 (`/api/...`) above is legacy and only receives bug fixes.
+
+The V2 state machine has only **3 effective states** (`prisma/schema.prisma` → `enum V2ChapterStatus`):
+
+```
+draft -> analyzing -> archived
+```
+
+The enum lists 4 values (`draft / generating / analyzing / archived`), but `chapter.status` never actually flips to `generating` — that label lives only on `V2Draft.status` (草稿级, see `apps/server/src/routes-v2/chapters.ts:436`). So V2 不需要 `updateMany` 原子锁 → 没有 V1 那种 4 套 allowed-status 白名单分散维护 → 没有"取消 review = 删章节"那条退路痛点。
+
+Why 4 states instead of V1's 8? V2 intentionally drops the experimental features that V1 had固化成了必经步骤：AI 评分、必经 selectDraft 选最佳候选、ReviewingPanel 必经归档审查、reject 半成品态. V2's 5-way parallel AI analysis (`/api/v2/chapters/:id/analyze`) + 草稿级 DELETE 候选 provides the same value without locking.
+
+**Full V2 architecture, data model, V1/V2 design differences, and Q6 调研结论 (4 态 vs 8 态) live in `docs/v2-architecture.md` — read it before touching V2 code.**
+
 ### Prompt Pipeline
 
 Generation is **stateless**: every prompt is assembled fresh from the database, not from a chat history.

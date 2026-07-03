@@ -16,7 +16,7 @@ V2 是**小说设计页的并行重写**。它不是 V1 的补丁，而是在 `/
 | 维度 | V1 | V2 |
 |---|---|---|
 | 业务目标 | 长篇稳定生成的完整 runtime | "作者手动掌控每次生成的上下文"的工具化重写 |
-| 章节状态机 | 8 态（draft/generating/generated/selecting/selected/select_failed/developing/reviewing/archived） | **4 态**（draft/generating/analyzing/archived） |
+| 章节状态机 | 8 态（draft/generating/generated/scored/selected/reviewing/archived/rejected）— 见 [§6.3](#63--设计偏离-spec) | **4 态**（draft/analyzing/archived；`generating` 只在 `V2Draft.status`，不到 chapter）— 见 [§6.3](#63--设计偏离-spec) |
 | 章节生命周期 | 生成候选 → 选最佳 → 准备归档 → 人工审查 → 确认归档（5 phase） | **生成候选 → 保存正文 → 5 路分析 → 3 步确认归档** |
 | 多候选评分 | 7 维度 AI 评分 | **不做**（spec 明确不做的） |
 | 旧数据迁移 | — | **不做**（spec 明确不做的） |
@@ -247,7 +247,45 @@ await tx.v2Memory.updateMany({
 
 ### 6.3 📐 设计偏离 spec
 
-- **状态机 4 态 vs spec 8 态**：`scored / selected / reviewing / rejected` 在 V2 全部消失。Spec 没解释为什么压缩（可能因为"不做评分、不做选最佳"）。需要确认是"有意"还是"漏做"。
+**状态机：V2 砍成 4 态是有意偏离 V1 8 态**（Q6，2026-07-03 已落文档，未来 session 不必再问）
+
+V2 4 态走法（`schema.prisma:428-433` + `V2Chapters.vue:48-52`）：
+
+| 步骤 | 触发动作 | chapter.status | 备注 |
+|------|---------|----------------|------|
+| 1. 写作 | 设计页打字/编辑 | `draft` | 唯一可改正文的窗口 |
+| 2. 生成候选 | 点"生成候选文章" | `draft` | `V2Draft.status='generating'` 携带进度；**chapter.status 不动** |
+| 3. 分析 | 点"分析" → 5 路并行 AI | `analyzing` | 仅在 5 路全成功时翻状态（见 `chapters-analysis.ts:158-162`） |
+| 4. 归档 | 点"归档" → 事务写入 | `archived` | 终态；事务后做中断检测 |
+
+V2 chapter.status **从不写入 `generating`** —— `generating` 是草稿级状态（`V2Draft.status`）。V2 只有 1 个撤销路径（`revert-analysis`：`analyzing → draft`，`chapters-archive.ts:227-238`）；取消生成候选 = 物理 DELETE 草稿行（`chapters.ts:436`）。
+
+V1 8 态上锁问题清单（`packages/shared/src/index.ts:3-12`），按问题排序：
+
+| 问题 | 体现 | 文件:行 |
+|------|------|---------|
+| 死状态 `scored` | enum 存在但**无任何 route** 写入 `chapter.status='scored'`；`draftsApi.score`（`api/chapters.ts:49`）只写 `Draft.score` | — |
+| 半死状态 `rejected` | 仅 `generate-processor.ts:45` 的 `SKIP_STATUSES` 出现；用户拒绝候选时 chapter 不动 | — |
+| 4 套白名单分散维护 | GENERATE/SELECT/PREPARE/CONFIRM 各自维护 allowed status | `chapters-generate.ts:161-173, 325-334`，`chapters-archive.ts:30-35, 69-78, 138-143` |
+| 原子锁无回退 | `updateMany` 抢锁后中间崩 → 卡在 `generating` 无清理路径 | `chapters-generate.ts:161-173` |
+| reviewing 期间锁字段 | PUT 仅允许 `content`/`pendingArchiveData`，想改 `outline` 也得先取消 | `chapters-crud.ts:117-127, 146-148, 255-272` |
+| 取消 review = 删章节 | "退回 selected"的路径不存在，退路是 DELETE | `views/Chapters.vue:306-319` |
+
+V2 砍掉的 3 个实验性 feature（V1 把它们固化成必经步骤 = 锁问题的根源）：
+
+| V1 必经 feature | V2 处理 | 砍掉的态 |
+|-----------------|---------|----------|
+| AI 7 维评分（`packages/scoring-engine`） | **不做**（spec 明确） | `scored` |
+| 必经 selectDraft 选最佳候选 | 作者直接在 textarea 改最终正文 | `selected` |
+| ReviewingPanel 必经归档审查 | analyzing 期间直接编辑 + `isStale` 软提示（`V2ChapterDesign.vue:616-622`） | `reviewing` |
+| 拒绝候选的 reject 半成品态 | DELETE `V2Draft` 行 | `rejected` |
+
+V2 不需要上锁 = 实际有效态只有 3 个（`draft` / `analyzing` / `archived`）；中间崩了回 `draft`、无数据丢失；用 PUT 字段白名单 + 各 API 状态前置检查代替 V1 的 `updateMany` 原子锁。
+
+**给未来 session 的一句话**：如果业务方在 V2 上提"加个评分步骤"或"加个确认页"，先确认他们要的是 V2 5 路分析（`/api/v2/chapters/:id/analyze`）已经提供的，还是真的需要新增加锁的中间态——目前的设计哲学是**用工具代替必经状态**。
+
+---
+
 - **Prompt 装配 token 公式**：`Math.floor(contextLength * 0.85) * 2` 把字符数当 token，对长 prompt 严重超限。contextLength=64000 → maxChars=108800 字符 ≈ 54000 token（OK），但如果 contextLength=32000 → maxChars=54400 字符 ≈ 27200 token（OK），对 prompt 实际是 char/2.5~3 的中英文混合文本可能仍偏紧。
 - **5 路分析并发数**：`chapters-analysis.ts:92-93` `Promise.all` 5 路并发，**没有总 timeout**，最坏情况 5 个 AI 同时挂 5 分钟。
 
@@ -360,7 +398,7 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 ### 7.4 需用户拍板（设计决策）
 
 - [x] **Q5-剩余**: 静默兜底 A/B 类（§6.5）— commit 路径：graph-organizer:50-52 加 console.warn + §9 表全面校准。A 类（JSON 解析）已通过 `getConfigOrThrow`/`getPending`/`safeParseArr`/`safeParseObj` 抛错阻断；B 类（AI 失败）已通过 5-way ExtractorResult 阻断；仅余 3 处 ⏸️ 留痕（详见 §9 表注）
-- [ ] **Q6**: 4 状态 vs 8 状态（§6.3）— V2 砍掉 scored/selected/reviewing/rejected 是有意还是漏做？
+- [x] **Q6**: V2 4 状态 vs V1 8 状态（§6.3）— **有意偏离**，砍掉 4 个 V1 必经 feature（评分/选最佳/ReviewingPanel/reject）；调研结论落 [§6.3](#63--设计偏离-spec)。新会话不再问。
 - [ ] **Q7**: 6 个 V2 extractor 与 V1 的近似重复（§6.7）— 抽公共包 / 接受重复 / 删 V1？
 - [ ] **Q9**: V2Chapters.vue UI 不支持 1.01 侧线（§5）— schema Float 但 UI 整数：是 stub 还是不需要？
 - [ ] **Q10**: 5 路分析并发（§6.3）— 是否加总 timeout + 单路 timeout？
@@ -391,10 +429,10 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 - ⏸️ V2ChapterDesign.vue 拆 Step1~Step5 子组件（Q11 决策）
 
 ### 批 3（设计决策，需用户拍板再做）
-- ⏸️ 状态机 4→8（如果业务上需要，Q6）
 - 🟡 静默兜底统一处理（Q5 部分）：C/E/D 已落代码（commit `753a1d1`/`a7eef1f`/`4d59081`），A/B 类待 Q5 决策
 - ⏸️ 死表 / 死代码清理（Q4 已决策：**保留**）
 - ✅ 8000 字截断换动态 budget（Q8，commit `2eab022`）
+- ✅ V2 4 状态 vs V1 8 状态调研落文档（Q6，2026-07-03；§6.3）
 
 ---
 
@@ -466,4 +504,4 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 
 ## 10. 一句话总结
 
-V2 是 V1 的**工具化重写**：4 态状态机、并行 5 路分析、3 步确认归档、配置面板作为核心交互入口。**Phase 0-6 全部完成 (2026-07-03)**。**已落实**：Q1（崩溃修复）、Q2（archive 守卫）、Q3（runtime degraded 透传）、Q4（死表保留）、Q5（C/D/E + A/B 类静默兜底；仅 graph-organizer 无 provider 路径留 warn）、Q8（动态 budget）。**仍待决策**：Q6（4/8 状态机）、Q7（V1/V2 extractor 抽公共包）、Q9-Q13。
+V2 是 V1 的**工具化重写**：4 态状态机（故意偏离 V1 8 态以绕开锁定）、并行 5 路分析、3 步确认归档、配置面板作为核心交互入口。**Phase 0-6 全部完成 (2026-07-03)**。**已落实**：Q1（崩溃修复）、Q2（archive 守卫）、Q3（runtime degraded 透传）、Q4（死表保留）、Q5（C/D/E + A/B 类静默兜底；仅 graph-organizer 无 provider 路径留 warn）、Q6（4 态 vs 8 状态：调研结论落 [§6.3](#63--设计偏离-spec)）、Q8（动态 budget）。**仍待决策**：Q7（V1/V2 extractor 抽公共包）、Q9-Q13。
