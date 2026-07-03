@@ -351,10 +351,15 @@ export async function v2ChapterRoutes(app: FastifyInstance) {
         temperature: body.temperature,
         maxTokens: body.maxTokens
       }
-      app.prisma.v2Chapter.update({
-        where: { id: chapterId },
-        data: { config: JSON.stringify(configToSave) }
-      }).catch((err: any) => app.log.error(`[V2] 保存配置失败: ${err.message}`))
+      try {
+        await app.prisma.v2Chapter.update({
+          where: { id: chapterId },
+          data: { config: JSON.stringify(configToSave) }
+        })
+      } catch (err: any) {
+        app.log.error(`[V2-Config] 保存配置失败: ${err.message}`)
+        return reply.status(500).send({ success: false, error: '保存配置失败，请重试' })
+      }
     }
 
     if (!config.outline?.trim()) {
@@ -397,13 +402,13 @@ export async function v2ChapterRoutes(app: FastifyInstance) {
         const pc = await app.prisma.aiProviderConfig.findUnique({
           where: { id: lookupId },
           select: { name: true, model: true }
-        }).catch(() => null)
+        }).catch((err: any) => { app.log.warn(`[V2-Provider] 查询 provider ${lookupId} 失败: ${err.message}`); return null })
         if (pc) { providerName = pc.name; model = pc.model }
       } else {
         const def = await app.prisma.aiProviderConfig.findFirst({
           where: { isDefault: true },
           select: { name: true, model: true }
-        }).catch(() => null)
+        }).catch((err: any) => { app.log.warn(`[V2-Provider] 查询默认 provider 失败: ${err.message}`); return null })
         if (def) { providerName = def.name; model = def.model }
       }
       return JSON.stringify({
@@ -483,7 +488,7 @@ export async function v2ChapterRoutes(app: FastifyInstance) {
         maxTokens: body.maxTokens,
         durationMs: 0,
         status: 'success'
-      }).catch((err: any) => { app.log.error(`[V2] 写入 promptLog 失败: ${err.message}`); return null })
+      }).catch((err: any) => { app.log.warn(`[V2-PromptLog] 写入日志失败: ${err.message}`); return null })
 
       const genStartTime = Date.now()
       let fullContent = ''
@@ -503,13 +508,30 @@ export async function v2ChapterRoutes(app: FastifyInstance) {
         app.prisma.promptLog.update({
           where: { id: logId },
           data: { responseContent: fullContent, durationMs: Date.now() - genStartTime }
-        }).catch((err: any) => app.log.error(`[V2] 更新 promptLog 失败: ${err.message}`))
+        }).catch((err: any) => app.log.warn(`[V2-PromptLog] 回填日志失败: ${err.message}`))
       }
     } catch (err: any) {
-      await app.prisma.v2Draft.update({
-        where: { id: draft.id },
-        data: { status: 'failed' }
-      }).catch(() => { /* 更新失败不覆盖原始错误 */ })
+      // 错误处理路径：v2Draft.status='failed' 必须写入成功，否则 draft 卡在 generating
+      // 重试一次（应对短暂 DB 抖动）；仍失败则 log error（不 throw，避免破坏 SSE 响应）
+      let draftUpdateOk = false
+      try {
+        await app.prisma.v2Draft.update({
+          where: { id: draft.id },
+          data: { status: 'failed' }
+        })
+        draftUpdateOk = true
+      } catch (firstErr: any) {
+        app.log.warn(`[V2-Draft] draft 状态更新首次失败，准备重试: ${firstErr.message}`)
+        try {
+          await app.prisma.v2Draft.update({
+            where: { id: draft.id },
+            data: { status: 'failed' }
+          })
+          draftUpdateOk = true
+        } catch (secondErr: any) {
+          app.log.error(`[V2-Draft] draft 状态更新重试仍失败，draft 将卡在 generating 状态: ${secondErr.message}`)
+        }
+      }
 
       // 更新预设日志为错误状态
       if (logId) {
@@ -521,21 +543,25 @@ export async function v2ChapterRoutes(app: FastifyInstance) {
             responseContent: `[ERROR] ${(err.message || 'unknown').slice(0, 2000)}`,
             durationMs: 0
           }
-        }).catch((logErr: any) => app.log.error(`[V2] 更新 promptLog 失败: ${logErr.message}`))
+        }).catch((logErr: any) => app.log.warn(`[V2-PromptLog] 错误日志更新失败: ${logErr.message}`))
       }
 
-      try { send('draft-error', { draftId: draft.id, error: err.message }) } catch { /* 连接已断开 */ }
+      try {
+        send('draft-error', { draftId: draft.id, error: err.message })
+      } catch (sendErr: any) {
+        app.log.warn(`[V2-SSE] 发送 draft-error 失败（连接已断开）: ${sendErr.message}`)
+      }
     }
 
     reply.raw.end()
   })
 
   // DELETE /api/v2/chapters/:chapterId
-  app.delete('/chapters/:chapterId', async (request) => {
+  app.delete('/chapters/:chapterId', async (request, reply) => {
     const { chapterId } = request.params as { chapterId: string }
     const existing = await app.prisma.v2Chapter.findUnique({ where: { id: chapterId } })
     if (!existing) {
-      return { success: false, error: '章节不存在' }
+      return reply.code(404).send({ success: false, error: '章节不存在' })
     }
     if (existing.status === 'archived') {
       const lastChapter = await app.prisma.v2Chapter.findFirst({
@@ -547,52 +573,65 @@ export async function v2ChapterRoutes(app: FastifyInstance) {
       }
     }
 
-    // 级联清理：删除同章节编号的派生数据
-    if (existing.status === 'archived') {
-      try {
-        const { count: memCount } = await app.prisma.v2Memory.deleteMany({
-          where: { storyId: existing.storyId, originChapterNumber: existing.number }
-        })
-        const { count: teCount } = await app.prisma.v2TimelineEvent.deleteMany({
-          where: { storyId: existing.storyId, chapterNumber: existing.number }
-        })
-        const { count: padCount } = await app.prisma.v2PlotArcDraft.deleteMany({
-          where: { chapterId: existing.id }
-        })
-        // V2CharacterSnapshot 没有 storyId，通过本故事的角色 ID 过滤
-        const storyCharacters = await app.prisma.v2Character.findMany({
-          where: { storyId: existing.storyId },
-          select: { id: true }
-        })
-        const { count: csCount } = await app.prisma.v2CharacterSnapshot.deleteMany({
-          where: { characterId: { in: storyCharacters.map(c => c.id) }, chapterNumber: existing.number }
-        })
-        app.log.info(`[V2 Delete] Cascade cleanup for chapter ${existing.number}: memory=${memCount}, timeline=${teCount}, plotArcDraft=${padCount}, characterSnapshot=${csCount}`)
-      } catch (err: any) {
-        app.log.error(`[V2 Delete] Cascade cleanup failed: ${err.message}`)
-      }
-    }
-
-    await app.prisma.v2Chapter.delete({ where: { id: chapterId } })
-
-    // 如果是最后一个章节，清理故事级别的派生数据
-    const remainingChapters = await app.prisma.v2Chapter.count({
+    // 判断是否是故事唯一章节（删除后需清理 story-level 派生数据）
+    const totalChapters = await app.prisma.v2Chapter.count({
       where: { storyId: existing.storyId }
     })
-    if (remainingChapters === 0) {
-      try {
-        const { count: arcCount } = await app.prisma.v2PlotArc.deleteMany({
-          where: { storyId: existing.storyId }
-        })
-        const { count: logCount } = await app.prisma.v2MemoryMergeLog.deleteMany({
-          where: { storyId: existing.storyId }
-        })
-        app.log.info(`[V2 Delete] Last chapter removed. Cleaned plotArc=${arcCount}, memoryMergeLog=${logCount}`)
-      } catch (err: any) {
-        app.log.error(`[V2 Delete] Final cleanup failed: ${err.message}`)
-      }
-    }
+    const isLastChapter = totalChapters === 1
 
-    return { success: true }
+    // 原子事务：级联清理 + 章节删除 + 末章 story-level 清理
+    // 任何一步失败 → 全部回滚，章节不会被孤立
+    try {
+      await app.prisma.$transaction(async (tx) => {
+        if (existing.status === 'archived') {
+          const { count: memCount } = await tx.v2Memory.deleteMany({
+            where: { storyId: existing.storyId, originChapterNumber: existing.number }
+          })
+          const { count: teCount } = await tx.v2TimelineEvent.deleteMany({
+            where: { storyId: existing.storyId, chapterNumber: existing.number }
+          })
+          const { count: padCount } = await tx.v2PlotArcDraft.deleteMany({
+            where: { chapterId: existing.id }
+          })
+          // V2CharacterSnapshot 没有 storyId，通过本故事的角色 ID 过滤
+          const storyCharacters = await tx.v2Character.findMany({
+            where: { storyId: existing.storyId },
+            select: { id: true }
+          })
+          const { count: csCount } = await tx.v2CharacterSnapshot.deleteMany({
+            where: { characterId: { in: storyCharacters.map(c => c.id) }, chapterNumber: existing.number }
+          })
+          app.log.info(
+            `[V2 Delete] Cascade cleanup for chapter ${existing.number}: ` +
+            `memory=${memCount}, timeline=${teCount}, plotArcDraft=${padCount}, characterSnapshot=${csCount}`
+          )
+        }
+        await tx.v2Chapter.delete({ where: { id: chapterId } })
+        if (isLastChapter) {
+          const { count: arcCount } = await tx.v2PlotArc.deleteMany({
+            where: { storyId: existing.storyId }
+          })
+          const { count: logCount } = await tx.v2MemoryMergeLog.deleteMany({
+            where: { storyId: existing.storyId }
+          })
+          app.log.info(
+            `[V2 Delete] Last chapter removed. Cleaned plotArc=${arcCount}, memoryMergeLog=${logCount}`
+          )
+        }
+      })
+      return { success: true }
+    } catch (err: any) {
+      if (err?.code === 'P2025') {
+        return reply.code(404).send({ success: false, error: '章节不存在（已被删除）' })
+      }
+      if (err?.code === 'P2003') {
+        return reply.code(409).send({ success: false, error: '该章节存在未被级联清理的关联数据，无法删除' })
+      }
+      app.log.error(`[V2 Delete] Chapter ${chapterId} cascade failed: ${err.message}`)
+      return reply.code(500).send({
+        success: false,
+        error: `删除失败，已回滚（派生数据未清理）: ${err.message}`
+      })
+    }
   })
 }

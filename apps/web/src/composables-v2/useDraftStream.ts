@@ -85,7 +85,9 @@ export function useDraftStream(
             } else if (eventName === 'draft-error') {
               drafts.value[idx] = { ...drafts.value[idx], status: 'failed' }
             }
-          } catch { /* skip parse errors */ }
+          } catch (parseErr: any) {
+            console.warn(`[V2-SSE] 事件解析失败: ${parseErr?.message || parseErr} | data: ${eventData.slice(0, 100)}`)
+          }
         }
       }
     } catch (err: any) {
