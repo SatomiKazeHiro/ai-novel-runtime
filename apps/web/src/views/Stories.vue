@@ -217,7 +217,7 @@ async function loadStories() {
 }
 
 function enterDesign(storyId: string) {
-  router.push(`/novel-design/${storyId}/characters`)
+  router.push(`/novel-design-v2/${storyId}/characters`)
 }
 
 function openCreate() {

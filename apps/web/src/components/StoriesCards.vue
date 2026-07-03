@@ -59,7 +59,7 @@ const emit = defineEmits<{
 const router = useRouter()
 
 function onDesign(id: string) {
-  router.push(`/novel-design/${id}/characters`)
+  router.push(`/novel-design-v2/${id}/characters`)
 }
 
 const menuOptions: DropdownOption[] = [
