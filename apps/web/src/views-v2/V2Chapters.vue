@@ -39,7 +39,7 @@
 import { ref, onMounted, h, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NInputNumber, NTag,
+  NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NInputNumber, NTag, NPopconfirm,
   type DataTableColumns
 } from 'naive-ui'
 import { v2ChaptersApi, type V2ChapterCreate } from '../api-v2/chapters'
@@ -79,14 +79,27 @@ const columns: DataTableColumns<any> = [
   },
   { title: '更新时间', key: 'updatedAt', width: 170 },
   {
-    title: '操作', key: 'actions', width: 140, fixed: 'right',
+    title: '操作', key: 'actions', width: 200, fixed: 'right',
     render(row) {
-      return h(NSpace, null, {
-        default: () => [
-          h(NButton, { size: 'small', onClick: () => goDesign(row.id) }, { default: () => '设计' }),
-          h(NButton, { size: 'small', type: 'error', onClick: () => handleDelete(row.id) }, { default: () => '删除' })
-        ]
-      })
+      const btns: any[] = [
+        h(NButton, { size: 'small', onClick: () => goDesign(row.id) }, { default: () => '设计' }),
+      ]
+      if (row.canDelete !== false) {
+        btns.push(h(NPopconfirm, {
+          onPositiveClick: () => handleDelete(row.id)
+        }, {
+          trigger: () => h(NButton, { size: 'small', type: 'error' }, { default: () => '删除' }),
+          default: () => row.status === 'archived'
+            ? '归档章节删除后将丢失所有关联数据（角色快照、记忆、时间线事件、剧情弧线草稿），不可恢复。确认删除？'
+            : '确认删除该章节？'
+        }))
+      }
+      if (row.status === 'archived') {
+        btns.unshift(
+          h(NButton, { size: 'small', type: 'primary', onClick: () => handleDevelop(row) }, { default: () => '发展' })
+        )
+      }
+      return h(NSpace, null, { default: () => btns })
     }
   }
 ]
@@ -119,6 +132,21 @@ async function handleCreate() {
   await v2ChaptersApi.create(data)
   showModal.value = false
   await loadChapters()
+}
+
+async function handleDevelop(row: any) {
+  const sid = route.params.storyId as string
+  // 下一章节号 = 当前章节号 + 1
+  const nextNumber = Math.floor(row.number) + 1
+  const res = await v2ChaptersApi.create({ storyId: sid, title: `第${nextNumber}章`, number: nextNumber })
+  if (res.data.success) {
+    goDesign(res.data.data.id)
+  } else if ((res.data as any).error?.includes('已存在')) {
+    // 章节号已存在，直接跳转到已有的章节设计页
+    const all = await v2ChaptersApi.list(sid)
+    const existing = all.data.data?.find((c: any) => c.number === nextNumber)
+    if (existing) goDesign(existing.id)
+  }
 }
 
 async function handleDelete(id: string) {
