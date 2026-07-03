@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 import { extractGraph } from '../services-v2/graph-extractor.js'
 import { mergeGraph } from '../services-v2/graph-organizer.js'
 import type { GraphData } from '../services-v2/graph-types.js'
+import { resolveProvider } from '../services/ai-provider-init.js'
+import { computeExtractorCharBudget } from '../services-v2/content-budget.js'
 
 /** JSON 字段损坏 → 422；空值/合法字符串 → 解析或空结构。损坏时给 reply 返回响应并返回 null */
 function parseOrEmpty(
@@ -80,7 +82,21 @@ export async function v2GraphRoutes(app: FastifyInstance) {
     const { storyId, content } = (request.body as any) || {}
     if (!storyId || !content) return { success: false, error: '缺少 storyId 或 content' }
 
-    const data = await extractGraph(app.prisma, storyId, content)
+    // 章节内容预算：按 model contextLength 动态算 (替代 8000 字硬截断)
+    let contentCharBudget = 8000
+    try {
+      const resolved = await resolveProvider(app.prisma, storyId)
+      if (resolved?.config) {
+        contentCharBudget = computeExtractorCharBudget(
+          resolved.config.contextLength ?? 64000,
+          resolved.config.maxTokens ?? 4096
+        )
+      }
+    } catch (err: any) {
+      request.log.warn(`[V2-Graph] resolveProvider 失败, 章节内容预算降级 8000: ${err?.message || err}`)
+    }
+
+    const data = await extractGraph(app.prisma, storyId, content, contentCharBudget)
     return { success: true, data }
   })
 

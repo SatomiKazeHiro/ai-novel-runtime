@@ -6,6 +6,8 @@ import { extractTimeline } from '../services-v2/timeline-extractor.js'
 import { extractGraph } from '../services-v2/graph-extractor.js'
 import { mergeGraph } from '../services-v2/graph-organizer.js'
 import type { GraphData } from '../services-v2/graph-types.js'
+import { resolveProvider } from '../services/ai-provider-init.js'
+import { computeExtractorCharBudget } from '../services-v2/content-budget.js'
 
 function getPending(raw: any): Record<string, any> {
   if (raw == null || raw === '') return {}
@@ -17,30 +19,46 @@ function getPending(raw: any): Record<string, any> {
 async function runAnalyzer(key: string, prisma: any, app: any, chapter: any): Promise<Record<string, any>> {
   const startTime = Date.now()
   const base = { extractedAt: new Date().toISOString(), durationMs: Date.now() - startTime }
+
+  // 章节内容预算：按 model contextLength 动态算 (替代 8000 字硬截断)。
+  // resolveProvider 失败 / 无 config 时降级 8000，保持旧行为不崩。
+  let contentCharBudget = 8000
+  try {
+    const resolved = await resolveProvider(prisma, chapter.storyId)
+    if (resolved?.config) {
+      contentCharBudget = computeExtractorCharBudget(
+        resolved.config.contextLength ?? 64000,
+        resolved.config.maxTokens ?? 4096
+      )
+    }
+  } catch (err: any) {
+    app.log.warn(`[V2-Analysis] resolveProvider 失败, 章节内容预算降级 8000: ${err?.message || err}`)
+  }
+
   try {
     switch (key) {
       case 'characters': {
-        const result = await extractCharacters(prisma, chapter.storyId, chapter.content)
+        const result = await extractCharacters(prisma, chapter.storyId, chapter.content, contentCharBudget)
         if (!result.ok) return { status: 'failed', error: result.error, ...base }
         return { status: 'success', ...base, items: result.data.characters }
       }
       case 'memories': {
-        const result = await extractMemories(prisma, chapter.storyId, chapter.number, chapter.content)
+        const result = await extractMemories(prisma, chapter.storyId, chapter.number, chapter.content, contentCharBudget)
         if (!result.ok) return { status: 'failed', error: result.error, ...base }
         return { status: 'success', ...base, chapterMemories: result.data.chapterMemories, globalMemories: result.data.globalMemories, sceneMemories: result.data.sceneMemories }
       }
       case 'plotArcs': {
-        const result = await extractPlotArcs(prisma, chapter.storyId, chapter.content)
+        const result = await extractPlotArcs(prisma, chapter.storyId, chapter.content, contentCharBudget)
         if (!result.ok) return { status: 'failed', error: result.error, ...base }
         return { status: 'success', ...base, arcs: result.data.arcs }
       }
       case 'timeline': {
-        const result = await extractTimeline(prisma, chapter.storyId, chapter.content)
+        const result = await extractTimeline(prisma, chapter.storyId, chapter.content, contentCharBudget)
         if (!result.ok) return { status: 'failed', error: result.error, ...base }
         return { status: 'success', ...base, events: result.data.events, defaultAnchorName: result.data.defaultAnchorName }
       }
       case 'graph': {
-        const chapterGraphResult = await extractGraph(prisma, chapter.storyId, chapter.content)
+        const chapterGraphResult = await extractGraph(prisma, chapter.storyId, chapter.content, contentCharBudget)
         if (!chapterGraphResult.ok) return { status: 'failed', error: chapterGraphResult.error, ...base }
         // 找上一章的 mergedGraph
         const prevChapter = await prisma.v2Chapter.findFirst({

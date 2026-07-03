@@ -1,4 +1,5 @@
 import { resolveProvider } from '../services/ai-provider-init.js'
+import { truncateByParagraph } from '@novel-runtime/prompt-runtime'
 import { fail, ok, type ExtractorResult } from './extractor-types.js'
 
 export interface V2ExtractedTimelineEvent {
@@ -23,10 +24,11 @@ export interface V2TimelineExtractResult {
 export async function extractTimeline(
   prisma: any,
   storyId: string,
-  content: string
+  content: string,
+  contentCharBudget: number
 ): Promise<ExtractorResult<V2TimelineExtractResult>> {
-  // 截断过长内容（8000 字），避免 token 超限导致空响应
-  const truncated = content.length > 8000 ? content.substring(0, 8000) : content
+  // 按 model contextLength 动态算的预算 + 段落级截断 (替代 8000 字硬切)
+  const truncated = truncateByParagraph(content, contentCharBudget)
 
   const systemMessage = `你是一位专精小说时间线分析的专业编辑。你需要从给定的小说正文中提取所有可识别的事件及其时间信息。
 返回严格的 JSON 格式，不要包含任何解释、markdown 标记或额外文字。`

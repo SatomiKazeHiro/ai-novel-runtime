@@ -1,4 +1,5 @@
 import { resolveProvider } from '../services/ai-provider-init.js'
+import { truncateByParagraph } from '@novel-runtime/prompt-runtime'
 import { fail, ok, type ExtractorResult } from './extractor-types.js'
 
 export interface V2ExtractedCharacter {
@@ -22,7 +23,8 @@ export interface V2CharacterExtractResult {
 export async function extractCharacters(
   prisma: any,
   storyId: string,
-  content: string
+  content: string,
+  contentCharBudget: number
 ): Promise<ExtractorResult<V2CharacterExtractResult>> {
   const existingChars = await prisma.v2Character.findMany({
     where: { storyId },
@@ -31,8 +33,8 @@ export async function extractCharacters(
 
   const existingList = existingChars.map((c: any) => `- ${c.name}（标识: ${c.slug}）`).join('\n')
 
-  // 截断过长内容（8000 字），避免 token 超限
-  const truncated = content.length > 8000 ? content.substring(0, 8000) : content
+  // 按 model contextLength 动态算的预算 + 段落级截断 (替代 8000 字硬切)
+  const truncated = truncateByParagraph(content, contentCharBudget)
 
   const systemMessage =`你是一位专精长篇小说角色分析的专业编辑。你需要从给定的小说正文中提取所有出场角色及其属性变化。
 返回严格的 JSON 格式，不要包含任何解释、markdown 标记或额外文字。`

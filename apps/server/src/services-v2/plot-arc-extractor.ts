@@ -1,4 +1,5 @@
 import { resolveProvider } from '../services/ai-provider-init.js'
+import { truncateByParagraph } from '@novel-runtime/prompt-runtime'
 import { fail, ok, type ExtractorResult } from './extractor-types.js'
 
 export interface V2ExtractedPlotArc {
@@ -53,7 +54,8 @@ const PROMPT = `请分析以下章节正文中的剧情弧线变化。
 export async function extractPlotArcs(
   prisma: any,
   storyId: string,
-  content: string
+  content: string,
+  contentCharBudget: number
 ): Promise<ExtractorResult<V2PlotArcExtractResult>> {
   const existingArcs = await prisma.v2PlotArc.findMany({
     where: { storyId },
@@ -64,8 +66,8 @@ export async function extractPlotArcs(
     `${i + 1}. [编号:${a.id}] 【${a.title}】${a.description || ''} 状态:${a.status} ${a.isMainline ? '(主线)' : ''}`
   ).join('\n')
 
-  // 截断过长内容（8000 字），避免 token 超限
-  const truncated = content.length > 8000 ? content.substring(0, 8000) : content
+  // 按 model contextLength 动态算的预算 + 段落级截断 (替代 8000 字硬切)
+  const truncated = truncateByParagraph(content, contentCharBudget)
 
   const prompt = PROMPT
     .replace('{existingArcs}', arcList || '（暂无）')

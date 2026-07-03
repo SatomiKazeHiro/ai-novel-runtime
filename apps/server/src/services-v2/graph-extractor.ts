@@ -1,17 +1,19 @@
 import { resolveProvider } from '../services/ai-provider-init.js'
+import { truncateByParagraph } from '@novel-runtime/prompt-runtime'
 import { fail, ok, type ExtractorResult } from './extractor-types.js'
 import type { GraphData } from './graph-types.js'
 
 export async function extractGraph(
   prisma: any,
   storyId: string,
-  content: string
+  content: string,
+  contentCharBudget: number
 ): Promise<ExtractorResult<GraphData>> {
   const resolved = await resolveProvider(prisma, storyId)
   if (!resolved?.provider?.generate) return fail('未配置 AI provider')
 
-  // 截断过长内容（8000 字）
-  const truncated = content.length > 8000 ? content.substring(0, 8000) : content
+  // 按 model contextLength 动态算的预算 + 段落级截断 (替代 8000 字硬切)
+  const truncated = truncateByParagraph(content, contentCharBudget)
 
   const systemMessage = `你是一位专精长篇小说结构分析的知识图谱专家。
 你需要从小说正文中提取关键实体（节点）和它们之间的关系（边），构建结构化的知识图谱。

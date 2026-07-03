@@ -1,4 +1,5 @@
 import { resolveProvider } from '../services/ai-provider-init.js'
+import { truncateByParagraph } from '@novel-runtime/prompt-runtime'
 import { fail, ok, type ExtractorResult } from './extractor-types.js'
 
 export interface V2ExtractedMemory {
@@ -85,7 +86,8 @@ export async function extractMemories(
   prisma: any,
   storyId: string,
   chapterNumber: number,
-  content: string
+  content: string,
+  contentCharBudget: number
 ): Promise<ExtractorResult<V2MemoryExtractResult>> {
   const resolved = await resolveProvider(prisma, storyId)
   if (!resolved?.provider?.generate) {
@@ -102,8 +104,8 @@ export async function extractMemories(
     ? existingGlobals.map((m: any) => `[${m.category}] ${m.content} (重要度:${m.importance})`).join('\n')
     : '（暂无）'
 
-  // 截断过长内容（8000 字），避免 token 超限
-  const truncated = content.length > 8000 ? content.substring(0, 8000) : content
+  // 按 model contextLength 动态算的预算 + 段落级截断 (替代 8000 字硬切)
+  const truncated = truncateByParagraph(content, contentCharBudget)
 
   // 第一次 AI 调用：提取章节记忆
   const extractPrompt = EXTRACT_USER
