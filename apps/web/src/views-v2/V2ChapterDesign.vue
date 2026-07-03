@@ -1006,7 +1006,9 @@ async function handleGeneratePrompt() {
     if (res.data?.success && res.data.data) {
       assembledPrompt.value = res.data.data
       cfg._lastPrompt = res.data.data
-      try { await v2ChaptersApi.update(chapterId, { config: cfg }) } catch { /* 非关键 */ }
+      try { await v2ChaptersApi.update(chapterId, { config: cfg }) } catch (promptSaveErr: any) {
+        console.warn(`[V2-Design] 写回 _lastPrompt 失败，下次打开将不显示历史 prompt: ${promptSaveErr?.message || promptSaveErr}`)
+      }
       step.value = 3
       await loadDrafts()
     }
@@ -1052,7 +1054,9 @@ async function loadAnalysis() {
       hashMismatch.value = res.data.data.isStale
     }
     updateStep()
-  } catch { /* 静默 */ }
+  } catch (err: any) {
+    showToast(err?.message || '加载分析结果失败', 'error')
+  }
 }
 
 async function runAnalyze() {
@@ -1134,7 +1138,9 @@ async function doArchive() {
         ? res.data.data.errors
         : null
     }
-  } catch { /* 静默 */ }
+  } catch (err: any) {
+    showToast(err?.message || '准备归档失败', 'error')
+  }
   if (archiveErrors.value) { archiveStep.value = 0 }
   else if (hashMismatch.value) { archiveStep.value = 1 }
   else if (newCharacters.value.length > 0) { archiveStep.value = 2 }

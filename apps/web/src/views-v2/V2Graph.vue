@@ -75,6 +75,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { useMessage } from 'naive-ui'
 import { v2GraphApi, type GraphNodeData, type GraphEdgeData, type GraphData, GRAPH_NODE_COLORS_V2 } from '../api-v2/graph'
 import { v2ChaptersApi } from '../api-v2/chapters'
 import {
@@ -84,6 +85,7 @@ import {
 import GraphLegendV2 from '../components/graph/GraphLegendV2.vue'
 
 const route = useRoute()
+const message = useMessage()
 const cyContainer = ref<HTMLDivElement>()
 
 const chapters = ref<any[]>([])
@@ -261,7 +263,8 @@ async function selectChapter(chapterId: string) {
     const d = res.data.data
     currentChapter.value = d.chapterGraph
     currentMerged.value = d.mergedGraph
-  } catch {
+  } catch (err: any) {
+    message.error(err?.message || '加载图谱数据失败')
     currentChapter.value = null
     currentMerged.value = null
   }
@@ -287,7 +290,8 @@ async function loadPrevMerged(currentChapterId: string) {
   try {
     const res = await v2GraphApi.getByChapter(prevChapter.id)
     prevMerged.value = res.data.data.mergedGraph
-  } catch {
+  } catch (prevErr: any) {
+    console.warn(`[V2-Graph] 加载上一章 mergedGraph 失败，diff 标记将不可用: ${prevErr?.message || prevErr}`)
     prevMerged.value = null
   }
 }

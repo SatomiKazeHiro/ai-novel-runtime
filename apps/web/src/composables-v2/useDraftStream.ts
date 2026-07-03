@@ -14,7 +14,12 @@ export function useDraftStream(
   async function loadDrafts() {
     const cid = chapterId()
     if (!cid) return
-    try { const res = await v2ChaptersApi.listDrafts(cid); drafts.value = res.data.data ?? [] } catch { /* 静默 */ }
+    try {
+      const res = await v2ChaptersApi.listDrafts(cid)
+      drafts.value = res.data.data ?? []
+    } catch (err: any) {
+      onNotify?.(err?.message || '加载草稿列表失败', 'error')
+    }
   }
 
   async function startGeneration(genConfig: any = {}) {

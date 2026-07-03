@@ -137,7 +137,9 @@ export function useChapterConfig(
             applyConfig(cfg)
             return { restoredPrompt: null }
           }
-        } catch { /* 失败回退 */ }
+        } catch (genErr: any) {
+          console.warn(`[V2-Config] 自动生成默认配置失败，回退到硬编码默认: ${genErr?.message || genErr}`)
+        }
       }
     }
 

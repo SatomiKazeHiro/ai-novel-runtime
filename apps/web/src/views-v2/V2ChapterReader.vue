@@ -61,11 +61,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { NScrollbar } from 'naive-ui'
+import { NScrollbar, useMessage } from 'naive-ui'
 import { v2ChaptersApi } from '../api-v2/chapters'
 
 const route = useRoute()
 const storyId = computed(() => route.params.storyId as string)
+const message = useMessage()
 
 interface ChapterItem {
   id: string
@@ -106,7 +107,8 @@ async function loadChapters() {
     if (!selectedId.value && archivedChapters.value.length > 0) {
       await selectChapter(archivedChapters.value[0].id)
     }
-  } catch {
+  } catch (err: any) {
+    message.error(err?.message || '加载章节列表失败')
     allChapters.value = []
   } finally {
     loading.value = false
@@ -119,7 +121,8 @@ async function selectChapter(id: string) {
   try {
     const res = await v2ChaptersApi.detail(id)
     currentChapter.value = (res.data?.data || res.data) as ChapterItem
-  } catch {
+  } catch (err: any) {
+    message.error(err?.message || '加载章节内容失败')
     currentChapter.value = null
   }
 }
