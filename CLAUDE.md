@@ -27,6 +27,11 @@ pnpm dev
 # Backend  -> http://localhost:3000
 # Frontend -> http://localhost:5173 (proxies /api to :3000)
 
+# `pnpm dev` runs `scripts/dev.mjs` (not concurrently): on Windows it avoids
+# the cmd.exe "终止批处理操作 (Y/N)?" trap so Ctrl+C exits cleanly. Both
+# `apps/server` and `apps/web` have `predev` hooks that rebuild all packages
+# under `packages/*` first — package edits do not require a manual build.
+
 # Start backend or frontend alone
 pnpm --filter server dev
 pnpm --filter web dev
@@ -201,6 +206,18 @@ The frontend API layer (`apps/web/src/api/*.ts`) does not unwrap this automatica
 
 Import each Naive UI component explicitly. Table action columns are rendered with Vue's `h()` function, not JSX.
 
+## Security & Operational Caveats
+
+These will bite you if you forget them. The canonical list is `KNOWN-ISSUES.md` (`S1`–`S5` + `KNOWN-ISSUES.md` items 1–10); this is the short version a new session needs on day one.
+
+- **No authentication on any `/api/*` route** (`S1`). Do not add `DELETE` / `PUT` / `archive` / `reset` endpoints without first deciding how they will be gated in production. All `/api/*` are open on the dev box.
+- **CORS is `origin: true`** (`S2`). The 5173 → 3000 Vite proxy works because of this; production deployment must whitelist origins.
+- **`.env` contains a real `DEEPSEEK_API_KEY`** (`S3`). Gitignored, but the value is also written into `AiProviderConfig.apiKey` at startup by `ai-provider-init.ts` and surfaces in DB dumps and prompt-log redaction. Never commit, never log, never echo.
+- **Two parallel route conventions** (`KNOWN-ISSUES.md #7`): `stories.ts` uses `fastify.register(..., { prefix: '/api/stories' })`, while older files hardcode `/api/stories/:storyId/...` paths inside the router. New route files must use the `prefix` option.
+- **Prisma JSON columns are `String`** under the hood (`KNOWN-ISSUES.md #4`): fields like `graphSnapshot`, `pendingArchiveData`, `score` require manual `JSON.stringify` / `JSON.parse` at the route layer. Missing one round-trip will store the literal text `[object Object]`.
+- **Legacy `slice(0, 8000)` extractors are dead code** (`S5`) — `memory-extractor.ts` and `graph-extractor.ts` are no longer called by any route. Do not re-enable them; the truncation bug from P0 #2 is still embedded in their prompt templates.
+- **`WorkerTask.storyId` is deprecated** (`KNOWN-ISSUES.md #9`); use the `StoryWorkerBinding` join table. New code should never read `workerTask.storyId`.
+
 ## Important Files to Know
 
 - `apps/server/src/server.ts` — entry point: env, queue worker, HTTP listener
@@ -217,6 +234,7 @@ Import each Naive UI component explicitly. Table action columns are rendered wit
 - `packages/ai-provider/src/index.ts` — provider abstraction and runtime compiler
 - `packages/memory-engine/src/index.ts` — semantic search and memory formatting
 - `prisma/schema.prisma` — single source of truth for data models
+- `seeds/profiles/*.yaml` and `seeds/worker-tasks/*.yaml` — **at the repo root, not under `apps/`**. Scanned and imported on server startup (`runtime-profile-init.ts`, `worker-task-init.ts`); new YAMLs are picked up automatically, parse errors fail-fast.
 
 ## Documentation
 
