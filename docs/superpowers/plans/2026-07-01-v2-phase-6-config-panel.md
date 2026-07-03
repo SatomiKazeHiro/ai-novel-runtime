@@ -6,11 +6,13 @@
 
 **前置状态:** Phase 0-5 已完成，typecheck 通过。
 
+**最终状态 (2026-07-03):** ✅ Phase 6 全部完成。
+
 ---
 
 ## 当前状态
 
-### 已完成（Phase 0-5）
+### 已完成（Phase 0-6）
 
 | Phase | 内容 | 状态 |
 |-------|------|------|
@@ -20,13 +22,19 @@
 | 3 | V2PlotArc 查询 + 状态筛选 | ✓ |
 | 4 | V2Chapter CRUD + 配置保存 + SSE 生成 + 5 路分析 + 归档 | ✓ |
 | 5 | Timeline/Graph 空接口 + Lore/WorkerTasks/PromptLogs 平移 + ChapterReader | ✓ |
+| 6 | **配置面板：交互勾选 + 4 类数据源展开 + 保存 → prompt 更新** | ✓ |
 
-### 待完成（Phase 6）
+### Phase 6 落实说明
 
-- [ ] 配置面板从只读摘要变为可交互勾选列表
-- [ ] 4 类数据源各自展开，显示具体条目 + 复选框
-- [ ] 保存配置后更新 prompt
-- [ ] 全流程联调测试
+- **配置面板交互**：`apps/web/src/composables-v2/useChapterConfig.ts` 实现 4 类数据源状态管理（characterIds / memoryIds / plotArcIds / loreIds）+ 模型选择（provider + temperature + maxTokens）
+- **数据源展开**：`V2ChapterDesign.vue` 右栏改造为 `n-collapse` 折叠面板，每类数据源单独 checkbox
+- **保存 → prompt 更新**：`PUT /api/v2/chapters/:id { config }` 写 `chapter.config`，下次 `assemblePrompt` 读取新 config
+- **语义搜索**：记忆输入支持语义检索（`useChapterConfig.ts` 调 `config-defaults.ts` 的 `searchMemories`）
+
+### 全流程联调测试
+
+- 未做专门 e2e 测试，但 V2 工作流（设计→生成→分析→归档→阅读）已在开发期手动跑通
+- 详见 `docs/v2-architecture.md` §10 一句话总结
 
 ---
 

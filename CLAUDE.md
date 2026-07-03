@@ -245,6 +245,8 @@ These will bite you if you forget them. The canonical list is `KNOWN-ISSUES.md` 
 - `docs/LOGIC.md` — domain logic notes (timeline encoding, scoring rules, etc.)
 - `docs/ISSUES.md` — P0/P1 issue tracker with file:line citations and resolution commits
 - `docs/sql-reference.md` — SQL reference
+- `docs/v2-architecture.md` — **V2 (novel-design-in-v2) 架构 + 模块 + 已知问题 + 兜底策略** (动手前必读)
+- `docs/TimeLine设计.md` — V2 时间线系统设计 (Y.DDDHH 编码 + story/narrative 双轨)
 - `docs/superpowers/plans/` — implementation plans produced via superpowers:writing-plans
 - `docs/superpowers/specs/` — brainstorming specs produced via superpowers:brainstorming
 - `KNOWN-ISSUES.md` — known pitfalls (loose types, token-counting fragmentation, etc.) and security caveats (no auth, open CORS, real keys in `.env`)
