@@ -535,9 +535,12 @@ model V2Chapter {
   content     String          @default("")
   contentHash String          @default("")
   status      V2ChapterStatus @default(draft)
+  outline          String          @default("")
   analysisId       String?
   config           String          @default("{}")
   pendingAnalysis  String?
+  chapterGraph     String?
+  mergedGraph      String?
   createdAt        DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
@@ -551,6 +554,7 @@ model V2Draft {
   id        String   @id @default(uuid())
   chapterId String
   content   String   @default("")
+  config    String   @default("{}")
   status    String   @default("generating")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -560,24 +564,53 @@ model V2Draft {
   @@index([chapterId])
 }
 
-model V2TimelineAnchor {
-  id       String @id @default(uuid())
-  storyId  String
-  position Float
-  label    String
+model V2TimelineEvent {
+  id              String   @id @default(uuid())
+  storyId         String
+  chapterNumber   Int
+  title           String
+  summary         String   @default("")
+  participants    String?  // 逗号分隔的参与者名称
+  location        String?  // 事件地点
+  importance      String   @default("normal") // major, normal, minor
+  timeExpression  String?  // JSON: { raw, type, confidence }
+  storyOrder      Int?
+  narrativeOrder  Int?
+  anchorId        String?
+  createdAt       DateTime @default(now())
 
-  events   V2TimelineEvent[]
+  anchor          V2TimelineAnchor?  @relation(fields: [anchorId], references: [id], onDelete: SetNull)
+  relationsFrom   V2TimelineRelation[] @relation("from")
+  relationsTo     V2TimelineRelation[] @relation("to")
+
+  @@index([storyId])
+  @@index([storyId, chapterNumber])
+}
+
+model V2TimelineAnchor {
+  id          String   @id @default(uuid())
+  storyId     String
+  name        String   // "主线", "回忆", "第一纪元" 等
+  description String?
+  createdAt   DateTime @default(now())
+
+  events      V2TimelineEvent[]
 
   @@index([storyId])
 }
 
-model V2TimelineEvent {
-  id             String @id @default(uuid())
-  anchorId       String
-  chapterNumber  Int
-  description    String
+model V2TimelineRelation {
+  id              String   @id @default(uuid())
+  storyId         String
+  fromEventId     String
+  toEventId       String
+  relation        String   // before, after, simultaneous
+  timeExpression  String?  // JSON: { raw, offset }
+  createdAt       DateTime @default(now())
 
-  anchor         V2TimelineAnchor @relation(fields: [anchorId], references: [id], onDelete: Cascade)
+  fromEvent       V2TimelineEvent @relation("from", fields: [fromEventId], references: [id], onDelete: Cascade)
+  toEvent         V2TimelineEvent @relation("to", fields: [toEventId], references: [id], onDelete: Cascade)
 
-  @@index([anchorId])
+  @@index([fromEventId])
+  @@index([toEventId])
 }
