@@ -202,7 +202,7 @@ V2 显式复用以下 V1 表（不在 V2 重新建表）：
 | 中断检测 | 软检测 | **硬编码 5 章阈值** | `services-v2/plot-arc-interrupt.ts:18` |
 | 5 路分析 | 串行 | `Promise.all` 并行 | `routes-v2/chapters-analysis.ts:92-93` |
 | 分析中可改内容 | 不允许 | 允许（只 archived 拒绝） | `routes-v2/chapters.ts:128-130` |
-| 章节 number | Int | **Float**（计划支持 1.01 侧线，但 V2Chapters.vue:25-26 UI 只支持整数） | `schema.prisma:533` |
+| 章节 number | Int | Float（schema 遗留—V2 无 isSideStory 字段 / 无 fromChapterNumber / 无侧线 UI / 无 route 处理；Q9 暂缓, 见 [§7.4](#74-需用户拍板设计决策)） | `schema.prisma:533` |
 | Prompt user 装配 | V1 `packages/prompt-runtime` 9 层 | V2 自建 7 层（character/lore/scene/style/memory/plotArc/output） | `services-v2/prompt-assembler.ts:38-153` |
 | Token 预算（生成） | 详细 BudgetConfig + `countTokens` | 简单字符估算 `Math.floor(contextLength * 0.85) * 2`（prompt-assembler） | `services-v2/prompt-assembler.ts:166` |
 | Token 预算（分析） | 复用 V1 `computeContentCharBudget`（按段落切） | `truncateByParagraph` + `MIN_CHAR_BUDGET=2000` 下限（5 extractor） | `services-v2/content-budget.ts` (Q8) |
@@ -399,8 +399,8 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 
 - [x] **Q5-剩余**: 静默兜底 A/B 类（§6.5）— commit 路径：graph-organizer:50-52 加 console.warn + §9 表全面校准。A 类（JSON 解析）已通过 `getConfigOrThrow`/`getPending`/`safeParseArr`/`safeParseObj` 抛错阻断；B 类（AI 失败）已通过 5-way ExtractorResult 阻断；仅余 3 处 ⏸️ 留痕（详见 §9 表注）
 - [x] **Q6**: V2 4 状态 vs V1 8 状态（§6.3）— **有意偏离**，砍掉 4 个 V1 必经 feature（评分/选最佳/ReviewingPanel/reject）；调研结论落 [§6.3](#63--设计偏离-spec)。新会话不再问。
-- [ ] **Q7**: 6 个 V2 extractor 与 V1 的近似重复（§6.7）— 抽公共包 / 接受重复 / 删 V1？
-- [ ] **Q9**: V2Chapters.vue UI 不支持 1.01 侧线（§5）— schema Float 但 UI 整数：是 stub 还是不需要？
+- [x] **Q7**: V1/V2 extractor 近似重复（§6.7）— **抽 V2 内部公共层**（方案 D）。`apps/server/src/services-v2/extractor-base.ts` (`runAiExtraction<T>` + `parseAIJson`) 替代 5 份复制粘贴；V1 不动（V1 是参考留档，最终会清除）。commit `1f69418`。
+- [x] **Q9**: V2 1.01 侧线支持 — **暂缓** (2026-07-04)。调研发现 V2 没有 `isSideStory` 字段 / 没有 `fromChapterNumber` / 无侧线 UI / 无 route 处理；schema Float 是"留可能性"的非有意设计。**触发条件**：V2 章节生成流程（生成 → 分析 → 归档）端到端走通 + 持续运行无返工后重评；届时如确认不需要侧线则 schema 改 Int，如需要则走 §6 风格完整迁移（加 `isSideStory` + `fromChapterNumber` + UI）。
 - [ ] **Q10**: 5 路分析并发（§6.3）— 是否加总 timeout + 单路 timeout？
 
 ### 7.5 大文件拆分（结构性）
@@ -504,4 +504,4 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 
 ## 10. 一句话总结
 
-V2 是 V1 的**工具化重写**：4 态状态机（故意偏离 V1 8 态以绕开锁定）、并行 5 路分析、3 步确认归档、配置面板作为核心交互入口。**Phase 0-6 全部完成 (2026-07-03)**。**已落实**：Q1（崩溃修复）、Q2（archive 守卫）、Q3（runtime degraded 透传）、Q4（死表保留）、Q5（C/D/E + A/B 类静默兜底；仅 graph-organizer 无 provider 路径留 warn）、Q6（4 态 vs 8 状态：调研结论落 [§6.3](#63--设计偏离-spec)）、Q8（动态 budget）。**仍待决策**：Q7（V1/V2 extractor 抽公共包）、Q9-Q13。
+V2 是 V1 的**工具化重写**：4 态状态机（故意偏离 V1 8 态以绕开锁定）、并行 5 路分析、3 步确认归档、配置面板作为核心交互入口。**Phase 0-6 全部完成 (2026-07-03)**。**已落实**：Q1（崩溃修复）、Q2（archive 守卫）、Q3（runtime degraded 透传）、Q4（死表保留）、Q5（C/D/E + A/B 类静默兜底；仅 graph-organizer 无 provider 路径留 warn）、Q6（4 态 vs 8 状态：调研结论落 [§6.3](#63--设计偏离-spec)）、Q7（V2 内部 5 extractor 抽公共层 `extractor-base.ts`，commit `1f69418`；V1 不动 = 参考留档最终清除）、Q8（动态 budget）。**仍待决策**：Q9（暂缓, 触发条件见 §7.4）、Q10-Q13。
