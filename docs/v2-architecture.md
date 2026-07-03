@@ -334,7 +334,9 @@ V2 不需要上锁 = 实际有效态只有 3 个（`draft` / `analyzing` / `arch
 
 - `apps/server/src/routes-v2/chapters.ts` (650 行) — CRUD + config + memory-search + drafts + preview + SSE generate + 级联 delete（**6 个职责**）
 - `apps/server/src/services-v2/prompt-assembler.ts` (278 行) — system compile + 7 段 user + `runtimeDegraded` 透传 + 字符级截断 + safeParse × 2
-- `apps/web/src/views-v2/V2ChapterDesign.vue` (1282 行) — 5 步骤 + 5 路分析 tab + 图谱编辑器 + 归档弹窗 + SSE 候选管理（**整个工作流**）
+- `apps/web/src/views-v2/V2ChapterDesign.vue` (626 行) — 5 步骤壳 + 数据源 tab + 归档弹窗（**Step3 + Step4 已拆到 `_components/`**）
+- `apps/web/src/views-v2/_components/V2Step3Panel.vue` (317 行) — AI 模型配置 + Prompt 预览 + SSE 候选生成 + 正文
+- `apps/web/src/views-v2/_components/V2Step4Panel.vue` (478 行) — 5 路分析 tab + 角色/记忆/弧线/时间/图谱编辑器 + cytoscape 迷你画布
 - `apps/web/src/views-v2/V2Graph.vue` (415 行) — 双视图 + diff + Cytoscape + 章节导航
 
 ### 6.7 🔁 与 V1 服务的近似重复
@@ -405,7 +407,7 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 
 ### 7.5 大文件拆分（结构性）
 
-- [ ] **Q11**: V2ChapterDesign.vue 1193 行（§6.6）— 是否按 phase 拆 Step1~Step5 子组件？
+- [x] **Q11** (2026-07-04): V2ChapterDesign.vue 1193 → 626 行；Step3 (模型+Prompt+候选+正文, 317 行) + Step4 (5 路分析+cytoscape, 478 行) 抽到 `views-v2/_components/`。**决策**：Step1/Step5 太小不值得拆；Step3 + Step4 是真正高价值目标。**Composable 归属**：useDraftStream / useCytoscapeLifecycle 子组件内部调（避免双 SSE / 双 cytoscape 实例）；useChapterConfig 父级单一调用，打包成 `reactive()` 通过 `props.config` 共享给 Step3（避免双 ref 实例不同步）。**状态同步**：大 ref (`chapter`) props 直传；defineExpose 暴露子组件 ref 给父级 `updateStep()` 读；事件型操作 (runAnalyze / regenerateSingle / saveEdits 等) 走 emit，副作用集中父级。详见 `lexical-sprouting-sloth.md` 计划 + commit 落盘。
 - [ ] **Q12**: routes-v2/chapters.ts 569 行（§6.6）— CRUD / config / SSE / delete 是否分文件？
 
 ### 7.6 文档待补
@@ -427,7 +429,7 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 ### 批 2（建议做，中风险）
 - ✅ 加 archive 守卫（Q2，commit `dccc734`）：5-way ExtractorResult + 422 阻断 + 前端 toast
 - ⏸️ 抽公共包：6 个 extractor 公共逻辑（prompt 模板 / AI 调用 / JSON 解析）迁到 `packages/v2-extractors/`，让 V1/V2 共用（Q7 决策）
-- ⏸️ V2ChapterDesign.vue 拆 Step1~Step5 子组件（Q11 决策）
+- ✅ V2ChapterDesign.vue 拆 Step3 + Step4 子组件（Q11，commit 见 §7.5）— Step1/Step5 太小不值得拆；Step3（模型+Prompt+候选+正文, 317 行）+ Step4（5 路分析+cytoscape, 478 行）抽到 `_components/`
 
 ### 批 3（设计决策，需用户拍板再做）
 - 🟡 静默兜底统一处理（Q5 部分）：C/E/D 已落代码（commit `753a1d1`/`a7eef1f`/`4d59081`），A/B 类待 Q5 决策
@@ -505,4 +507,4 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 
 ## 10. 一句话总结
 
-V2 是 V1 的**工具化重写**：4 态状态机（故意偏离 V1 8 态以绕开锁定）、并行 5 路分析、3 步确认归档、配置面板作为核心交互入口。**Phase 0-6 全部完成 (2026-07-03)**。**已落实**：Q1（崩溃修复）、Q2（archive 守卫）、Q3（runtime degraded 透传）、Q4（死表保留）、Q5（C/D/E + A/B 类静默兜底；仅 graph-organizer 无 provider 路径留 warn）、Q6（4 态 vs 8 状态：调研结论落 [§6.3](#63--设计偏离-spec)）、Q7（V2 内部 5 extractor 抽公共层 `extractor-base.ts`，commit `1f69418`；V1 不动 = 参考留档最终清除）、Q8（动态 budget）、Q10（前端 analyze 180s total deadline；per-extractor timeout 不加 = 与 provider 120s 高度重叠冗余；详见 [§6.3 "5 路分析并发数"](#63--设计偏离-spec)）。**仍待决策**：Q9（暂缓, 触发条件见 §7.4）、Q11-Q13。
+V2 是 V1 的**工具化重写**：4 态状态机（故意偏离 V1 8 态以绕开锁定）、并行 5 路分析、3 步确认归档、配置面板作为核心交互入口。**Phase 0-6 全部完成 (2026-07-03)**。**已落实**：Q1（崩溃修复）、Q2（archive 守卫）、Q3（runtime degraded 透传）、Q4（死表保留）、Q5（C/D/E + A/B 类静默兜底；仅 graph-organizer 无 provider 路径留 warn）、Q6（4 态 vs 8 状态：调研结论落 [§6.3](#63--设计偏离-spec)）、Q7（V2 内部 5 extractor 抽公共层 `extractor-base.ts`，commit `1f69418`；V1 不动 = 参考留档最终清除）、Q8（动态 budget）、Q10（前端 analyze 180s total deadline；per-extractor timeout 不加 = 与 provider 120s 高度重叠冗余；详见 [§6.3 "5 路分析并发数"](#63--设计偏离-spec)）、Q11（V2ChapterDesign 拆 Step3+Step4 子组件到 `views-v2/_components/`，1193 → 626 行；详见 [§7.5](#75-大文件拆分结构性)）。**仍待决策**：Q9（暂缓, 触发条件见 §7.4）、Q12-Q13。
