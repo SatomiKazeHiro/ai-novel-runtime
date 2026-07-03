@@ -3,7 +3,7 @@
 > 给未来 Claude session 用的"动手前必读"。
 > 范围：`apps/server/src/routes-v2/` + `services-v2/` + `apps/web/src/{views-v2,composables-v2,api-v2}/` + V2 前缀 Prisma 模型。
 > 写于 2026-07-03，分支 `novel-design-in-v2`，**Phase 0-6 全部完成**。
-> 后续 session 改动：Q4（死表保留）、Q8（5 extractor 动态 budget）、C/D/E 类静默兜底逐项讨论并落代码（2026-07-03，commit 753a1d1/a7eef1f/4d59081/2eab022）。
+> 后续 session 改动：Q4（死表保留）、Q5-剩余（A/B 类文档校准 + graph-organizer warn）、Q8（5 extractor 动态 budget）、C/D/E 类静默兜底逐项讨论并落代码（2026-07-03，commits 753a1d1/a7eef1f/4d59081/2eab022/9613f34）。
 
 ---
 
@@ -359,7 +359,7 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 
 ### 7.4 需用户拍板（设计决策）
 
-- [ ] **Q5-剩余**: 静默兜底 A/B 类（§6.5）— A 类（JSON 解析 → 空）：保留 / 升级 warning？B 类（AI 失败 → 空）：阻断 archive / 重试？
+- [x] **Q5-剩余**: 静默兜底 A/B 类（§6.5）— commit 路径：graph-organizer:50-52 加 console.warn + §9 表全面校准。A 类（JSON 解析）已通过 `getConfigOrThrow`/`getPending`/`safeParseArr`/`safeParseObj` 抛错阻断；B 类（AI 失败）已通过 5-way ExtractorResult 阻断；仅余 3 处 ⏸️ 留痕（详见 §9 表注）
 - [ ] **Q6**: 4 状态 vs 8 状态（§6.3）— V2 砍掉 scored/selected/reviewing/rejected 是有意还是漏做？
 - [ ] **Q7**: 6 个 V2 extractor 与 V1 的近似重复（§6.7）— 抽公共包 / 接受重复 / 删 V1？
 - [ ] **Q9**: V2Chapters.vue UI 不支持 1.01 侧线（§5）— schema Float 但 UI 整数：是 stub 还是不需要？
@@ -400,51 +400,59 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 
 ## 9. 附表：50 处静默兜底完整清单
 
-按文件:行 + 性质 + 处理状态。**处理状态说明**：✅ 已升级（C/E/D 类，2026-07-03 commits `753a1d1`/`a7eef1f`/`4d59081`），⏸️ 暂未动（A/B 类，留待 Q5 决策）。
+按文件:行 + 性质 + 处理状态。**处理状态说明**：
+- ✅ **已 fail-loud**：路由层 `getConfigOrThrow`/`getPending` 抛错 → 422；extractor `parseAIJson` 返 null → `return fail(...)`；extractor AI 失败 → `return fail(...)`；Prisma 错误码翻译；C/E/D 类升级
+- ⏸️ **暂未动**：保留 warn 但不阻断，或业务分支非错误场景
+- 🎯 **设计意图**：非"错误兜底"，是结构分支（已加 console.warn 留痕）
+
+**注意**：本表经过 2026-07-03 二次校准。之前版本误把 Prisma 错误码翻译（characters.ts）、extractor `return fail(...)`、graph-organizer `throw` 标为 ⏸️ 静默兜底，实际它们都已 fail-loud。详见 commit `2779edd`（JSON/AI 完整性）和 `dccc734`（5-way ExtractorResult）。
 
 | 文件:行 | 类别 | 兜底行为 | 状态 |
 |---|---|---|---|
 | `services-v2/prompt-assembler.ts:28-37` | D | Runtime base 加载失败 → FALLBACK_SYSTEM + `runtimeDegraded: true` 透传 | ✅ |
-| `services-v2/prompt-assembler.ts:240` | A | safeParseArr 失败 → `[]` | ⏸️ |
-| `services-v2/prompt-assembler.ts:254` | A | safeParseObj 失败 → `{}` | ⏸️ |
-| `services-v2/character-extractor.ts:78` | B | AI 失败 → `{characters:[]}` | ⏸️ |
-| `services-v2/character-extractor.ts:127` | A | JSON.parse 失败 | ⏸️ |
-| `services-v2/memory-extractor.ts:114-115` | B | AI 失败 → 空 memories | ⏸️ |
-| `services-v2/memory-extractor.ts:136-138` | B | 合并 AI 失败 → `mergeRaw=''` | ⏸️ |
-| `services-v2/memory-extractor.ts:175` | A | JSON.parse 失败 | ⏸️ |
-| `services-v2/plot-arc-extractor.ts:80-81` | B | AI 失败 → `{arcs:[]}` | ⏸️ |
-| `services-v2/plot-arc-extractor.ts:109` | A | JSON.parse 失败 | ⏸️ |
-| `services-v2/timeline-extractor.ts:68-70` | B | AI 失败 → `{events:[], defaultAnchorName:'主线'}` | ⏸️ |
-| `services-v2/timeline-extractor.ts:108` | A | JSON.parse 失败 | ⏸️ |
-| `services-v2/graph-extractor.ts:74-76` | B | AI 失败 → `{nodes:[], edges:[]}` | ⏸️ |
-| `services-v2/graph-extractor.ts:120` | A | JSON.parse 失败 | ⏸️ |
-| `services-v2/graph-organizer.ts:82-89` | B | AI 合并失败 → codeMerge 兜底 | ⏸️ |
-| `services-v2/graph-organizer.ts:93-95` | B | AI 输出格式错 → codeMerge 兜底 | ⏸️ |
-| `services-v2/graph-organizer.ts:155` | A | JSON.parse 失败 | ⏸️ |
-| `routes-v2/chapters-archive.ts:6` | A | pendingAnalysis 解析失败 → `{}` | ⏸️ |
-| `routes-v2/chapters.ts:245` | A | preview config 解析失败 | ⏸️ |
-| `routes-v2/chapters.ts:319` | A | generate config 解析失败 | ⏸️ |
+| `services-v2/prompt-assembler.ts:242-254` | A | safeParseArr 失败 → throw `「X」的 Y 字段 JSON 解析失败`，调用方 catch → 422 | ✅ |
+| `services-v2/prompt-assembler.ts:256-268` | A | safeParseObj 同上 | ✅ |
+| `services-v2/character-extractor.ts:80-82` | B | AI 失败 → `return fail('AI 调用失败: ...')`（ExtractorResult） | ✅ |
+| `services-v2/character-extractor.ts:128-134` | A | JSON.parse 失败 → try 抓首个 `[]` 数组；都失败 → return null；caller `return fail(...)` | ✅ |
+| `services-v2/memory-extractor.ts:118-120` | B | AI 抽取失败 → `return fail(...)` | ✅ |
+| `services-v2/memory-extractor.ts:140-141` | B | AI 合并全局失败 → `return fail(...)` | ✅ |
+| `services-v2/memory-extractor.ts:178-181` | A | parseAIJson 二次 fallback → null → caller fail | ✅ |
+| `services-v2/plot-arc-extractor.ts:84-86` | B | AI 失败 → `return fail(...)` | ✅ |
+| `services-v2/plot-arc-extractor.ts:111-114` | A | parseAIJson 二次 fallback → null → caller fail | ✅ |
+| `services-v2/timeline-extractor.ts:73-75` | B | AI 失败 → `return fail(...)` | ✅ |
+| `services-v2/timeline-extractor.ts:110-113` | A | parseAIJson 二次 fallback → null → caller fail | ✅ |
+| `services-v2/graph-extractor.ts:79-81` | B | AI 失败 → `return fail(...)` | ✅ |
+| `services-v2/graph-extractor.ts:121-125` | A | parseAIJson 二次 fallback → null → caller fail | ✅ |
+| `services-v2/graph-organizer.ts:50-52` | 🎯 | **结构分支** + 降级：无 AI provider → codeMerge + `console.warn`（留痕） | 🎯 |
+| `services-v2/graph-organizer.ts:88-90` | B | AI 合并失败 → `throw new Error('AI 合并图谱失败: ...')`；catcher: chapters-analysis.ts:91 → status:failed / graph.ts:108 → Fastify 500 | ✅ |
+| `services-v2/graph-organizer.ts:93-95` | B | AI 输出格式错 → `throw new Error(...)`；同上 | ✅ |
+| `services-v2/graph-organizer.ts:152-155` | A | parseAIJson 二次 fallback → null → throw | ✅ |
+| `routes-v2/chapters-archive.ts:6` | A | pendingAnalysis 解析失败 → throw，caller catch → 422 | ✅ |
+| `routes-v2/chapters.ts:9-14` | A | getConfigOrThrow：JSON 坏 → throw with ctx，调用方 catch → 422 | ✅ |
+| `routes-v2/chapters.ts:276-278` | A | preview assemblePrompt throw → 422 | ✅ |
+| `routes-v2/chapters.ts:397-399` | A | generate assemblePrompt throw → 422 | ✅ |
 | `routes-v2/chapters.ts:354-357` | C | 写 chapter.config 失败 → `app.log.warn` | ✅ |
 | `routes-v2/chapters.ts:504` | C | 写 promptLog 失败 → `app.log.warn` | ✅ |
 | `routes-v2/chapters.ts:524` | C | 更新 promptLog 失败 → `app.log.warn` | ✅ |
-| `routes-v2/chapters.ts:537` | C | 更新 v2Draft 失败 → `app.log.warn` + 重试一次 | ✅ |
+| `routes-v2/chapters.ts:537-545` | C | 更新 v2Draft 失败 → `app.log.warn` + 重试一次 | ✅ |
 | `routes-v2/chapters.ts:559` | C | 写 error log 失败 → `app.log.warn` | ✅ |
 | `routes-v2/chapters.ts:565` | C | SSE send 失败 → `app.log.warn`（连接已断） | ✅ |
 | `routes-v2/chapters.ts:534` | E | 删除章节级联清理 → 整体包 `prisma.$transaction` | ✅ |
 | `routes-v2/chapters.ts:580-582` | E | 末章级联清理 → 同 `$transaction` 内 | ✅ |
-| `routes-v2/chapters-analysis.ts:12` | A | pendingAnalysis 解析失败 | ⏸️ |
-| `routes-v2/chapters-analysis.ts:55-58` | A | prevMerged 解析失败 → `app.log.warn` | ✅（C 类旁支） |
-| `routes-v2/characters.ts:82-84` | E | update 失败 → 吞真实错误返回"不存在" | ⏸️（E 类遗留，决策保留） |
-| `routes-v2/characters.ts:93-95` | E | delete 失败同上 | ⏸️ |
+| `routes-v2/chapters-analysis.ts:12-17` | A | getPending：JSON 坏 → throw，caller catch → 422 | ✅ |
+| `routes-v2/chapters-analysis.ts:73-77` | C | prevMerged 解析失败 → `app.log.warn` + warnings push | ✅ |
+| `routes-v2/graph.ts:9-19` | A | parseOrEmpty：JSON 坏 → inline 422 | ✅ |
+| `routes-v2/characters.ts:82-91` | ✅ | **Prisma 错误码翻译**：P2025→404 / P2002→409 / 其他→500 + `app.log.error` | ✅ |
+| `routes-v2/characters.ts:100-109` | ✅ | **Prisma 错误码翻译**：P2025→404 / P2003→409 / 其他→500 + `app.log.error` | ✅ |
 | `composables-v2/useDraftStream.ts:21` | E | loadDrafts 失败 → `onNotify('error')` | ✅ |
 | `composables-v2/useDraftStream.ts:42` | E | 错误响应体解析失败 → `onNotify('warning')` | ✅ |
 | `composables-v2/useDraftStream.ts:97` | C | SSE 事件 JSON.parse 失败 → `console.warn` | ✅ |
 | `composables-v2/useDraftStream.ts:94` | D | Runtime degraded SSE 事件 → `onNotify('warning')` | ✅ |
-| `composables-v2/useChapterConfig.ts:58` | A | parsedConfig 解析失败 → null + `console.warn` | ⏸️（保留 warn） |
-| `composables-v2/useChapterConfig.ts:141` | E | 自动生成默认配置失败 → 硬编码默认 + `console.warn` | ✅ |
+| `composables-v2/useChapterConfig.ts:58` | A | parsedConfig 解析失败 → null + `console.warn` | ⏸️（保留 warn，非阻断） |
+| `composables-v2/useChapterConfig.ts:141` | E | 自动生成默认配置失败 → 硬编码默认 + `console.warn` | ⏸️（设计意图：兜底可工作，留痕） |
 | `views-v2/V2ChapterDesign.vue:840` | E | 用户 JSON 文本解析失败 → `showToast('error')`（**保留输入**） | ✅ |
 | `views-v2/V2ChapterDesign.vue:1010` | E | 写回 _lastPrompt 失败 → `console.warn` | ✅ |
-| `views-v2/V2ChapterDesign.vue:1033` | A | 候选 config 解析失败 → `console.warn` | ✅（保留 warn） |
+| `views-v2/V2ChapterDesign.vue:1033` | A | 候选 config 解析失败 → `console.warn`（保留 warn） | ⏸️ |
 | `views-v2/V2ChapterDesign.vue:1015` | E | 写大纲失败 → `showToast('error')` | ✅ |
 | `views-v2/V2ChapterDesign.vue:1058` | E | loadAnalysis 失败 → `showToast('error')` | ✅ |
 | `views-v2/V2ChapterDesign.vue:1080` | E | preArchive 失败 → `showToast('error')` | ✅ |
@@ -458,4 +466,4 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 
 ## 10. 一句话总结
 
-V2 是 V1 的**工具化重写**：4 态状态机、并行 5 路分析、3 步确认归档、配置面板作为核心交互入口。**Phase 0-6 全部完成 (2026-07-03)**。**已落实**：Q1（崩溃修复）、Q2（archive 守卫）、Q3（runtime degraded 透传）、Q4（死表保留）、Q5-部分（C/E/D 类静默兜底）、Q8（动态 budget）。**仍待决策**：Q5-剩余（A/B 类）、Q6（4/8 状态机）、Q7（V1/V2 extractor 抽公共包）、Q9-Q13。
+V2 是 V1 的**工具化重写**：4 态状态机、并行 5 路分析、3 步确认归档、配置面板作为核心交互入口。**Phase 0-6 全部完成 (2026-07-03)**。**已落实**：Q1（崩溃修复）、Q2（archive 守卫）、Q3（runtime degraded 透传）、Q4（死表保留）、Q5（C/D/E + A/B 类静默兜底；仅 graph-organizer 无 provider 路径留 warn）、Q8（动态 budget）。**仍待决策**：Q6（4/8 状态机）、Q7（V1/V2 extractor 抽公共包）、Q9-Q13。

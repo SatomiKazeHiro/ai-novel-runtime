@@ -48,6 +48,7 @@ export async function mergeGraph(
   // AI 合并
   const resolved = await resolveProvider(prisma, storyId)
   if (!resolved?.provider?.generate) {
+    console.warn(`[V2-Graph] mergeGraph 降级: 未配置 AI provider，使用 codeMerge 兜底 (storyId=${storyId})`)
     return codeMerge(chapterGraph, previousMergedGraph)
   }
 
