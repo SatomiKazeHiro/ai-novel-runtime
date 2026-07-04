@@ -8,14 +8,14 @@
         <label class="config-field__label">模型</label>
         <n-select
           v-model:value="config.configProviderId"
-          :options="config.modelOptions.value"
+          :options="config.modelOptions"
           placeholder="默认模型"
           clearable
           size="small"
           :disabled="chapter.status !== 'draft'"
         />
-        <p v-if="config.selectedModel.value" style="font-size: 11px; color: var(--text-tertiary); margin: 2px 0 0">
-          上下文: {{ (config.selectedModel.value.contextLength / 1000).toFixed(0) }}K
+        <p v-if="config.selectedModel" style="font-size: 11px; color: var(--text-tertiary); margin: 2px 0 0">
+          上下文: {{ (config.selectedModel.contextLength / 1000).toFixed(0) }}K
         </p>
       </div>
       <div class="config-field">
@@ -27,7 +27,7 @@
             style="flex:1"
             :disabled="chapter.status !== 'draft'"
           />
-          <span style="font-family: monospace; font-size: 12px; width: 28px; text-align: right">{{ config.configTemperature.value.toFixed(1) }}</span>
+          <span style="font-family: monospace; font-size: 12px; width: 28px; text-align: right">{{ config.configTemperature.toFixed(1) }}</span>
         </div>
       </div>
       <div class="config-field">
@@ -279,7 +279,7 @@ function handleGenerate() {
 async function handleGeneratePrompt() {
   if (!props.chapter?.id || !props.outline.trim()) return
 
-  const cfg = { ...(props.config.parsedConfig.value || {}), ...props.config.buildConfigForSave() }
+  const cfg = { ...(props.config.parsedConfig || {}), ...props.config.buildConfigForSave() }
 
   generatingPrompt.value = true
   try {
