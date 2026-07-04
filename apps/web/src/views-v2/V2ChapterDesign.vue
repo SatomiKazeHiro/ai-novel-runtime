@@ -5,10 +5,19 @@
         <span class="cap-eyebrow is-accent">V2 · CHAPTER DESIGN</span>
         <h1 class="page-head__title">
           <n-button size="small" style="margin-right: 8px" @click="goBack">←</n-button>
-          {{ chapter?.title || '章节设计' }}
+          <n-input
+            v-if="chapter"
+            v-model:value="editTitle"
+            size="small"
+            :disabled="chapter.status === 'archived'"
+            placeholder="章节标题"
+            style="width: 320px; vertical-align: middle"
+          />
+          <span v-else>章节设计</span>
           <n-tag v-if="chapter" :type="statusTagType(chapter.status)" :bordered="false" size="small" style="margin-left: 12px; vertical-align: middle">
             {{ statusLabel(chapter.status) }}
           </n-tag>
+          <span v-if="savingTitle" style="font-size: 11px; color: var(--text-tertiary); margin-left: 8px; vertical-align: middle">保存中...</span>
         </h1>
       </div>
     </header>
@@ -281,6 +290,10 @@ const toastMsg = ref('')
 const toastType = ref<'success' | 'error' | 'warning'>('success')
 const savingOutline = ref(false)
 const saving = ref(false)
+const editTitle = ref('')
+const savingTitle = ref(false)
+let isTitleInitialized = false
+let titleSaveTimer: ReturnType<typeof setTimeout> | null = null
 const step = ref(1)
 
 const step3Ref = ref<InstanceType<typeof V2Step3Panel> | null>(null)
@@ -363,6 +376,36 @@ function showToast(msg: string, type: 'success' | 'error' | 'warning' = 'success
   if (toastTimer) clearTimeout(toastTimer)
   toastTimer = setTimeout(() => { toastMsg.value = '' }, 2500)
 }
+
+// 标题编辑：切章节时同步初值；用户改标题 → 防抖 500ms 自动保存
+watch(() => chapter.value?.id, (id) => {
+  if (id) {
+    editTitle.value = chapter.value?.title || ''
+    isTitleInitialized = true
+  }
+}, { immediate: true })
+watch(editTitle, (v) => {
+  if (!isTitleInitialized || !chapter.value) return
+  if (v === chapter.value.title) return
+  if (titleSaveTimer) clearTimeout(titleSaveTimer)
+  titleSaveTimer = setTimeout(async () => {
+    if (!chapter.value) return
+    savingTitle.value = true
+    try {
+      const res = await v2ChaptersApi.update(chapter.value.id, { title: v })
+      if (res.data.success) {
+        chapter.value = (res.data as any).data.data
+        showToast('标题已保存')
+      } else {
+        showToast((res.data as any).error || '保存失败', 'error')
+      }
+    } catch (err: any) {
+      showToast(err?.message || '保存失败', 'error')
+    } finally {
+      savingTitle.value = false
+    }
+  }, 500)
+})
 
 function updateStep() {
   if (chapter.value?.status === 'archived') { step.value = 5; return }
@@ -623,6 +666,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (toastTimer) clearTimeout(toastTimer)
+  if (titleSaveTimer) clearTimeout(titleSaveTimer)
 })
 </script>
 
