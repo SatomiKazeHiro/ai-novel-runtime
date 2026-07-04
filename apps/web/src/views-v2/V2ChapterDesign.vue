@@ -153,7 +153,7 @@
         </div>
 
         <!-- ====== Step 3: 子组件 ====== -->
-        <template v-if="step >= 2 && step3Ref">
+        <template v-if="step >= 2">
           <V2Step3Panel
             ref="step3Ref"
             :chapter="chapter"
@@ -170,7 +170,7 @@
         </template>
 
         <!-- ====== Step 4: 子组件 ====== -->
-        <template v-if="step >= 4 && step4Ref">
+        <template v-if="step >= 4">
           <V2Step4Panel
             ref="step4Ref"
             :chapter="chapter"
