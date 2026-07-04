@@ -9,6 +9,7 @@ import { v2ChapterRoutes } from './chapters.js'
 import { v2ChapterGenerateRoutes } from './chapters-generate.js'
 import { v2ChapterAnalysisRoutes } from './chapters-analysis.js'
 import { v2ChapterArchiveRoutes } from './chapters-archive.js'
+import { v2ChapterConfigRoutes } from './chapters-config.js'
 import { v2ChapterDraftsRoutes } from './chapters-drafts.js'
 import { v2ProviderConfigsRoutes } from './provider-configs.js'
 import { v2TimelineRoutes } from './timeline.js'
@@ -28,6 +29,7 @@ export async function v2Routes(app: FastifyInstance) {
   await app.register(v2ChapterGenerateRoutes)
   await app.register(v2ChapterAnalysisRoutes)
   await app.register(v2ChapterArchiveRoutes)
+  await app.register(v2ChapterConfigRoutes)
   await app.register(v2ChapterDraftsRoutes)
   await app.register(v2ProviderConfigsRoutes)
   await app.register(v2TimelineRoutes)
