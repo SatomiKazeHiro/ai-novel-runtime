@@ -605,3 +605,255 @@ a:hover { color: var(--accent-link-hover); }
   color: var(--text-primary);
   padding: 0 10px;
 }
+
+/* === Generic toolbar / meta utilities (Q24) === */
+.cap-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.cap-toolbar.is-between { justify-content: space-between; }
+.cap-toolbar.is-end { justify-content: flex-end; }
+.cap-toolbar > .cap-toolbar__spacer { flex: 1; }
+
+.cap-meta {
+  font-size: var(--text-body-sm-size);
+  color: var(--text-tertiary);
+  font-weight: var(--weight-regular);
+}
+
+.cap-help {
+  font-size: var(--text-body-sm-size);
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* === Step bar — horizontal 5-step progress (Q24 V2ChapterDesign) ===
+   Each step: number badge + label. Done = sage green check-style dot,
+   current = terracotta filled, future = muted gray. Connector line links
+   neighbors. Pure CSS, no JS state required — driven by is-done/is-current
+   class set from a parent computed. */
+.cap-step-bar {
+  display: flex;
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  margin-bottom: var(--space-4);
+}
+.cap-step {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  position: relative;
+  min-width: 0;
+}
+.cap-step__num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  background: var(--bg-canvas);
+  color: var(--text-tertiary);
+  border: 1px solid var(--border-default);
+  flex-shrink: 0;
+  line-height: 1;
+}
+.cap-step__label {
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cap-step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: calc(22px + 12px);
+  right: 8px;
+  top: 50%;
+  height: 1px;
+  background: var(--border-default);
+  margin-top: -0.5px;
+}
+.cap-step.is-done { color: var(--accent-positive); }
+.cap-step.is-done .cap-step__num {
+  background: var(--color-positive-tint);
+  border-color: var(--accent-positive);
+  color: var(--accent-positive);
+}
+.cap-step.is-current { color: var(--accent); }
+.cap-step.is-current .cap-step__num {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-on-accent);
+}
+.cap-step.is-future { opacity: 0.55; }
+
+/* === Modal stepper — vertical dot-led visual inside dialog (Q24) === */
+.cap-modal-stepper {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: var(--space-4);
+}
+.cap-modal-stepper__step {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+.cap-modal-stepper__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-default);
+  z-index: 1;
+}
+.cap-modal-stepper__step.is-active .cap-modal-stepper__dot {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--color-warm-accent-tint);
+}
+.cap-modal-stepper__step.is-done .cap-modal-stepper__dot {
+  background: var(--accent-positive);
+  border-color: var(--accent-positive);
+}
+.cap-modal-stepper__label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+.cap-modal-stepper__step.is-active .cap-modal-stepper__label,
+.cap-modal-stepper__step.is-done .cap-modal-stepper__label {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+.cap-modal-stepper__step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: calc(50% + 8px);
+  right: calc(-50% + 8px);
+  height: 1px;
+  background: var(--border-default);
+}
+
+/* === Toast bar — ephemeral top-of-card notification (Q24) === */
+.toast-bar {
+  padding: 10px 16px;
+  border-radius: var(--radius-input);
+  font-size: var(--text-body-sm-size);
+  font-weight: var(--weight-medium);
+  margin-bottom: var(--space-4);
+  animation: toast-slide 0.18s ease both;
+}
+.toast-bar.is-success {
+  background: var(--color-positive-tint);
+  color: var(--accent-positive);
+  border: 1px solid rgba(90, 122, 79, 0.25);
+}
+.toast-bar.is-error {
+  background: var(--color-error-tint);
+  color: var(--color-error);
+  border: 1px solid rgba(185, 76, 76, 0.25);
+}
+.toast-bar.is-warning {
+  background: var(--color-warm-accent-tint);
+  color: var(--accent);
+  border: 1px solid rgba(184, 88, 30, 0.25);
+}
+@keyframes toast-slide {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* === Split row layout (Q24 V2Step3) ===
+   Two-pane grid for AI model + Prompt preview / 候选 + 正文.
+   grid-template-columns can be overridden inline for asymmetric splits
+   (e.g. style="grid-template-columns: 1fr 2fr"). Mobile collapses to 1col. */
+.split-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.split-left,
+.split-right { min-width: 0; }
+@media (max-width: 960px) {
+  .split-row { grid-template-columns: 1fr; }
+}
+
+/* === config-field — form row inside Step3 left AI model card === */
+.config-field { margin-bottom: var(--space-3); }
+.config-field:last-child { margin-bottom: 0; }
+.config-field__label {
+  display: block;
+  font-size: 11px;
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+/* === prompt-preview — system/user message panels (mono block) === */
+.prompt-preview {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-input);
+  padding: 12px 14px;
+  max-height: 360px;
+  overflow-y: auto;
+  margin: 8px 0 0;
+}
+
+/* === Draft content (Step3 candidate list) === */
+.draft-body { margin-top: 8px; }
+.draft-content {
+  font-family: var(--font-serif);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 380px;
+  overflow-y: auto;
+  background: var(--bg-canvas);
+  border-radius: var(--radius-input);
+  padding: 12px 14px;
+  margin: 0;
+}
+.draft-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+.draft-word-count {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+}
+.draft-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

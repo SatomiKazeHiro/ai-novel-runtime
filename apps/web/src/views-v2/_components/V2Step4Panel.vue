@@ -519,3 +519,265 @@ onUnmounted(() => {
   analysisCytoscape.destroy()
 })
 </script>
+
+<style scoped>
+/* === Analyze header status banner (under analyze/revert buttons) === */
+.analysis-status {
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* === Analyzer tab pane body === */
+.analyzer-tab-content { padding: 8px 0 0; min-height: 120px; }
+.analyzer-idle {
+  padding: 32px 0;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  font-style: italic;
+}
+.analyzer-item__error {
+  padding: 12px;
+  background: var(--color-error-tint);
+  color: var(--color-error);
+  border: 1px solid rgba(185, 76, 76, 0.25);
+  border-radius: var(--radius-input);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.analyzer-item__tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: var(--weight-medium);
+  padding: 1px 6px;
+  border-radius: var(--radius-badge);
+  letter-spacing: 0.04em;
+}
+.analyzer-item__tag.is-loading {
+  background: var(--bg-canvas);
+  color: var(--text-tertiary);
+}
+.analyzer-item__tag.is-success {
+  background: var(--color-positive-tint);
+  color: var(--accent-positive);
+}
+.analyzer-item__tag.is-failed {
+  background: var(--color-error-tint);
+  color: var(--color-error);
+}
+
+/* === Tag-label chip (身份/外貌/气质/性格/说话/关系/状态/时间/置信度) === */
+.tag-label {
+  font-size: 11px;
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+  padding-top: 6px;
+}
+
+/* === Character row === */
+.char-list { display: flex; flex-direction: column; gap: 16px; }
+.char-row {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  padding: 12px 14px;
+  background: var(--bg-card);
+}
+.char-row__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.char-row__slug {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.char-row__head > .n-popconfirm { margin-left: auto; }
+.char-row__field {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 12px;
+  align-items: start;
+  margin-bottom: 8px;
+}
+.char-row__field:last-child { margin-bottom: 0; }
+
+/* === Memory sections === */
+.mem-section { margin-bottom: 20px; }
+.mem-section__title {
+  font-size: 13px;
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mem-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: var(--weight-regular);
+  color: var(--text-tertiary);
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-badge);
+  padding: 0 6px;
+}
+.mem-row {
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-input);
+  margin-bottom: 8px;
+  background: var(--bg-canvas);
+}
+.mem-row__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.mem-row__head > .n-popconfirm { margin-left: auto; }
+.mem-row__imp-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* === Plot arc rows === */
+.arc-row {
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-input);
+  margin-bottom: 8px;
+  background: var(--bg-canvas);
+}
+.arc-row__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.arc-row__head > .n-input { flex: 1; min-width: 160px; }
+.arc-row__head > .n-popconfirm { margin-left: auto; }
+
+/* === Timeline list === */
+.time-list { display: flex; flex-direction: column; }
+.time-summary {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
+}
+.time-row {
+  display: flex;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.time-row:last-child { border-bottom: 0; }
+.time-row__order {
+  flex: 0 0 28px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: var(--weight-semibold);
+  color: var(--text-tertiary);
+  padding-top: 4px;
+}
+.time-row__body { flex: 1; min-width: 0; }
+.time-row__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.time-row__head > .n-input { flex: 1; min-width: 160px; }
+.time-row__head > .n-popconfirm { margin-left: auto; }
+.time-row__meta {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.time-row__time {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* === Graph mini canvas === */
+.graph-mini-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  margin: 8px 0;
+}
+.graph-mini-canvas {
+  width: 100%;
+  height: 320px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+}
+.graph-mini-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.graph-type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.graph-type-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* === Graph editor (collapsed by default) === */
+.graph-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+.graph-sub-title {
+  font-size: 12px;
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  margin: 6px 0 8px;
+}
+.graph-node-row,
+.graph-edge-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.graph-edge-arrow {
+  font-size: 14px;
+  color: var(--text-tertiary);
+  padding: 0 2px;
+}
+.graph-merged-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+</style>

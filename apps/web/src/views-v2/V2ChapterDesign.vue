@@ -4,20 +4,25 @@
       <div class="page-head__text">
         <span class="cap-eyebrow is-accent">V2 · CHAPTER DESIGN</span>
         <h1 class="page-head__title">
-          <n-button size="small" style="margin-right: 8px" @click="goBack">←</n-button>
-          <n-input
-            v-if="chapter"
-            v-model:value="editTitle"
-            size="small"
-            :disabled="chapter.status === 'archived'"
-            placeholder="章节标题"
-            style="width: 320px; vertical-align: middle"
-          />
-          <span v-else>章节设计</span>
-          <n-tag v-if="chapter" :type="statusTagType(chapter.status)" :bordered="false" size="small" style="margin-left: 12px; vertical-align: middle">
-            {{ statusLabel(chapter.status) }}
-          </n-tag>
-          <span v-if="savingTitle" style="font-size: 11px; color: var(--text-tertiary); margin-left: 8px; vertical-align: middle">保存中...</span>
+          <n-button size="small" style="margin-right: 12px; vertical-align: middle" @click="goBack">←</n-button>
+          <span class="page-head__title-tools">
+            <n-input
+              v-if="chapter"
+              v-model:value="editTitle"
+              size="small"
+              :disabled="chapter.status === 'archived'"
+              placeholder="章节标题"
+              style="width: 320px"
+            />
+            <span v-else>章节设计</span>
+            <n-tag
+              v-if="chapter"
+              :type="statusTagType(chapter.status)"
+              :bordered="false"
+              size="small"
+            >{{ statusLabel(chapter.status) }}</n-tag>
+            <span v-if="savingTitle" class="cap-meta page-head__title-saving">保存中...</span>
+          </span>
         </h1>
       </div>
     </header>
@@ -27,11 +32,34 @@
     <template v-else-if="chapter">
       <div v-if="toastMsg" class="toast-bar" :class="toastType">{{ toastMsg }}</div>
 
+      <div class="cap-step-bar">
+        <div class="cap-step" :class="stepClass(1)">
+          <span class="cap-step__num">{{ isStepDone(1) ? '✓' : '1' }}</span>
+          <span class="cap-step__label">大纲</span>
+        </div>
+        <div class="cap-step" :class="stepClass(2)">
+          <span class="cap-step__num">{{ isStepDone(2) ? '✓' : '2' }}</span>
+          <span class="cap-step__label">数据源</span>
+        </div>
+        <div class="cap-step" :class="stepClass(3)">
+          <span class="cap-step__num">{{ isStepDone(3) ? '✓' : '3' }}</span>
+          <span class="cap-step__label">生成</span>
+        </div>
+        <div class="cap-step" :class="stepClass(4)">
+          <span class="cap-step__num">{{ isStepDone(4) ? '✓' : '4' }}</span>
+          <span class="cap-step__label">分析</span>
+        </div>
+        <div class="cap-step" :class="stepClass(5)">
+          <span class="cap-step__num">{{ isStepDone(5) ? '✓' : '5' }}</span>
+          <span class="cap-step__label">归档</span>
+        </div>
+      </div>
+
       <div class="design-flow">
 
         <!-- ====== Step 1: 大纲 ====== -->
         <div class="cap-card">
-          <h2 class="cap-eyebrow" style="margin: 0; margin-bottom: 8px">1. 大纲</h2>
+          <h2 class="cap-eyebrow">1. 大纲</h2>
           <n-input
             v-model:value="outline"
             type="textarea"
@@ -40,8 +68,8 @@
             :disabled="chapter.status !== 'draft'"
             style="font-size: 13px; line-height: 1.6"
           />
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px">
-            <span style="font-size: 11px; color: var(--text-tertiary)">字数：{{ outline.length }}</span>
+          <div class="cap-toolbar is-between" style="margin-top: 8px">
+            <span class="cap-meta">字数：{{ outline.length }}</span>
             <n-button
               v-if="chapter.status === 'draft'"
               size="tiny"
@@ -49,18 +77,18 @@
               :loading="savingOutline"
             >保存大纲</n-button>
           </div>
-          <p v-if="chapter.status === 'draft' && !outline.trim()" style="font-size: 11px; color: var(--color-negative); margin: 4px 0 0">
+          <p v-if="chapter.status === 'draft' && !outline.trim()" class="step-help">
             请先填写并保存大纲
           </p>
         </div>
 
         <!-- ====== Step 2: 数据源（大纲保存后出现） ====== -->
         <div v-if="step >= 2" class="cap-card">
-          <h2 class="cap-eyebrow" style="margin-top: 0; margin-bottom: 10px">2. 数据源</h2>
+          <h2 class="cap-eyebrow">2. 数据源</h2>
           <n-tabs type="segment" animated>
             <n-tab-pane name="characters">
               <template #tab>
-                角色 <span style="color: var(--text-tertiary); font-size: 11px">({{ configCharacterIds.length }})</span>
+                角色 <span class="cap-meta">({{ configCharacterIds.length }})</span>
               </template>
               <div class="tab-content">
                 <div style="margin-bottom: 8px">
@@ -69,7 +97,7 @@
                     :disabled="chapter.status !== 'draft' || !outline.trim()"
                     @click="onCharacterAutoSelect"
                   >系统分配</n-button>
-                  <span v-if="!outline.trim()" style="font-size: 10px; color: var(--text-tertiary); margin-left: 6px">需先保存大纲</span>
+                  <span v-if="!outline.trim()" class="cap-meta" style="margin-left: 6px">需先保存大纲</span>
                 </div>
                 <n-checkbox-group v-model:value="configCharacterIds" :disabled="chapter.status !== 'draft'">
                   <n-space vertical>
@@ -86,7 +114,7 @@
 
             <n-tab-pane name="memories">
               <template #tab>
-                记忆 <span style="color: var(--text-tertiary); font-size: 11px">({{ configMemoryIds.length }})</span>
+                记忆 <span class="cap-meta">({{ configMemoryIds.length }})</span>
               </template>
               <div class="tab-content">
                 <div style="margin-bottom: 8px">
@@ -96,7 +124,7 @@
                     :loading="searchingMemories"
                     @click="onMemorySearch"
                   >系统分配</n-button>
-                  <span v-if="!outline.trim()" style="font-size: 10px; color: var(--text-tertiary); margin-left: 6px">需先保存大纲</span>
+                  <span v-if="!outline.trim()" class="cap-meta" style="margin-left: 6px">需先保存大纲</span>
                 </div>
                 <n-checkbox-group v-model:value="configMemoryIds" :disabled="chapter.status !== 'draft'">
                   <n-space vertical>
@@ -115,7 +143,7 @@
 
             <n-tab-pane name="plotArcs">
               <template #tab>
-                剧情弧线 <span style="color: var(--text-tertiary); font-size: 11px">({{ configPlotArcIds.length }})</span>
+                剧情弧线 <span class="cap-meta">({{ configPlotArcIds.length }})</span>
               </template>
               <div class="tab-content">
                 <n-checkbox-group v-model:value="configPlotArcIds" :disabled="chapter.status !== 'draft'">
@@ -134,7 +162,7 @@
 
             <n-tab-pane name="lore">
               <template #tab>
-                世界观 <span style="color: var(--text-tertiary); font-size: 11px">({{ configLoreIds.length }})</span>
+                世界观 <span class="cap-meta">({{ configLoreIds.length }})</span>
               </template>
               <div class="tab-content">
                 <n-checkbox-group v-model:value="configLoreIds" :disabled="chapter.status !== 'draft'">
@@ -150,7 +178,7 @@
             </n-tab-pane>
           </n-tabs>
 
-          <div style="display: flex; justify-content: flex-end; margin-top: 16px">
+          <div class="cap-toolbar is-end" style="margin-top: 16px">
             <n-button
               v-if="chapter.status === 'draft'"
               type="primary"
@@ -198,8 +226,8 @@
 
         <!-- ====== Step 5: 归档 ====== -->
         <div v-if="step >= 5" class="cap-card">
-          <h2 class="cap-eyebrow" style="margin-top: 0">5. 归档</h2>
-          <p class="cap-body-sm" style="color: var(--text-tertiary); margin-bottom: 12px">
+          <h2 class="cap-eyebrow">5. 归档</h2>
+          <p class="cap-help" style="margin-bottom: 12px">
             归档后正文锁定，信息写入数据库。需先完成分析并保存。
           </p>
           <n-button
@@ -213,9 +241,23 @@
         </div>
 
         <!-- 归档确认弹窗 -->
-        <n-modal v-model:show="showArchiveModal" title="归档确认" preset="card" style="width: 480px">
+        <n-modal v-model:show="showArchiveModal" title="归档确认" preset="card" style="width: 520px">
+          <div v-if="archiveStep >= 1" class="cap-modal-stepper">
+            <div class="cap-modal-stepper__step" :class="archiveModalStepperClass(1)">
+              <span class="cap-modal-stepper__dot" />
+              <span class="cap-modal-stepper__label">正文校验</span>
+            </div>
+            <div class="cap-modal-stepper__step" :class="archiveModalStepperClass(2)">
+              <span class="cap-modal-stepper__dot" />
+              <span class="cap-modal-stepper__label">新增角色</span>
+            </div>
+            <div class="cap-modal-stepper__step" :class="archiveModalStepperClass(3)">
+              <span class="cap-modal-stepper__dot" />
+              <span class="cap-modal-stepper__label">确认归档</span>
+            </div>
+          </div>
           <template v-if="archiveErrors && Object.keys(archiveErrors).length > 0">
-            <p style="color: var(--color-negative); margin-bottom: 8px; font-weight: 600">分析中存在失败项，无法归档：</p>
+            <p style="color: var(--color-error); margin-bottom: 8px; font-weight: 600">分析中存在失败项，无法归档：</p>
             <ul style="margin-bottom: 16px; padding-left: 20px; line-height: 1.8">
               <li v-for="(msg, key) in archiveErrors" :key="key">
                 <strong>{{ analyzerLabels[key] || key }}</strong>：{{ msg }}
@@ -229,15 +271,15 @@
             </n-space>
           </template>
           <template v-else-if="archiveStep === 1 && hashMismatch">
-            <p style="color: var(--color-negative); margin-bottom: 12px">正文已修改但未重新分析（正文哈希与分析版本不一致）。</p>
-            <p style="margin-bottom: 16px">是否继续归档？建议先重新分析以确保数据一致。</p>
+            <p style="color: var(--color-error); margin-bottom: 12px">正文已修改但未重新分析（正文哈希与分析版本不一致）。</p>
+            <p class="cap-help" style="margin-bottom: 16px">是否继续归档？建议先重新分析以确保数据一致。</p>
             <n-space justify="end">
               <n-button @click="showArchiveModal = false">取消</n-button>
               <n-button type="warning" @click="archiveStep = 2">继续归档</n-button>
             </n-space>
           </template>
           <template v-else-if="archiveStep <= 2 && newCharacters.length > 0">
-            <p style="margin-bottom: 8px">归档将新增以下角色：</p>
+            <p class="cap-help" style="margin-bottom: 8px">归档将新增以下角色：</p>
             <ul style="margin-bottom: 16px; padding-left: 20px">
               <li v-for="c in newCharacters" :key="c.slug"><strong>{{ c.name }}</strong>（{{ c.slug }}）<span v-if="c.identity?.length"> — {{ c.identity.join('、') }}</span></li>
             </ul>
@@ -247,8 +289,8 @@
             </n-space>
           </template>
           <template v-else>
-            <p style="margin-bottom: 12px">即将归档，归档后章节内容锁定不可修改。</p>
-            <p style="color: var(--text-tertiary); font-size: 12px; margin-bottom: 16px">是否继续？</p>
+            <p class="cap-help" style="margin-bottom: 12px">即将归档，归档后章节内容锁定不可修改。</p>
+            <p class="cap-meta" style="margin-bottom: 16px">是否继续？</p>
             <n-space justify="end">
               <n-button @click="showArchiveModal = false">取消</n-button>
               <n-button type="primary" style="margin-left: 24px" @click="confirmArchive">确认归档</n-button>
@@ -414,6 +456,24 @@ function updateStep() {
   if (step3Ref.value?.assembledPrompt || (step3Ref.value?.draftsLength?.() ?? 0) > 0) { step.value = 3; return }
   if (outline.value.trim() && parsedConfig.value && Object.keys(parsedConfig.value).length > 1) { step.value = 2; return }
   step.value = 1
+}
+
+/** 顶部 5 步骤进度条用 — 推断每个 step 的视觉态 */
+function isStepDone(n: number): boolean {
+  if (chapter.value?.status === 'archived' && n < 5) return true
+  return n < (step.value || 1)
+}
+function stepClass(n: number): string {
+  if (chapter.value?.status === 'archived' && n === 5) return 'is-current'
+  if (n === (step.value || 1)) return isStepDone(n) ? 'is-done' : 'is-current'
+  if (isStepDone(n)) return 'is-done'
+  return 'is-future'
+}
+/** 归档弹窗 stepper 当前步骤视觉态 (archiveStep=1/2/3) */
+function archiveModalStepperClass(n: number): string {
+  if (archiveStep.value > n) return 'is-done'
+  if (archiveStep.value === n) return 'is-current'
+  return 'is-future'
 }
 
 async function loadChapter() {
@@ -671,6 +731,32 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.toast-bar {
+/* === page-head 标题区 inline-flex 工具条 (Q24) === */
+.page-head__title-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  vertical-align: middle;
+}
+.page-head__title-saving {
+  margin-left: 2px;
+}
+
+/* === design-flow 内 cap-card 标题节奏统一 (Q24) ===
+   各 step 的 h2.cap-eyebrow 原本各自 inline `margin-top: 0; margin-bottom: 8px/10px`,
+   现在统一在 scoped 里给 0 0 12px, template 去掉 inline style。 */
+.design-flow .cap-card > h2.cap-eyebrow {
+  margin: 0 0 12px;
+}
+.design-flow .cap-card > *:first-child:not(h2.cap-eyebrow) {
+  margin-top: 0;
+}
+
+/* === Step1 大纲 / Step5 归档 帮助文本 (Q24) ===
+   替代原本散落的 `style="font-size: 11px; color: var(--color-error)..."` */
+.step-help {
+  font-size: 11px;
+  color: var(--color-error);
+  margin: 4px 0 0;
 }
 </style>
