@@ -1,7 +1,38 @@
 # V2 小说设计整体重建设计
 
 > 日期: 2026-06-29
-> 状态: 设计中，待用户审阅
+> 状态: §7 全部阶段已落地（Phase 0-6, 2026-07-03）；实施过程中关键决策见 §0 实施状态。
+
+## 0. 实施状态
+
+> 更新日期: 2026-07-04
+> 全流程联调测试通过；详见 `docs/v2-architecture.md` §10 一句话总结。
+
+### Phase ↔ 状态映射
+
+| 阶段 | 标题 | 状态 | 关键产出 |
+|------|------|------|----------|
+| Phase 0 | 基础设施 | ✅ 完成 | Prisma V2 表 + `routes-v2/index.ts` 骨架 + `services-v2/` + 前端 `views-v2/` + `composables-v2/` + `api-v2/` |
+| Phase 1 | 角色管理 | ✅ 完成 | V2Character CRUD + V2CharacterSnapshot 查询 + 列表/详情页 |
+| Phase 2 | 记忆模块 | ✅ 完成 | V2Memory CRUD + 临时记忆 + 浏览页（按类型/分类筛选） |
+| Phase 3 | 剧情弧线 | ✅ 完成 | V2PlotArc + 状态筛选 + 列表页 + 章节关联展示 |
+| Phase 4 | 章节工作台（核心） | ✅ 完成 | V2Chapter CRUD + 配置保存 + SSE 生成 + 5 路并行分析 + 归档 |
+| Phase 5 | 时间线 + 图谱 + 平移 | ✅ 完成 | V2Timeline/V2Graph + lore/worker-tasks/prompt-logs 从 v1 平移 |
+| Phase 6 | 配置面板 + 收尾 | ✅ 完成 | ConfigPanel 4 类数据源（角色/记忆/弧线/世界观）可调 + 全流程联调 |
+
+### 关键决策（实施过程中从 spec 偏离或细化）
+
+- **Q6 — 4 态状态机**（§7.4 Phase 4 偏离）：故意偏离 V1 8 态为 V2 4 态（`draft`/`analyzing`/`archived`，`generating` 实际只在 v2Draft 上），绕开 V1 的 `updateMany` 原子锁 + 4 套 allowed-status 白名单分散维护。详见 `v2-architecture.md` §6.3。
+- **Q7 — 5 extractor 公共层**：实施时抽出 `services-v2/extractor-base.ts`（commit `1f69418`），5 个 extractor 共享 AI 调用包装 / JSON 解析，与 spec 解耦优先原则对齐。V1 不动 = 参考留档最终清除。
+- **Q10 — analyze 前端 180s 总超时**：spec 未明确；实施时新增，前端 `analyze` 包裹 `AbortController` 设 180s deadline；per-extractor timeout 不加（避免与 provider 120s 高度重叠冗余）。
+- **Q11 — V2ChapterDesign 拆 Step3+Step4**（结构性）：实施时把单文件 1193 行拆为父 + 子组件 `views-v2/_components/V2Step{3,4}Panel.vue`，spec 未规定。
+- **Q12 — routes-v2/chapters.ts 拆 6 文件**（结构性）：实施时把 650 行单文件按职责拆 6 兄弟（CRUD + archive + analysis + config + drafts + generate）+ `provider-configs.ts` 独立；spec 未规定。
+
+### 进一步决策与未尽问题
+
+- **Q9（暂缓）**：暂不实施，触发条件见 `v2-architecture.md` §7.4。
+
+---
 
 ## 1. 定位与原则
 

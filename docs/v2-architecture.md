@@ -418,7 +418,7 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 
 ### 7.6 文档待补
 
-- [ ] **Q13**: V2 业务 spec `2026-06-29-v2-overall-design.md` 是否已落盘到 docs/superpowers/specs/？（已落盘但路径需确认）
+- [x] **Q13** (2026-07-04): V2 业务 spec 已落盘到 `docs/superpowers/specs/2026-06-29-v2-overall-design.md`（15.9KB, 8 节, 2026-06-29 19:07），并被 `v2-architecture.md` §6.4 + `2026-07-01-v2-phase-6-config-panel.md` 引用。同步动作：spec 顶部新增 §0 实施状态（Phase 0-6 全部 ✅ + Q6/Q7/Q10/Q11/Q12 实施期决策映射），frontmatter 状态从"设计中，待用户审阅"改为"§7 全部阶段已落地"。
 
 ---
 
@@ -514,4 +514,4 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 
 ## 10. 一句话总结
 
-V2 是 V1 的**工具化重写**：4 态状态机（故意偏离 V1 8 态以绕开锁定）、并行 5 路分析、3 步确认归档、配置面板作为核心交互入口。**Phase 0-6 全部完成 (2026-07-03)**。**已落实**：Q1（崩溃修复）、Q2（archive 守卫）、Q3（runtime degraded 透传）、Q4（死表保留）、Q5（C/D/E + A/B 类静默兜底；仅 graph-organizer 无 provider 路径留 warn）、Q6（4 态 vs 8 状态：调研结论落 [§6.3](#63--设计偏离-spec)）、Q7（V2 内部 5 extractor 抽公共层 `extractor-base.ts`，commit `1f69418`；V1 不动 = 参考留档最终清除）、Q8（动态 budget）、Q10（前端 analyze 180s total deadline；per-extractor timeout 不加 = 与 provider 120s 高度重叠冗余；详见 [§6.3 "5 路分析并发数"](#63--设计偏离-spec)）、Q11（V2ChapterDesign 拆 Step3+Step4 子组件到 `views-v2/_components/`，1193 → 626 行；详见 [§7.5](#75-大文件拆分结构性)）、Q12（routes-v2/chapters.ts 650 → 208 行纯 CRUD 骨架；按职责拆 5 兄弟文件 + provider-configs 独立 = 6 文件格局；generate-stream stub 替换为真实 SSE 实现；详见 [§7.5](#75-大文件拆分结构性)）。**仍待决策**：Q9（暂缓, 触发条件见 §7.4）、Q13。
+V2 是 V1 的**工具化重写**：4 态状态机（故意偏离 V1 8 态以绕开锁定）、并行 5 路分析、3 步确认归档、配置面板作为核心交互入口。**Phase 0-6 全部完成 (2026-07-03)**。**已落实**：Q1（崩溃修复）、Q2（archive 守卫）、Q3（runtime degraded 透传）、Q4（死表保留）、Q5（C/D/E + A/B 类静默兜底；仅 graph-organizer 无 provider 路径留 warn）、Q6（4 态 vs 8 状态：调研结论落 [§6.3](#63--设计偏离-spec)）、Q7（V2 内部 5 extractor 抽公共层 `extractor-base.ts`，commit `1f69418`；V1 不动 = 参考留档最终清除）、Q8（动态 budget）、Q10（前端 analyze 180s total deadline；per-extractor timeout 不加 = 与 provider 120s 高度重叠冗余；详见 [§6.3 "5 路分析并发数"](#63--设计偏离-spec)）、Q11（V2ChapterDesign 拆 Step3+Step4 子组件到 `views-v2/_components/`，1193 → 626 行；详见 [§7.5](#75-大文件拆分结构性)）、Q12（routes-v2/chapters.ts 650 → 208 行纯 CRUD 骨架；按职责拆 5 兄弟文件 + provider-configs 独立 = 6 文件格局；generate-stream stub 替换为真实 SSE 实现；详见 [§7.5](#75-大文件拆分结构性)）、Q13（V2 业务 spec 落盘 + 实施状态对照落 spec §0 + v2-architecture 状态字段校准；详见 spec [§0 实施状态](docs/superpowers/specs/2026-06-29-v2-overall-design.md#0-实施状态)）。**仍待决策**：Q9（暂缓, 触发条件见 §7.4）。
