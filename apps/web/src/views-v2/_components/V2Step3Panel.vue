@@ -172,7 +172,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { NButton, NInput, NTag, NModal, NPopconfirm, NSelect, NSlider, NInputNumber, NTabs, NTabPane } from 'naive-ui'
 import { v2ChaptersApi } from '../../api-v2/chapters'
 import { useDraftStream } from '../../composables-v2/useDraftStream'
@@ -310,6 +310,10 @@ defineExpose({
   draftsLength: () => drafts.value.length,
   triggerGeneratePrompt: handleGeneratePrompt,
   loadDrafts
+})
+
+onMounted(() => {
+  if (props.chapter?.id) loadDrafts()
 })
 
 onUnmounted(() => {
