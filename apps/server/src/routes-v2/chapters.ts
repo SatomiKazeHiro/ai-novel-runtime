@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { sha256 } from '../services-v2/hash.js'
+import { allocateNextNumber } from '../services-v2/number-allocator.js'
 
 /**
  * 章节 CRUD 路由（纯骨架，~140 行）：
@@ -45,14 +46,12 @@ export async function v2ChapterRoutes(app: FastifyInstance) {
       return { success: false, error: '缺少必填字段 storyId/title' }
     }
     let number: number
-    if (body.number !== undefined) {
+    if (body.number !== undefined && body.number > 0) {
+      // 防御性兼容路径：前端正常不再传 number（V2Chapters.vue 弹窗去字段），
+      // 但保留此分支以防其他端误传或显式指定 number。
       number = body.number
     } else {
-      const last = await app.prisma.v2Chapter.findFirst({
-        where: { storyId: body.storyId },
-        orderBy: { number: 'desc' }
-      })
-      number = last ? Math.floor(last.number) + 1 : 1
+      number = await allocateNextNumber(app.prisma, { storyId: body.storyId })
     }
     // check duplicate number
     const existing = await app.prisma.v2Chapter.findUnique({
