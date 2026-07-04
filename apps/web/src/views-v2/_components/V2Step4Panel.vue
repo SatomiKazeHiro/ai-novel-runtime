@@ -100,7 +100,12 @@
                     <n-select v-model:value="m.category" :options="memCatOptions" size="tiny" style="width: 100px" />
                     <n-input-number v-model:value="m.importance" :min="0" :max="10" size="tiny" style="width: 80px" />
                     <span class="mem-row__imp-label">重要度</span>
-                    <n-button size="tiny" quaternary type="error" @click="getAnalyzerData('memories').chapterMemories.splice(mi, 1)">×</n-button>
+                    <n-popconfirm @positive-click="getAnalyzerData('memories').chapterMemories.splice(mi, 1)">
+                      <template #trigger>
+                        <n-button size="tiny" type="error">删除</n-button>
+                      </template>
+                      确定删除该章节记忆「{{ (m.content || '').slice(0, 30) || '(空)' }}」吗？
+                    </n-popconfirm>
                   </div>
                   <n-input v-model:value="m.content" type="textarea" :rows="2" size="small" style="font-size: 13px; line-height: 1.6" />
                   <n-input v-model:value="m.participants" size="small" placeholder="参与者（逗号分隔）" style="margin-top: 4px" />
@@ -115,7 +120,12 @@
                     <n-select v-model:value="m.category" :options="memCatOptions" size="tiny" style="width: 100px" />
                     <n-input-number v-model:value="m.importance" :min="0" :max="10" size="tiny" style="width: 80px" />
                     <span class="mem-row__imp-label">重要度</span>
-                    <n-button size="tiny" quaternary type="error" @click="getAnalyzerData('memories').globalMemories.splice(mi, 1)">×</n-button>
+                    <n-popconfirm @positive-click="getAnalyzerData('memories').globalMemories.splice(mi, 1)">
+                      <template #trigger>
+                        <n-button size="tiny" type="error">删除</n-button>
+                      </template>
+                      确定删除该全局记忆「{{ (m.content || '').slice(0, 30) || '(空)' }}」吗？
+                    </n-popconfirm>
                   </div>
                   <n-input v-model:value="m.content" type="textarea" :rows="2" size="small" style="font-size: 13px; line-height: 1.6" />
                   <n-input v-model:value="m.participants" size="small" placeholder="参与者（逗号分隔）" style="margin-top: 4px" />
@@ -129,7 +139,12 @@
                   <div class="mem-row__head">
                     <n-input-number v-model:value="m.importance" :min="0" :max="10" size="tiny" style="width: 80px" />
                     <span class="mem-row__imp-label">重要度</span>
-                    <n-button size="tiny" quaternary type="error" @click="getAnalyzerData('memories').sceneMemories.splice(mi, 1)">×</n-button>
+                    <n-popconfirm @positive-click="getAnalyzerData('memories').sceneMemories.splice(mi, 1)">
+                      <template #trigger>
+                        <n-button size="tiny" type="error">删除</n-button>
+                      </template>
+                      确定删除该场景记忆「{{ (m.content || '').slice(0, 30) || '(空)' }}」吗？
+                    </n-popconfirm>
                   </div>
                   <n-input v-model:value="m.content" type="textarea" :rows="2" size="small" style="font-size: 13px; line-height: 1.6" />
                   <n-input v-model:value="m.participants" size="small" placeholder="参与者（逗号分隔）" style="margin-top: 4px" />
@@ -147,7 +162,12 @@
                   <n-input v-model:value="a.title" size="small" style="flex:1; font-weight: 500" />
                   <n-checkbox v-model:checked="a.isMainline" size="small">主线</n-checkbox>
                   <n-select v-model:value="a.status" :options="arcStatusOptions" size="tiny" style="width: 90px" />
-                  <n-button size="tiny" quaternary type="error" @click="getAnalyzerData('plotArcs').arcs.splice(ai, 1)">×</n-button>
+                  <n-popconfirm @positive-click="getAnalyzerData('plotArcs').arcs.splice(ai, 1)">
+                    <template #trigger>
+                      <n-button size="tiny" type="error">删除</n-button>
+                    </template>
+                    确定删除该弧线「{{ a.title || '(未命名)' }}」吗？
+                  </n-popconfirm>
                 </div>
                 <n-input v-model:value="a.description" type="textarea" :rows="2" size="small" placeholder="描述..." style="font-size: 13px; margin-top: 4px" />
                 <n-input v-if="a.action === 'close'" v-model:value="a.mergeInfo" size="small" placeholder="合并到哪条弧线..." style="margin-top: 4px" />
@@ -168,7 +188,12 @@
                     <div class="time-row__head">
                       <n-input v-model:value="ev.title" size="small" style="font-weight: 500" />
                       <n-tag :type="ev.importance === 'major' ? 'error' : ev.importance === 'minor' ? 'default' : 'info'" size="tiny" :bordered="false">{{ ev.importance === 'major' ? '重要' : ev.importance === 'minor' ? '次要' : '常规' }}</n-tag>
-                      <n-button size="tiny" quaternary type="error" @click="getAnalyzerData('timeline').events.splice(ei, 1)">×</n-button>
+                      <n-popconfirm @positive-click="getAnalyzerData('timeline').events.splice(ei, 1)">
+                        <template #trigger>
+                          <n-button size="tiny" type="error">删除</n-button>
+                        </template>
+                        确定删除该时间线事件「{{ ev.title || '(未命名)' }}」吗？
+                      </n-popconfirm>
                     </div>
                     <n-input v-model:value="ev.summary" type="textarea" :rows="2" size="small" style="font-size: 13px; margin-top: 4px" placeholder="事件摘要..." />
                     <div class="time-row__meta">
@@ -216,7 +241,12 @@
                       <n-input v-model:value="n.key" size="tiny" style="width: 100px" placeholder="key" />
                       <n-input v-model:value="n.label" size="tiny" style="width: 100px" placeholder="名称" />
                       <n-input-number v-model:value="n.importance" :min="1" :max="10" size="tiny" style="width: 65px" />
-                      <n-button size="tiny" quaternary type="error" @click="getAnalyzerData('graph').chapterGraph.nodes.splice(ni, 1); refreshAnalysisGraph()">×</n-button>
+                      <n-popconfirm @positive-click="getAnalyzerData('graph').chapterGraph.nodes.splice(ni, 1); refreshAnalysisGraph()">
+                        <template #trigger>
+                          <n-button size="tiny" type="error">删除</n-button>
+                        </template>
+                        确定删除该图谱节点「{{ n.label || n.key || '(未命名)' }}」吗？
+                      </n-popconfirm>
                     </div>
                     <div class="graph-sub-title" style="margin-top: 6px">边</div>
                     <div v-for="(e, ei) in getAnalyzerData('graph').chapterGraph.edges" :key="'ge'+ei" class="graph-edge-row">
@@ -225,7 +255,12 @@
                       <n-input v-model:value="e.relation" size="tiny" style="width: 70px" placeholder="关系" />
                       <span class="graph-edge-arrow">→</span>
                       <n-input v-model:value="e.toKey" size="tiny" style="width: 100px" placeholder="toKey" />
-                      <n-button size="tiny" quaternary type="error" @click="getAnalyzerData('graph').chapterGraph.edges.splice(ei, 1); refreshAnalysisGraph()">×</n-button>
+                      <n-popconfirm @positive-click="getAnalyzerData('graph').chapterGraph.edges.splice(ei, 1); refreshAnalysisGraph()">
+                        <template #trigger>
+                          <n-button size="tiny" type="error">删除</n-button>
+                        </template>
+                        确定删除该图谱边「{{ e.fromKey || '?' }} → {{ e.toKey || '?' }} ({{ e.relation || '?' }})」吗？
+                      </n-popconfirm>
                     </div>
                     <div style="margin-top: 6px; display: flex; gap: 6px">
                       <n-button size="tiny" dashed @click="getAnalyzerData('graph').chapterGraph.nodes.push({ type:'character', key:'', label:'', importance:5 }); refreshAnalysisGraph()">+ 节点</n-button>
