@@ -66,6 +66,7 @@ export async function v2ChapterRoutes(app: FastifyInstance) {
         number,
         title: body.title,
         content: body.content || '',
+        outline: body.outline || '',
         contentHash: body.content ? sha256(body.content) : '',
         status: 'draft',
         config: '{}'

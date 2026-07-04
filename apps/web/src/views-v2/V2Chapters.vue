@@ -37,6 +37,32 @@
         </n-space>
       </template>
     </n-modal>
+
+    <!-- 发展章节弹窗（对齐 V1 useChapterTree.onDevelop 模式：用户填标题/大纲） -->
+    <n-modal v-model:show="showDevelopModal" title="发展新章节" preset="card" style="width: 520px">
+      <n-form :model="developForm" label-placement="left" label-width="80">
+        <n-form-item label="标题" required>
+          <n-input v-model:value="developForm.title" placeholder="章节标题" />
+        </n-form-item>
+        <n-form-item label="大纲">
+          <n-input
+            v-model:value="developForm.outline"
+            type="textarea"
+            :rows="6"
+            placeholder="本章大纲（可选，后续在设计页可改）"
+          />
+        </n-form-item>
+        <p class="cap-body-sm" style="margin: 0; color: var(--cap-text-muted, #999)">
+          章节号 <strong>{{ developFromRow ? Math.floor(developFromRow.number) + 1 : '?' }}</strong> 由系统自动分配。
+        </p>
+      </n-form>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showDevelopModal = false">取消</n-button>
+          <n-button type="primary" :loading="developing" @click="handleDevelop">创建并进入设计</n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -68,6 +94,12 @@ const chapters = ref<any[]>([])
 const loading = ref(false)
 const showModal = ref(false)
 const form = ref({ title: '' })
+
+// 发展弹窗状态
+const showDevelopModal = ref(false)
+const developing = ref(false)
+const developForm = ref({ title: '', outline: '' })
+const developFromRow = ref<any>(null)
 
 // 下一个章节号：主线 max+1，无章节=1
 const nextNumber = computed(() => {
@@ -112,7 +144,7 @@ const columns: DataTableColumns<any> = [
       }
       if (row.status === 'archived') {
         btns.unshift(
-          h(NButton, { size: 'small', type: 'primary', onClick: () => handleDevelop(row) }, { default: () => '发展' })
+          h(NButton, { size: 'small', type: 'primary', onClick: () => openDevelop(row) }, { default: () => '发展' })
         )
       }
       return h(NSpace, null, { default: () => btns })
@@ -150,18 +182,37 @@ async function handleCreate() {
   await loadChapters()
 }
 
-async function handleDevelop(row: any) {
+function openDevelop(row: any) {
+  developFromRow.value = row
+  developForm.value = { title: `第${Math.floor(row.number) + 1}章`, outline: '' }
+  showDevelopModal.value = true
+}
+
+async function handleDevelop() {
   const sid = route.params.storyId as string
-  // 下一章节号由后端 allocateNextNumber 分配（主线 max+1，与此处期望一致）
-  const res = await v2ChaptersApi.create({ storyId: sid, title: `第${Math.floor(row.number) + 1}章` })
-  if (res.data.success) {
-    goDesign(res.data.data.id)
-  } else if ((res.data as any).error?.includes('已存在')) {
-    // 章节号已存在，直接跳转到已有的章节设计页
-    const all = await v2ChaptersApi.list(sid)
-    const expected = Math.floor(row.number) + 1
-    const existing = all.data.data?.find((c: any) => c.number === expected)
-    if (existing) goDesign(existing.id)
+  const fromRow = developFromRow.value
+  if (!sid || !fromRow || !developForm.value.title.trim() || developing.value) return
+  developing.value = true
+  try {
+    const data: V2ChapterCreate = {
+      storyId: sid,
+      title: developForm.value.title.trim(),
+      outline: developForm.value.outline.trim() || undefined
+    }
+    // 下一章节号由后端 allocateNextNumber 分配（主线 max+1，与此处期望一致）
+    const res = await v2ChaptersApi.create(data)
+    if (res.data.success) {
+      showDevelopModal.value = false
+      goDesign(res.data.data.id)
+    } else if ((res.data as any).error?.includes('已存在')) {
+      // 兜底：理论上 allocateNextNumber 不会产生重复，但保留这条路径
+      const all = await v2ChaptersApi.list(sid)
+      const expected = Math.floor(fromRow.number) + 1
+      const existing = all.data.data?.find((c: any) => c.number === expected)
+      if (existing) goDesign(existing.id)
+    }
+  } finally {
+    developing.value = false
   }
 }
 

@@ -33,6 +33,7 @@ export interface V2ChapterCreate {
   title: string
   number?: number
   content?: string
+  outline?: string
 }
 
 export interface V2ChapterUpdate {
