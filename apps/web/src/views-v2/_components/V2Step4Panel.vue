@@ -66,7 +66,7 @@
                     <span class="char-row__slug">{{ c.slug }}</span>
                     <n-tag v-if="c.isNew" type="warning" size="tiny" :bordered="false">新角色</n-tag>
                     <n-tag v-else type="info" size="tiny" :bordered="false">匹配: {{ c.matchedCharacterId?.substring(0, 8) }}</n-tag>
-                    <n-button size="tiny" quaternary type="error" @click="getAnalyzerData('characters').items.splice(ci, 1)">×</n-button>
+                    <n-button size="tiny" type="error" @click="getAnalyzerData('characters').items.splice(ci, 1)">删除</n-button>
                   </div>
                   <div class="char-row__field"><span class="tag-label">身份</span><n-dynamic-tags v-model:value="c.identity" /></div>
                   <div class="char-row__field"><span class="tag-label">外貌</span><n-dynamic-tags v-model:value="c.appearance" /></div>
