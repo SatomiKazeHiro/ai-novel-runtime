@@ -32,26 +32,6 @@ const GenerateBodySchema = z.object({
 })
 
 export async function v2ChapterRoutes(app: FastifyInstance) {
-  // GET /api/v2/provider-configs — 可用 AI 模型列表（不含 apiKey）
-  app.get('/provider-configs', async () => {
-    const configs = await app.prisma.aiProviderConfig.findMany({
-      where: { apiKey: { not: null } },
-      select: {
-        id: true,
-        name: true,
-        model: true,
-        contextLength: true,
-        maxTokens: true,
-        temperature: true,
-        isDefault: true,
-        type: true,
-        remarks: true
-      },
-      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }]
-    })
-    return { success: true, data: configs }
-  })
-
   // GET /api/v2/chapters?storyId=xxx
   app.get('/chapters', async (request) => {
     const { storyId } = request.query as { storyId?: string }
