@@ -107,6 +107,12 @@ const nextNumber = computed(() => {
   return Math.floor(Math.max(...chapters.value.map(c => c.number))) + 1
 })
 
+// 当前最大章节号 — 用于判断归档章节是否"末位"（可发展）
+const maxChapterNumber = computed(() => {
+  if (chapters.value.length === 0) return 0
+  return Math.floor(Math.max(...chapters.value.map(c => c.number)))
+})
+
 // 第一章是否正在创作中（草稿/分析中）— 用于禁用右上角新建按钮
 const hasPendingFirstChapter = computed(() =>
   chapters.value.some(c => c.number === 1 && c.status !== 'archived')
@@ -143,8 +149,16 @@ const columns: DataTableColumns<any> = [
         }))
       }
       if (row.status === 'archived') {
+        // 中段归档章节（后面还有更新的已存在章节）禁止发展主线 — 应从末位归档章节发展
+        const isLatestArchived = row.number >= maxChapterNumber.value
         btns.unshift(
-          h(NButton, { size: 'small', type: 'primary', onClick: () => openDevelop(row) }, { default: () => '发展' })
+          h(NButton, {
+            size: 'small',
+            type: 'primary',
+            disabled: !isLatestArchived,
+            title: isLatestArchived ? '' : '请从最新归档章节发展',
+            onClick: () => openDevelop(row)
+          }, { default: () => '发展' })
         )
       }
       return h(NSpace, null, { default: () => btns })
