@@ -66,7 +66,12 @@
                     <span class="char-row__slug">{{ c.slug }}</span>
                     <n-tag v-if="c.isNew" type="warning" size="tiny" :bordered="false">新角色</n-tag>
                     <n-tag v-else type="info" size="tiny" :bordered="false">匹配: {{ c.matchedCharacterId?.substring(0, 8) }}</n-tag>
-                    <n-button size="tiny" type="error" @click="getAnalyzerData('characters').items.splice(ci, 1)">删除</n-button>
+                    <n-popconfirm @positive-click="getAnalyzerData('characters').items.splice(ci, 1)">
+                      <template #trigger>
+                        <n-button size="tiny" type="error">删除</n-button>
+                      </template>
+                      确定删除该角色「{{ c.name }}」吗？该章节将不再记录此角色。
+                    </n-popconfirm>
                   </div>
                   <div class="char-row__field"><span class="tag-label">身份</span><n-dynamic-tags v-model:value="c.identity" /></div>
                   <div class="char-row__field"><span class="tag-label">外貌</span><n-dynamic-tags v-model:value="c.appearance" /></div>
@@ -254,7 +259,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted, toRef } from 'vue'
-import { NButton, NInput, NTag, NSpace, NCheckbox, NSelect, NInputNumber, NTabs, NTabPane, NDynamicTags } from 'naive-ui'
+import { NButton, NInput, NTag, NSpace, NCheckbox, NSelect, NInputNumber, NTabs, NTabPane, NDynamicTags, NPopconfirm } from 'naive-ui'
 import { GRAPH_NODE_COLORS_V2, GRAPH_NODE_LABELS } from '../../api-v2/graph'
 import { useCytoscapeLifecycle, type GraphData as CyGraphData } from '../../composables/graph/useCytoscapeLifecycle'
 
