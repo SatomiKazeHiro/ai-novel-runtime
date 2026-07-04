@@ -61,7 +61,10 @@
           <template v-if="assembledPrompt.contextBudget"> / 预算 {{ (assembledPrompt.contextBudget / 1000).toFixed(0) }}K</template>
         </div>
       </template>
-      <p v-else style="color: var(--text-tertiary); font-size: 12px; padding: 20px 0; text-align: center">点击"生成 Prompt"后在此预览</p>
+      <p v-else class="prompt-empty">
+        点击上方"生成 Prompt"后在此预览
+        <span class="prompt-empty__hint">预览会显示将发给 AI 的 System + User Message 全文</span>
+      </p>
     </div>
   </div>
 

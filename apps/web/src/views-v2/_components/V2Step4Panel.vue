@@ -41,6 +41,11 @@
       <span v-if="chapter.analysisId !== chapter.contentHash" style="color: var(--color-negative); margin-left: 8px">正文已修改，分析可能过时</span>
     </div>
 
+    <div v-if="!analysis" class="analyzer-idle is-pre-analyze">
+      保存正文后点击"分析"，AI 将并行提取 5 路信息并显示在此
+      <div class="analyzer-idle__hint">角色 · 记忆 · 剧情弧线 · 时间线 · 图谱</div>
+    </div>
+
     <n-tabs v-if="analysis" v-model:value="analysisActiveTab" type="segment" animated>
       <n-tab-pane v-for="item in analyzerItems" :key="item.key" :name="item.key">
         <template #tab>
@@ -540,11 +545,25 @@ onUnmounted(() => {
 /* === Analyzer tab pane body === */
 .analyzer-tab-content { padding: 8px 0 0; min-height: 120px; }
 .analyzer-idle {
-  padding: 32px 0;
+  padding: 40px 16px;
   text-align: center;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   font-size: 13px;
-  font-style: italic;
+  background: var(--bg-canvas);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-input);
+  font-style: normal;
+  line-height: 1.6;
+}
+.analyzer-idle.is-pre-analyze {
+  padding: 56px 16px;
+  font-size: 13px;
+}
+.analyzer-idle.is-pre-analyze .analyzer-idle__hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 6px;
+  letter-spacing: 0.02em;
 }
 .analyzer-item__error {
   padding: 12px;

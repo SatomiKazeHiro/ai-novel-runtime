@@ -629,26 +629,37 @@ a:hover { color: var(--accent-link-hover); }
   margin: 0;
 }
 
+/* === Step card rhythm (V2 design-flow) ===
+   5 个 step card 在 design-flow 内堆叠。卡片之间给 24px 节奏;
+   比默认更松, 让每个 step 有独立段落感, 避免一长条到底。 */
+.design-flow > .cap-card {
+  margin-bottom: var(--space-6);
+}
+.design-flow > .cap-card:last-child {
+  margin-bottom: 0;
+}
+
 /* === Step bar — horizontal 5-step progress (Q24 V2ChapterDesign) ===
    Each step: number badge + label. Done = sage green check-style dot,
-   current = terracotta filled, future = muted gray. Connector line links
-   neighbors. Pure CSS, no JS state required — driven by is-done/is-current
+   current = terracotta filled (slightly larger), future = muted gray.
+   Connector line links neighbors; future segment rendered dotted.
+   Pure CSS, no JS state required — driven by is-done/is-current
    class set from a parent computed. */
 .cap-step-bar {
   display: flex;
   align-items: center;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--space-5);
   background: var(--bg-card);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-card);
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-6);
 }
 .cap-step {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
+  gap: 10px;
+  font-size: 13px;
   color: var(--text-tertiary);
   position: relative;
   min-width: 0;
@@ -657,20 +668,23 @@ a:hover { color: var(--accent-link-hover); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: var(--weight-semibold);
   background: var(--bg-canvas);
   color: var(--text-tertiary);
   border: 1px solid var(--border-default);
   flex-shrink: 0;
   line-height: 1;
+  font-family: var(--font-mono);
+  letter-spacing: 0;
+  transition: all 0.18s ease;
 }
 .cap-step__label {
   font-weight: var(--weight-medium);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -678,7 +692,7 @@ a:hover { color: var(--accent-link-hover); }
 .cap-step:not(:last-child)::after {
   content: '';
   position: absolute;
-  left: calc(22px + 12px);
+  left: calc(24px + 14px);
   right: 8px;
   top: 50%;
   height: 1px;
@@ -691,13 +705,29 @@ a:hover { color: var(--accent-link-hover); }
   border-color: var(--accent-positive);
   color: var(--accent-positive);
 }
-.cap-step.is-current { color: var(--accent); }
+.cap-step.is-current {
+  color: var(--accent);
+  font-weight: var(--weight-semibold);
+}
 .cap-step.is-current .cap-step__num {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--text-on-accent);
+  width: 28px;
+  height: 28px;
+  font-size: 13px;
+  box-shadow: 0 0 0 4px var(--color-warm-accent-tint);
 }
-.cap-step.is-future { opacity: 0.55; }
+.cap-step.is-current:not(:last-child)::after {
+  background: var(--accent);
+}
+.cap-step.is-future { opacity: 0.5; }
+.cap-step.is-future:not(:last-child)::after {
+  background-image: linear-gradient(to right, var(--border-default) 50%, transparent 50%);
+  background-size: 6px 1px;
+  background-repeat: repeat-x;
+  background-color: transparent;
+}
 
 /* === Modal stepper — vertical dot-led visual inside dialog (Q24) === */
 .cap-modal-stepper {
@@ -822,6 +852,28 @@ a:hover { color: var(--accent-link-hover); }
   max-height: 360px;
   overflow-y: auto;
   margin: 8px 0 0;
+}
+
+/* === prompt-empty — placeholder when no prompt generated yet ===
+   与 prompt-preview 同样形态 (canvas 底 + pebble border) 但无 mono 内容,
+   居中显示一行提示 + 一行更细的 hint. 避免 Naive UI n-empty 的英文 placeholder。 */
+.prompt-empty {
+  background: var(--bg-canvas);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-input);
+  padding: 40px 16px;
+  margin: 8px 0 0;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.prompt-empty__hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 6px;
+  letter-spacing: 0.02em;
 }
 
 /* === Draft content (Step3 candidate list) === */
