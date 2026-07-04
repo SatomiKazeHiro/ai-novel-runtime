@@ -340,7 +340,7 @@ V2 不需要上锁 = 实际有效态只有 3 个（`draft` / `analyzing` / `arch
 - `apps/server/src/routes-v2/chapters-generate.ts` (317 行) — SSE 流式生成（Q12 从 stub 替换为真实实现）
 - `apps/server/src/routes-v2/provider-configs.ts` (26 行) — AI 模型列表（Q12 独立化）
 - `apps/server/src/services-v2/prompt-assembler.ts` (278 行) — system compile + 7 段 user + `runtimeDegraded` 透传 + 字符级截断 + safeParse × 2
-- `apps/web/src/views-v2/V2ChapterDesign.vue` (626 行) — 5 步骤壳 + 数据源 tab + 归档弹窗（**Step3 + Step4 已拆到 `_components/`**）
+- `apps/web/src/views-v2/V2ChapterDesign.vue` (675 行) — 5 步骤壳 + 数据源 tab + 归档弹窗 + page header 标题可编辑（**Step3 + Step4 已拆到 `_components/`**）
 - `apps/web/src/views-v2/_components/V2Step3Panel.vue` (317 行) — AI 模型配置 + Prompt 预览 + SSE 候选生成 + 正文
 - `apps/web/src/views-v2/_components/V2Step4Panel.vue` (478 行) — 5 路分析 tab + 角色/记忆/弧线/时间/图谱编辑器 + cytoscape 迷你画布
 - `apps/web/src/views-v2/V2Graph.vue` (415 行) — 双视图 + diff + Cytoscape + 章节导航
@@ -394,6 +394,14 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 - [x] **Q4**: 死代码 / 死表清理（§6.4）— 决策：**全部保留**作 stub，未来扩展可能复用
 - [x] **Q5 部分**: 静默兜底 C/E/D 类（§6.5）— 已落代码：A/B 暂不动（保留旧行为）
 - [x] **Q8**: 8000 字硬截断（§6.8）— commit `2eab022`，深修：动态 budget + `truncateByParagraph`
+- [x] **Q15** (2026-07-04): V2ChapterDesign Step3/Step4 v-if ref unwrap 死锁 — commit `c57dec6`，`v-if="step >= 2 && step3Ref"` → `v-if="step >= 2"`（Vue 3 模板自动 unwrap ref，初值 null 导致子组件永不挂载，分析中章节正文+分析 tab 看不到）
+- [x] **Q16** (2026-07-04): V2Step3Panel 5 处 `.value` 误用 — commit `ee41d0c`，父级 `reactive({...})` 已自动 unwrap 内部 ref，子组件不能再 `.value`，否则 Vue warn `Cannot read properties of undefined`
+- [x] **Q17** (2026-07-04): V2Step3Panel 挂载时自动 loadDrafts — commit `3f9cf53`，1 文件 4 行（import + onMounted 块），与 onUnmounted(disposeDrafts) 对称，关闭页面再回来候选列表为空需重新生成 prompt 才能看到的 bug
+- [x] **Q18** (2026-07-04): V2Step4Panel 5 个 tab 共 8 处删除按钮 — commits `b01b7cd` + `f56c3a9` + `3bcbc6d`，quaternary "×" → 普通按钮 + "删除" 文字 + NPopconfirm 二次确认，提示信息带具体内容（角色名/记忆内容/弧线标题/时间线/图谱节点边）
+- [x] **Q19** (2026-07-04): doArchive 前自动同步 Step4 编辑 — commit `7240444`，2 文件 8 行；Step4 "保存调整" 是写 server 的唯一入口，doArchive 第一步 `await step4Ref.saveEdits()` 兜底，否则删除的角色归档时复活
+- [x] **Q20** (2026-07-04): V2 "发展" 章节加弹窗对齐 V1 useChapterTree — commit `6246719`，3 文件 65 行；前端弹窗（标题+大纲，默认"第N+1章"）+ 后端 POST 接受 outline（前端 `V2ChapterCreate` 加 `outline?: string`）
+- [x] **Q21** (2026-07-04): 中段归档章节禁用"发展" — commit `89c791e`，加 `maxChapterNumber` computed，按钮 `row.number < maxChapterNumber` 时 `disabled` + `title="请从最新归档章节发展"`；V1 是强制 isSideStory（番外），V2 暂不支持番外（Q14-C 留口）所以前端禁用最稳
+- [x] **Q22** (2026-07-04): V2ChapterDesign 设计页标题可编辑 — commit `e118303`，1 文件 45 行；`{{ chapter.title }}` → `<n-input v-model="editTitle">` + 防抖 500ms 自动保存（对齐 V1 `ChapterEditor.vue:12-16` editTitle 模式），archived 状态 input 禁用，切章节用 `watch chapter.id` 同步初值避免 update API 覆盖
 
 ### 7.2 必须修（线上 bug）
 
@@ -514,4 +522,4 @@ V1 的 P0 #2（`content.slice(0, 8000)` 粗截断）已在 V1 主路径修复（
 
 ## 10. 一句话总结
 
-V2 是 V1 的**工具化重写**：4 态状态机（故意偏离 V1 8 态以绕开锁定）、并行 5 路分析、3 步确认归档、配置面板作为核心交互入口。**Phase 0-6 全部完成 (2026-07-03)**。**已落实**：Q1（崩溃修复）、Q2（archive 守卫）、Q3（runtime degraded 透传）、Q4（死表保留）、Q5（C/D/E + A/B 类静默兜底；仅 graph-organizer 无 provider 路径留 warn）、Q6（4 态 vs 8 状态：调研结论落 [§6.3](#63--设计偏离-spec)）、Q7（V2 内部 5 extractor 抽公共层 `extractor-base.ts`，commit `1f69418`；V1 不动 = 参考留档最终清除）、Q8（动态 budget）、Q10（前端 analyze 180s total deadline；per-extractor timeout 不加 = 与 provider 120s 高度重叠冗余；详见 [§6.3 "5 路分析并发数"](#63--设计偏离-spec)）、Q11（V2ChapterDesign 拆 Step3+Step4 子组件到 `views-v2/_components/`，1193 → 626 行；详见 [§7.5](#75-大文件拆分结构性)）、Q12（routes-v2/chapters.ts 650 → 208 行纯 CRUD 骨架；按职责拆 5 兄弟文件 + provider-configs 独立 = 6 文件格局；generate-stream stub 替换为真实 SSE 实现；详见 [§7.5](#75-大文件拆分结构性)）、Q13（V2 业务 spec 落盘 + 实施状态对照落 spec §0 + v2-architecture 状态字段校准；详见 spec [§0 实施状态](docs/superpowers/specs/2026-06-29-v2-overall-design.md#0-实施状态)）、Q14（V2Chapters 章节号自动分配 + 第一章守卫：弹窗去 input-number + 标题动态"新建第 N 章" + 按钮 disabled 防重复第一章 + 后端抽 `allocateNextNumber` 函数预留树结构扩展位；commit 见 `0f06c46`）。**仍待决策**：Q9（暂缓, 触发条件见 §7.4）。
+V2 是 V1 的**工具化重写**：4 态状态机（故意偏离 V1 8 态以绕开锁定）、并行 5 路分析、3 步确认归档、配置面板作为核心交互入口。**Phase 0-6 全部完成 (2026-07-03)**。**已落实**：Q1（崩溃修复）、Q2（archive 守卫）、Q3（runtime degraded 透传）、Q4（死表保留）、Q5（C/D/E + A/B 类静默兜底；仅 graph-organizer 无 provider 路径留 warn）、Q6（4 态 vs 8 状态：调研结论落 [§6.3](#63--设计偏离-spec)）、Q7（V2 内部 5 extractor 抽公共层 `extractor-base.ts`，commit `1f69418`；V1 不动 = 参考留档最终清除）、Q8（动态 budget）、Q10（前端 analyze 180s total deadline；per-extractor timeout 不加 = 与 provider 120s 高度重叠冗余；详见 [§6.3 "5 路分析并发数"](#63--设计偏离-spec)）、Q11（V2ChapterDesign 拆 Step3+Step4 子组件到 `views-v2/_components/`，1193 → 626 行；详见 [§7.5](#75-大文件拆分结构性)）、Q12（routes-v2/chapters.ts 650 → 208 行纯 CRUD 骨架；按职责拆 5 兄弟文件 + provider-configs 独立 = 6 文件格局；generate-stream stub 替换为真实 SSE 实现；详见 [§7.5](#75-大文件拆分结构性)）、Q13（V2 业务 spec 落盘 + 实施状态对照落 spec §0 + v2-architecture 状态字段校准；详见 spec [§0 实施状态](docs/superpowers/specs/2026-06-29-v2-overall-design.md#0-实施状态)）、Q14（V2Chapters 章节号自动分配 + 第一章守卫：弹窗去 input-number + 标题动态"新建第 N 章" + 按钮 disabled 防重复第一章 + 后端抽 `allocateNextNumber` 函数预留树结构扩展位；commit 见 `0f06c46`）、Q15（V2ChapterDesign Step3/Step4 v-if ref unwrap 死锁）、Q16（V2Step3Panel 5 处 `.value` 误用）、Q17（V2Step3Panel mount loadDrafts）、Q18（V2Step4Panel 8 处删除按钮加 NPopconfirm + "删除" 文字）、Q19（doArchive 前自动同步 Step4 编辑防"删了角色归档时复活"）、Q20（V2 "发展" 章节弹窗对齐 V1 useChapterTree：标题+大纲，前端弹窗 + 后端接受 outline）、Q21（中段归档章节禁用"发展"）、Q22（设计页标题可编辑 + 防抖自动保存对齐 V1 editTitle 模式）。**仍待决策**：Q9（暂缓, 触发条件见 §7.4）。
