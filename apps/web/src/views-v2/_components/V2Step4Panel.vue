@@ -54,6 +54,15 @@
         <div class="analyzer-tab-content">
           <template v-if="item.status === 'failed'">
             <div class="analyzer-item__error">{{ item.error }}</div>
+            <div style="margin-top: 12px">
+              <n-button
+                size="small"
+                type="primary"
+                :loading="regenerating === item.key"
+                :disabled="analyzeRunning"
+                @click="emit('regenerate-single', item.key)"
+              >重新生成</n-button>
+            </div>
           </template>
           <template v-else-if="item.status === 'success' && editableAnalysis">
             <!-- 角色 -->
