@@ -475,7 +475,9 @@ defineExpose({
   analyzerItems,
   refreshAnalysisGraph,
   toastGraphWarnings,
-  newCharacters
+  newCharacters,
+  /** 父级在归档前主动同步当前编辑到 server，避免"删了角色但归档时又出现" */
+  saveEdits
 })
 
 onUnmounted(() => {

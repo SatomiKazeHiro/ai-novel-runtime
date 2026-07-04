@@ -535,6 +535,11 @@ async function refreshChapter() {
 async function doArchive() {
   const chapterId = route.params.chapterId as string
   if (!chapterId) return
+  // 先把 Step4 子组件的当前编辑同步到 server，避免"删了角色但归档时又出现"
+  // （doArchive 后续会从 server 拉 pendingAnalysis，若未同步会拿到旧版）
+  if (step4Ref.value?.saveEdits) {
+    await step4Ref.value.saveEdits()
+  }
   await loadAnalysis()
   archiveStep.value = 1
   archiveErrors.value = null
