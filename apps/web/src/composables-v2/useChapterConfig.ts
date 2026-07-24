@@ -40,7 +40,7 @@ export function useChapterConfig(
   // ── 配置状态 ──
   const configProviderId = ref<string | null>(null)
   const configTemperature = ref(0.7)
-  const configMaxTokens = ref(4096)
+  const configMaxTokens = ref(8192)
   const configCharacterIds = ref<string[]>([])
   const configMemoryIds = ref<string[]>([])
   const configPlotArcIds = ref<string[]>([])
@@ -69,7 +69,7 @@ export function useChapterConfig(
       configProviderId.value = def?.id || null
     }
     configTemperature.value = cfg.temperature ?? (availableModels.value.find((m: any) => m.isDefault)?.temperature ?? 0.7)
-    configMaxTokens.value = cfg.maxTokens ?? (availableModels.value.find((m: any) => m.isDefault)?.maxTokens ?? 4096)
+    configMaxTokens.value = cfg.maxTokens ?? (availableModels.value.find((m: any) => m.isDefault)?.maxTokens ?? 8192)
     configCharacterIds.value = cfg.characterIds?.length ? cfg.characterIds : availableCharacters.value.map((c: any) => c.id)
     configMemoryIds.value = cfg.memoryTypeIds?.length ? cfg.memoryTypeIds.map((m: any) => m.id) : []
     configPlotArcIds.value = cfg.plotArcIds?.length ? cfg.plotArcIds : availablePlotArcs.value.filter((a: any) => a.status === 'active' || a.status === 'interrupted').map((a: any) => a.id)
@@ -174,6 +174,21 @@ export function useChapterConfig(
     }
   }
 
+  /** 进入设计页时的种子记忆：仅在 configMemoryIds 为空 + 大纲非空时静默跑一次 search。
+   *  用户后续任何勾/取消/清空都不再触发，避免"过度兜底"造成系统臃肿。 */
+  async function ensureInitialMemoryAssignment(outline: string) {
+    if (configMemoryIds.value.length > 0) return
+    if (!outline.trim() || availableMemories.value.length === 0) return
+    const cid = chapterId()
+    if (!cid) return
+    try {
+      const res = await v2ChaptersApi.memorySearch(cid, outline.trim())
+      if (res.data?.success && res.data.data?.length) {
+        configMemoryIds.value = res.data.data.map((m: any) => m.id)
+      }
+    } catch { /* silent — 失败就让 memory 层空着 */ }
+  }
+
   return {
     // 可选数据
     availableModels,
@@ -199,6 +214,7 @@ export function useChapterConfig(
     buildGenConfig,
     buildConfigForSave,
     loadAvailableSources,
-    handleMemorySearch
+    handleMemorySearch,
+    ensureInitialMemoryAssignment
   }
 }

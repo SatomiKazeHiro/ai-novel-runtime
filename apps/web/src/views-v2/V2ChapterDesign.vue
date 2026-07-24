@@ -124,6 +124,7 @@
                     :loading="searchingMemories"
                     @click="onMemorySearch"
                   >系统分配</n-button>
+                  <span class="cap-meta" style="margin-left: 8px">未勾选时进入设计页会自动按大纲分配</span>
                   <span v-if="!outline.trim()" class="cap-meta" style="margin-left: 6px">需先保存大纲</span>
                 </div>
                 <n-checkbox-group v-model:value="configMemoryIds" :disabled="chapter.status !== 'draft'">
@@ -371,7 +372,8 @@ const {
   searchingMemories,
   modelOptions, selectedModel, parsedConfig,
   configProviderId, configTemperature, configMaxTokens,
-  buildGenConfig, buildConfigForSave, loadAvailableSources, handleMemorySearch
+  buildGenConfig, buildConfigForSave, loadAvailableSources, handleMemorySearch,
+  ensureInitialMemoryAssignment
 } = useChapterConfig(
   () => route.params.storyId as string,
   () => route.params.chapterId as string,
@@ -400,6 +402,7 @@ const chapterConfig = reactive({
   buildConfigForSave,
   loadAvailableSources,
   handleMemorySearch,
+  ensureInitialMemoryAssignment,
   applyConfig: () => { /* 占位 — useChapterConfig 不暴露 applyConfig */ }
 })
 
@@ -490,6 +493,7 @@ async function loadChapter() {
 
 async function loadAndApplyConfig() {
   await loadAvailableSources()
+  await ensureInitialMemoryAssignment(outline.value.trim())
   updateStep()
 }
 
