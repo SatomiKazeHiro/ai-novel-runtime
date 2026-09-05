@@ -12,3 +12,6 @@ apps/server/uploads/
 
 # superpowers plugin 内部状态目录
 .superpowers/
+
+# 测试文本
+.test
