@@ -195,28 +195,7 @@ describe('select route — v2 orthogonal to chapter status (3-value enum)', () =
     expect(result.body.error).toMatch(/已归档章节不能选择新候选/)
   })
 
-  it('respects overrideContent=false (skip Chapter.content write)', async () => {
-    mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'c1', status: 'draft', content: 'old'
-    })
-    mockPrisma.draft.findUnique.mockResolvedValue({
-      id: 'd_new', chapterId: 'c1', content: 'new content'
-    })
-    mockPrisma.draft.updateMany.mockResolvedValue({ count: 1 })
-    mockPrisma.draft.update.mockResolvedValue({ id: 'd_new', status: 'selected' })
-
-    const result = await callHandler(
-      routes, 'POST', '/api/chapters/:chapterId/select',
-      { draftId: 'd_new', overrideContent: false }, { chapterId: 'c1' }
-    )
-
-    expect(result.status).not.toBe(400)
-    expect(mockPrisma.$transaction).toHaveBeenCalled()
-    // 验证 transaction 内 chapter.update 没有被调 (overrideContent=false 跳过 content 写)
-    expect(mockPrisma.chapter.update).not.toHaveBeenCalled()
-  })
-
-  it('default overrideContent=true writes Chapter.content', async () => {
+  it('writes Chapter.content and does not flip chapter.status', async () => {
     mockPrisma.chapter.findUnique.mockResolvedValue({
       id: 'c1', status: 'draft', content: 'old'
     })
@@ -233,7 +212,7 @@ describe('select route — v2 orthogonal to chapter status (3-value enum)', () =
     )
 
     expect(result.status).not.toBe(400)
-    // 验证 chapter.update 被调 (默认 overrideContent=true 写 content)
+    // v2: select 总是写 Chapter.content
     expect(mockPrisma.chapter.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'c1' },

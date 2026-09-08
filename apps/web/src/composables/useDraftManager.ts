@@ -102,7 +102,7 @@ export function useDraftManager() {
     }
 
     try {
-      await chaptersApi.selectDraft(chapterId, draftId, { overrideContent: true })
+      await chaptersApi.selectDraft(chapterId, draftId)
       const res = await draftsApi.list(chapterId)
       drafts.value = res.data.data || []
       message.success('已采用')

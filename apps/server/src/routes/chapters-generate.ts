@@ -286,20 +286,14 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     })
     if (!draft) return reply.status(404).send({ success: false, error: 'Draft not found' })
 
-    // .default(true) 在 z.infer 上是 output 类型,但 parseBody 的 ZodSchema<T> 泛型在
-    // 无显式标注时窄化不到这个字段,这里显式断言 (TS narrowing quirk)。
-    const overrideContent = (body as { overrideContent?: boolean }).overrideContent !== false
-
     await prisma.$transaction(async (tx) => {
       await tx.draft.updateMany({ where: { chapterId }, data: { status: 'rejected' } })
       await tx.draft.update({ where: { id: body.draftId }, data: { status: 'selected' } })
-      if (overrideContent) {
-        // v2: 仅写 content，不翻 chapter.status
-        await tx.chapter.update({
-          where: { id: chapterId },
-          data: { content: draft.content || undefined }
-        })
-      }
+      // v2: 仅写 content，不翻 chapter.status
+      await tx.chapter.update({
+        where: { id: chapterId },
+        data: { content: draft.content || undefined }
+      })
     })
 
     return { success: true }
