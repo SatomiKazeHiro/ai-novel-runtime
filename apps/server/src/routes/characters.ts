@@ -31,6 +31,44 @@ export async function characterRoutes(app: FastifyInstance) {
     }
     return { success: true, data: data[0] }
   })
+  // PUT /api/stories/:storyId/characters/:charId/snapshot/:chapterNumber — v4 快照纠错: 用户手动编辑已归档快照
+  app.put('/api/stories/:storyId/characters/:charId/snapshot/:chapterNumber', async (request, reply) => {
+    const { storyId, charId, chapterNumber } = request.params as any
+    const body = request.body as any
+    const chapterNum = Number(chapterNumber)
+    if (Number.isNaN(chapterNum)) {
+      return reply.status(400).send({ success: false, error: 'invalid chapter number' })
+    }
+
+    const character = await app.prisma.character.findFirst({ where: { id: charId, storyId } })
+    if (!character) {
+      return reply.status(404).send({ success: false, error: 'Character not found' })
+    }
+
+    const status = body.status ?? {}
+    const relationships = body.relationships ?? {}
+    if (typeof status !== 'object' || status === null || Array.isArray(status)) {
+      return reply.status(400).send({ success: false, error: 'status 必须是 JSON 对象' })
+    }
+    if (typeof relationships !== 'object' || relationships === null || Array.isArray(relationships)) {
+      return reply.status(400).send({ success: false, error: 'relationships 必须是 JSON 对象' })
+    }
+    // 与归档语义一致: 空白 costume 视同未描写 → null (character-extractor.ts:112)
+    const costume = typeof body.costume === 'string' && body.costume.trim() ? body.costume : null
+
+    const result = await app.prisma.characterBranchState.updateMany({
+      where: { characterId: charId, fromChapterNumber: chapterNum },
+      data: {
+        status: JSON.stringify(status),
+        relationships: JSON.stringify(relationships),
+        costume
+      }
+    })
+    if (result.count === 0) {
+      return reply.status(404).send({ success: false, error: '该章节无此角色快照' })
+    }
+    return { success: true, data: { updated: result.count } }
+  })
   // GET /api/stories/:id/characters
   app.get('/api/stories/:storyId/characters', async (request, reply) => {
     const { storyId } = request.params as any
