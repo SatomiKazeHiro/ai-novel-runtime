@@ -401,6 +401,21 @@ function openEdit(row: CharacterDisplayRow) {
 
 async function handleSubmit() {
   if (!route.params.storyId) return
+  // 快照编辑态下点 footer「保存」: 此按钮只写角色 base 信息、不写快照,先确认避免误以为快照已存
+  if (snapshotEditing.value) {
+    dialog.warning({
+      title: '正在编辑快照',
+      content: '「保存」只保存角色基础信息，不会保存快照修改。快照需在右侧面板点「保存快照」单独保存。是否继续？',
+      positiveText: '继续',
+      negativeText: '取消',
+      onPositiveClick: () => doSubmit()
+    })
+    return
+  }
+  await doSubmit()
+}
+
+async function doSubmit() {
   const data: Record<string, any> = {
     name: form.value.name,
     protagonist: form.value.protagonist,
