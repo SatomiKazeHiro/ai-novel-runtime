@@ -46,6 +46,12 @@
               角色
             </span>
           </template>
+          <div v-if="stageStatus('character') === 'failed'" class="rp-stage-error">
+            <strong>解析失败:</strong> {{ props.pending?.stages?.character?.errorMessage || '未知错误' }}
+            <n-button size="small" type="primary" style="margin-left: 12px" @click="emit('retry-stage', 'character')">
+              重新解析此阶段
+            </n-button>
+          </div>
           <n-empty v-if="characterStates.length === 0" description="暂无角色状态, 点击下方添加" />
           <n-grid
             v-else
@@ -112,6 +118,12 @@
               记忆
             </span>
           </template>
+          <div v-if="stageStatus('memory') === 'failed'" class="rp-stage-error">
+            <strong>解析失败:</strong> {{ props.pending?.stages?.memory?.errorMessage || '未知错误' }}
+            <n-button size="small" type="primary" style="margin-left: 12px" @click="emit('retry-stage', 'memory')">
+              重新解析此阶段
+            </n-button>
+          </div>
           <n-space vertical size="large" style="width: 100%">
             <!-- 记忆编辑器 -->
             <n-card title="提取的记忆" size="small">
@@ -165,6 +177,12 @@
               剧情弧线
             </span>
           </template>
+          <div v-if="stageStatus('plotArc') === 'failed'" class="rp-stage-error">
+            <strong>解析失败:</strong> {{ props.pending?.stages?.plotArc?.errorMessage || '未知错误' }}
+            <n-button size="small" type="primary" style="margin-left: 12px" @click="emit('retry-stage', 'plotArc')">
+              重新解析此阶段
+            </n-button>
+          </div>
           <!-- 剧情弧线编辑器 -->
           <n-card title="剧情弧线" size="small">
             <n-empty v-if="plotArcs.length === 0" description="暂无剧情弧线" />
@@ -340,6 +358,12 @@
               图谱
             </span>
           </template>
+          <div v-if="stageStatus('graph') === 'failed'" class="rp-stage-error">
+            <strong>解析失败:</strong> {{ props.pending?.stages?.graph?.errorMessage || '未知错误' }}
+            <n-button size="small" type="primary" style="margin-left: 12px" @click="emit('retry-stage', 'graph')">
+              重新解析此阶段
+            </n-button>
+          </div>
           <!-- 图谱编辑器 -->
           <n-card title="本章图谱" size="small">
             <EditableGraph
@@ -379,11 +403,14 @@ const props = defineProps<{
   pending: V3PendingArchiveData
 }>()
 
+type StageName = 'character' | 'memory' | 'plotArc' | 'graph'
+
 const emit = defineEmits<{
   (e: 'save', data: V3PendingArchiveData): void
   (e: 'confirm', data: V3PendingArchiveData): void
   (e: 'cancel'): void
   (e: 'reprepare'): void
+  (e: 'retry-stage', stageName: StageName): void
 }>()
 
 const saving = ref(false)
@@ -408,7 +435,6 @@ watch(localData, () => {
 onUnmounted(() => { if (saveTimer) clearTimeout(saveTimer) })
 
 // === tab header 状态圆点 ===
-type StageName = 'character' | 'memory' | 'plotArc' | 'graph'
 function stageStatus(name: StageName): string {
   return props.pending?.stages?.[name]?.status ?? 'pending'
 }
@@ -584,6 +610,22 @@ function handleConfirm() {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+/* === stage 失败提示条: 暖底红字 + 重新解析按钮 === */
+.rp-stage-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border-radius: 6px;
+  background: rgba(217, 75, 75, 0.08);
+  border: 1px solid rgba(217, 75, 75, 0.35);
+  color: #a83232;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 /* === Editorial storyboard entry — plot arc card ===

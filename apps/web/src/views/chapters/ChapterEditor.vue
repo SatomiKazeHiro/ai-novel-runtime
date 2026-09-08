@@ -255,6 +255,7 @@
             @confirm="(data) => emit('confirm-archive-with-data', data)"
             @cancel="emit('prepare-archive-cancel')"
             @reprepare="emit('reprepare-archive')"
+            @retry-stage="(stageName) => emit('retry-stage', stageName)"
         />
 
         <!-- reviewing 但无待归档数据 / 数据版本过旧:提示异常 -->
@@ -444,6 +445,7 @@ const emit = defineEmits<{
     (e: "confirm-archive-with-data", data: any): void;
     (e: "reprepare-archive"): void;
     (e: "cancel-reviewing"): void;
+    (e: "retry-stage", stageName: "character" | "memory" | "plotArc" | "graph"): void;
 }>();
 
 // v2 细粒度 readonly:

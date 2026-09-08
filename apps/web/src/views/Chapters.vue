@@ -49,6 +49,7 @@
         @save-pending-archive="handleSavePendingArchive"
         @reprepare-archive="handleReprepareArchive"
         @cancel-reviewing="handleCancelReviewing"
+        @retry-stage="handleRetryStage"
     />
 </template>
 
@@ -337,5 +338,10 @@ function handleCancelReviewing() {
             await handleBackToTree();
         },
     });
+}
+
+async function handleRetryStage(stageName: "character" | "memory" | "plotArc" | "graph") {
+    // 单 stage 重跑: 只重跑指定 stage, 不动其他 stage 结果, 不撤销整章
+    await editor.retryChapterStage(stageName);
 }
 </script>

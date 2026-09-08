@@ -40,6 +40,8 @@ export const chaptersApi = {
   prepareArchive: (chapterId: string) => api.post(`/api/chapters/${chapterId}/prepare-archive`, {}, { timeout: 0 }),
   prepareArchiveCancel: (chapterId: string) =>
     api.post(`/api/chapters/${chapterId}/prepare-archive/cancel`, {}, { timeout: 5000 }),
+  retryStage: (chapterId: string, stageName: string) =>
+    api.post(`/api/chapters/${chapterId}/prepare-archive/retry-stage/${stageName}`, {}, { timeout: 0 }),
   archive: (chapterId: string) => api.post(`/api/chapters/${chapterId}/archive`, {}, { timeout: 0 }),
   develop: (chapterId: string, data: any) => api.post(`/api/chapters/${chapterId}/develop`, data),
   getTree: (storyId: string) => api.get(`/api/stories/${storyId}/chapter-tree`)

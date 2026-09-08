@@ -205,6 +205,160 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     return { success: true, data: { status: 'draft' } }
   })
 
+  // 单 stage 重跑（不重置其他 stage）。txt 第 1 段:失败 stage 单独重新解析。
+  // 也允许重跑 success 的 stage（用户对结果不满意时,不必撤销整章）。
+  app.post('/api/chapters/:chapterId/prepare-archive/retry-stage/:stageName', async (request, reply) => {
+    const { chapterId, stageName } = request.params as any
+    const prisma = app.prisma
+    const chapter = await getOrThrowChapter(prisma, chapterId, reply)
+    if (chapter === null) return
+
+    if (chapter.status !== 'reviewing') {
+      return reply.status(400).send({
+        success: false,
+        error: `章节当前状态为 ${chapter.status}，只允许 reviewing 状态重跑 stage`
+      })
+    }
+    if (!['character', 'memory', 'plotArc', 'graph'].includes(stageName)) {
+      return reply.status(400).send({ success: false, error: `未知 stage: ${stageName}` })
+    }
+    if (!chapter.content) {
+      return reply.status(400).send({ success: false, error: '正文为空,无法重跑 stage' })
+    }
+
+    // 读已有 pendingArchiveData,只重写目标 stage
+    const existing = safeJsonParse<PendingArchiveDataV3 | null>(chapter.pendingArchiveData, null)
+    if (!existing || existing.version !== 3) {
+      return reply.status(400).send({
+        success: false,
+        error: '当前章节 pendingArchiveData 缺失或不是 v3,无法单 stage 重跑(请用重新准备归档)'
+      })
+    }
+
+    const contentText = chapter.content
+    const outlineText = chapter.outline || ''
+
+    // 复用 prepare-archive 的 pre-stage 数据加载
+    const allCharacters = await prisma.character.findMany({
+      where: { storyId: chapter.storyId },
+      select: { id: true, name: true, slug: true, protagonist: true }
+    })
+    const matchedCharacters = allCharacters
+      .filter((c: any) => contentText.includes(c.name))
+      .map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        key: c.slug,
+        label: c.name,
+        importance: c.protagonist ? 10 : 7
+      }))
+    const characterNames = matchedCharacters.map((c: any) => c.name)
+    const characterKeys = matchedCharacters.map((c: any) => c.key)
+
+    const latestBranchStates = matchedCharacters.length > 0
+      ? await prisma.characterBranchState.findMany({
+          where: { characterId: { in: matchedCharacters.map((c: any) => c.id) } },
+          orderBy: { fromChapterNumber: 'desc' }
+        })
+      : []
+    const latestPerChar = new Map<string, any>()
+    for (const s of latestBranchStates) {
+      if (!latestPerChar.has(s.characterId)) latestPerChar.set(s.characterId, s)
+    }
+    const dedupedBranchStates = Array.from(latestPerChar.values())
+
+    const allExistingArcs = await prisma.plotArc.findMany({ where: { storyId: chapter.storyId } })
+
+    let prevCumulativeGraphKeys: string[] = []
+    if (chapter.parentChapterId) {
+      const parent = await prisma.chapter.findUnique({
+        where: { id: chapter.parentChapterId },
+        select: { cumulativeGraph: true }
+      })
+      if (parent?.cumulativeGraph) {
+        const parsed = safeJsonParse<{ nodes?: Array<{ type: string; key: string }> } | null>(parent.cumulativeGraph, null)
+        if (parsed?.nodes) prevCumulativeGraphKeys = parsed.nodes.map(n => `${n.type}:${n.key}`)
+      }
+    }
+    if (prevCumulativeGraphKeys.length === 0) {
+      const prev = await prisma.chapter.findFirst({
+        where: {
+          storyId: chapter.storyId,
+          parentChapterId: null,
+          number: chapter.number - 1,
+          id: { not: chapterId }
+        },
+        select: { cumulativeGraph: true }
+      })
+      if (prev?.cumulativeGraph) {
+        const parsed = safeJsonParse<{ nodes?: Array<{ type: string; key: string }> } | null>(prev.cumulativeGraph, null)
+        if (parsed?.nodes) prevCumulativeGraphKeys = parsed.nodes.map(n => `${n.type}:${n.key}`)
+      }
+    }
+
+    // 单 stage 执行
+    let newStage: any
+    try {
+      if (stageName === 'character') {
+        newStage = await runCharacterStage(app, {
+          storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
+          chapterNumber: chapter.number, matchedCharacters
+        })
+      } else if (stageName === 'memory') {
+        newStage = await runMemoryStage(app, {
+          storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
+          chapterNumber: chapter.number, characterNames, characterKeys
+        })
+      } else if (stageName === 'plotArc') {
+        newStage = await runPlotArcStage(app, {
+          storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
+          chapterNumber: chapter.number, existingArcs: allExistingArcs as any,
+          characterNames, latestBranchStates: dedupedBranchStates
+        })
+      } else {
+        newStage = await runGraphExtractStage(app, {
+          storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
+          chapterNumber: chapter.number, characterNames, prevCumulativeGraphKeys,
+          latestBranchStates: dedupedBranchStates
+        })
+      }
+    } catch (err: any) {
+      app.log.error(`[RetryStage:${stageName}] ${err.message}`)
+      return reply.status(500).send({ success: false, error: `重跑 ${stageName} 失败: ${err.message}` })
+    }
+
+    // 合并回 pendingArchiveData(只覆盖目标 stage,其他不动)
+    const updatedPending: PendingArchiveDataV3 = {
+      ...existing,
+      stages: {
+        ...existing.stages,
+        [stageName]: newStage
+      }
+    }
+
+    // graph stage 成功时同步 chapterGraph
+    const chapterGraphUpdate: string | null | undefined = undefined
+    let chapterGraphSet: string | null | undefined = undefined
+    if (stageName === 'graph') {
+      if (newStage.status === 'success' && (newStage.result as any)?.chapterGraph) {
+        chapterGraphSet = JSON.stringify((newStage.result as any).chapterGraph)
+      } else if (newStage.status === 'failed') {
+        // graph 失败 → 不清空已有 chapterGraph(保留给 UI),但不写入新值
+        chapterGraphSet = undefined
+      }
+    }
+
+    await prisma.chapter.update({
+      where: { id: chapterId },
+      data: {
+        pendingArchiveData: JSON.stringify(updatedPending),
+        ...(chapterGraphSet !== undefined ? { chapterGraph: chapterGraphSet } : {})
+      }
+    })
+
+    return { success: true, data: updatedPending }
+  })
+
   app.post('/api/chapters/:chapterId/archive', async (request, reply) => {
     const { chapterId } = request.params as any
     const prisma = app.prisma

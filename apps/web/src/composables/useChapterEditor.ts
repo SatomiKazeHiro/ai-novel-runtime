@@ -237,6 +237,29 @@ export function useChapterEditor(storyId: () => string | undefined) {
     }
   }
 
+  async function retryChapterStage(stageName: 'character' | 'memory' | 'plotArc' | 'graph') {
+    if (!currentChapter.value) return { success: false }
+    if (currentChapter.value.status !== 'reviewing') {
+      message.warning('只有 reviewing 状态可以重跑 stage')
+      return { success: false }
+    }
+    try {
+      const res = await chaptersApi.retryStage(currentChapter.value.id, stageName)
+      if (res.data.success) {
+        // 后端返回的 data 是更新后的完整 pendingArchiveData
+        pendingArchiveData.value = res.data.data
+        message.success(`${stageName} 重跑完成`)
+        return { success: true }
+      } else {
+        message.error(res.data.error || `${stageName} 重跑失败`)
+        return { success: false }
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.error || `${stageName} 重跑失败`)
+      return { success: false }
+    }
+  }
+
   return reactive({
     editMode,
     currentChapter,
@@ -259,6 +282,7 @@ export function useChapterEditor(storyId: () => string | undefined) {
     savePendingArchiveData,
     prepareArchive,
     prepareArchiveCancel,
-    archiveChapter
+    archiveChapter,
+    retryChapterStage
   })
 }
