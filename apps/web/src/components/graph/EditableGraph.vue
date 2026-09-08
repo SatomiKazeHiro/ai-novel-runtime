@@ -1,36 +1,27 @@
 <template>
   <div>
-    <header class="page-head">
-      <div class="page-head__text">
-        <span class="cap-eyebrow is-accent">EDIT GRAPH</span>
-        <h1 class="page-head__title">本章图谱</h1>
-        <p class="page-head__lede cap-body-sm">
-          校对本章抽出的实体与关系 — 点选节点 / 边后右侧操作可用。
-        </p>
-      </div>
-      <div class="page-head__actions">
-        <button
-          class="cap-pill is-sm"
-          :disabled="!selectedNode && !selectedEdge"
-          @click="handleDelete"
-        >
-          删除选中
-        </button>
-        <button
-          class="cap-pill is-sm"
-          :disabled="!selectedNode"
-          @click="openEditNode"
-        >
-          编辑节点
-        </button>
-        <button
-          class="cap-pill is-sm is-primary"
-          @click="showNodeModal = true"
-        >
-          + 添加节点
-        </button>
-      </div>
-    </header>
+    <div class="editable-graph__actions">
+      <button
+        class="cap-pill is-sm"
+        :disabled="!selectedNode && !selectedEdge"
+        @click="handleDelete"
+      >
+        删除选中
+      </button>
+      <button
+        class="cap-pill is-sm"
+        :disabled="!selectedNode"
+        @click="openEditNode"
+      >
+        编辑节点
+      </button>
+      <button
+        class="cap-pill is-sm is-primary"
+        @click="showNodeModal = true"
+      >
+        + 添加节点
+      </button>
+    </div>
 
     <div class="editable-graph__toolbar">
       <GraphLegend />
@@ -331,6 +322,13 @@ watch(() => props.initialGraphData, (val) => {
 </script>
 
 <style scoped>
+.editable-graph__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
 .editable-graph__toolbar {
   display: flex;
   align-items: center;

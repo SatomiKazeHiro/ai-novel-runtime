@@ -372,13 +372,11 @@
               {{ isRetrying('graph') ? '重新解析中…' : '重新解析此阶段' }}
             </n-button>
           </div>
-          <!-- 图谱编辑器 -->
-          <n-card title="本章图谱" size="small">
-            <EditableGraph
-              :initial-graph-data="graphData"
-              @update:graphData="onGraphUpdate"
-            />
-          </n-card>
+          <!-- 图谱编辑器 (EditableGraph 自带 page-head, 不再包 n-card 避免重复标题) -->
+          <EditableGraph
+            :initial-graph-data="graphData"
+            @update:graphData="onGraphUpdate"
+          />
         </n-tab-pane>
       </n-tabs>
 
