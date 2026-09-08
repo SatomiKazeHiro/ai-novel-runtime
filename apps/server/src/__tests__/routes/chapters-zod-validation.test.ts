@@ -368,7 +368,7 @@ describe('POST /chapters/:chapterId/prepare-archive — PrepareArchiveRequestSch
       chapter: {
         ...createMockPrisma().chapter,
         findUnique: vi.fn().mockResolvedValue({
-          id: 'c1', storyId: 's1', status: 'selected',
+          id: 'c1', storyId: 's1', status: 'draft',
           isSideStory: false, content: 'a'.repeat(200), outline: 'o',
           number: 1, parentChapterId: null,
           story: { id: 's1' }

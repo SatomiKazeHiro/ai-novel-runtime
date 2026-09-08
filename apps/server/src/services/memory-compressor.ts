@@ -16,9 +16,9 @@ export async function maybeCompressMemories(
 ): Promise<void> {
   const prisma = app.prisma
 
-  // 1. 统计已完成（selected 或 archived）的章节数
+  // 1. 统计已归档章节数（v2: 没有 selected，完成 = archived）
   const completedCount = await prisma.chapter.count({
-    where: { storyId, status: { in: ['selected', 'archived'] } }
+    where: { storyId, status: 'archived' }
   })
 
   // 2. 只有达到 5 的倍数时才触发（5, 10, 15...）

@@ -93,11 +93,6 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
     const chapter = await getOrThrowChapter(app.prisma, chapterId, reply)
     if (chapter === null) return
 
-    // archived 章节只读，不允许任何修改
-    if (chapter.status === 'archived') {
-      return reply.status(400).send({ success: false, error: '已归档章节不可修改' })
-    }
-
     // 禁止直接通过 PUT 修改 status，状态转换必须通过专门接口
     if (body.status !== undefined) {
       return reply.status(400).send({ success: false, error: '不允许直接修改 status 字段' })
@@ -113,17 +108,30 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
     if (body.aiProviderConfigId !== undefined) data.aiProviderConfigId = body.aiProviderConfigId || null
     if (body.pendingArchiveData !== undefined) data.pendingArchiveData = body.pendingArchiveData
 
-    // reviewing 状态只允许调整 content 和 pendingArchiveData
-    if (chapter.status === 'reviewing') {
-      const allowedKeys = ['content', 'pendingArchiveData']
+    // v2: archived 章节只读,不允许任何修改
+    if (chapter.status === 'archived') {
+      return reply.status(400).send({ success: false, error: '已归档章节不可修改' })
+    }
+
+    // v2: 收口到 3 个 status。draft 允许所有字段;
+    // reviewing 仅允许 pendingArchiveData (ReviewingPanel 在 review 中修订后保存)。
+    if (chapter.status === 'draft') {
+      // no-op: full edit allowed
+    } else if (chapter.status === 'reviewing') {
+      const allowedKeys = ['pendingArchiveData']
       const receivedKeys = Object.keys(data)
       const invalidKeys = receivedKeys.filter(k => !allowedKeys.includes(k))
       if (invalidKeys.length > 0) {
         return reply.status(400).send({
           success: false,
-          error: `reviewing 状态不允许修改以下字段：${invalidKeys.join(', ')}`
+          error: `reviewing 状态仅允许更新 pendingArchiveData，不允许修改其他字段：${invalidKeys.join(', ')}`
         })
       }
+    } else {
+      return reply.status(400).send({
+        success: false,
+        error: `当前状态 ${chapter.status} 不允许编辑`
+      })
     }
 
     const updated = await app.prisma.chapter.update({ where: { id: chapterId }, data })

@@ -13,10 +13,9 @@ export function createGenerateProcessor(app: FastifyInstance) {
   return async (job: any) => {
     const {
       draftIds, chapterId, storyId, compiled, temperatures, maxTokens,
-      chapterTitle, chapterOutline, preLockStatus
+      chapterTitle, chapterOutline
     } = job.data
-    //                                  ↑ 新增:抢锁前章节状态,决定 status 恢复目标
-    app.log.info(`[Generate] Processing ${draftIds.length} drafts for chapter ${chapterId} (preLockStatus=${preLockStatus ?? 'draft'})`)
+    app.log.info(`[Generate] Processing ${draftIds.length} drafts for chapter ${chapterId}`)
 
     const prisma = app.prisma
     let successCount = 0
@@ -89,21 +88,8 @@ export function createGenerateProcessor(app: FastifyInstance) {
       }
     }
 
-    // 恢复 chapter.status: 看 chapter 当前状态, 不无脑覆盖。
-    //   抢锁前 = draft  → 本次任务把 chapter 推到 'generated' (前提是 chapter 还在 generating)
-    //   抢锁前 = generated/selected → 仅当 chapter 还在 generating 时不写 (selected 是用户主动选的, 不要覆盖)
-    // 用户在 worker 跑到一半时 select, select route 已把 chapter.status 翻成 'selected',
-    // 这里 updateMany where status='generating' count=0, 不动 chapter.status — select 结果保留。
-    // 兜底:preLockStatus 缺失 (老 queue 残留 job) 按 'draft' 处理, 行为同旧版本。
-    const effectivePreLock = preLockStatus ?? 'draft'
-    const targetStatus = effectivePreLock === 'draft' ? 'generated' : effectivePreLock
-    const statusRestore = await prisma.chapter.updateMany({
-      where: { id: chapterId, status: 'generating' },
-      data: { status: targetStatus }
-    })
-    const restored = statusRestore.count > 0
-
-    app.log.info(`[Generate] Done for chapter ${chapterId}: ${successCount} success, ${failCount} failed, restored=${restored} target=${targetStatus}`)
+    // v2: worker 不再写 chapter.status, 候选生成与章节状态正交
+    app.log.info(`[Generate] Done for chapter ${chapterId}: ${successCount} success, ${failCount} failed`)
 
     return { successCount, failCount, total: draftIds.length }
   }

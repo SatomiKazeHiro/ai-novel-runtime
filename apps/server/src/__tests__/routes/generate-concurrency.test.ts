@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createMockApp, callHandler, createMockPrisma } from '../setup.js'
 
-describe('generate route — concurrency protection (Q#10)', () => {
+describe('generate route — v2 concurrency: no chapter lock', () => {
   let mockPrisma: any
   let routes: Record<string, any>
 
@@ -36,10 +36,10 @@ describe('generate route — concurrency protection (Q#10)', () => {
     routes = built.routes
   })
 
-  it('returns 409 when status lock fails (chapter not in draft status)', async () => {
-    // findUnique reads the chapter as 'draft' (stale view), but a concurrent
-    // request has already flipped it to 'generating' between the read and the
-    // updateMany — the atomic lock must reject this submission with 409.
+  it('concurrent requests both produce draft batches (no 409 lock)', async () => {
+    // v2: 没有 updateMany 章节级锁, 双击并发两次入队 → 产生 2 批 draft。
+    // 旧 Q#10 测试的 "lock 失败 → 409" 路径已不存在 (因为 chapter.status 不再被翻转,
+    // 没有"被另一方先翻过去"的中间态)。这个测试证明并发入队无副作用。
     mockPrisma.chapter.findUnique.mockResolvedValue({
       id: 'c1',
       storyId: 's1',
@@ -54,45 +54,10 @@ describe('generate route — concurrency protection (Q#10)', () => {
       isSideStory: false,
       story: { id: 's1', title: 'Story', description: '' }
     })
-    // The atomic updateMany reports 0 rows flipped — the precondition `status='draft'` failed.
-    mockPrisma.chapter.updateMany.mockResolvedValue({ count: 0 })
-
-    const result = await callHandler(
-      routes,
-      'POST',
-      '/api/chapters/:chapterId/generate',
-      {},
-      { chapterId: 'c1' }
-    )
-
-    expect(result.status).toBe(409)
-    expect(result.body).toEqual(
-      expect.objectContaining({ success: false })
-    )
-    // No drafts created — the second concurrent submission must be rejected before any side effects.
-    expect(mockPrisma.draft.create).not.toHaveBeenCalled()
-  })
-
-  it('proceeds when lock succeeds (count=1)', async () => {
-    mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'c1',
-      storyId: 's1',
-      status: 'draft',
-      content: '',
-      outline: 'outline',
-      title: 'Title',
-      sceneLocation: '',
-      sceneMood: '',
-      sceneGoal: '',
-      number: 1,
-      isSideStory: false,
-      story: { id: 's1', title: 'Story', description: '' }
-    })
-    mockPrisma.chapter.updateMany.mockResolvedValue({ count: 1 })
     mockPrisma.draft.count.mockResolvedValue(0)
     mockPrisma.draft.create.mockResolvedValue({ id: 'd1' })
 
-    const result = await callHandler(
+    const result1 = await callHandler(
       routes,
       'POST',
       '/api/chapters/:chapterId/generate',
@@ -100,6 +65,54 @@ describe('generate route — concurrency protection (Q#10)', () => {
       { chapterId: 'c1' }
     )
 
-    expect(result.status).not.toBe(409)
+    const result2 = await callHandler(
+      routes,
+      'POST',
+      '/api/chapters/:chapterId/generate',
+      {},
+      { chapterId: 'c1' }
+    )
+
+    // v2 没有 409 路径;两次都不该被拒
+    expect(result1.status).not.toBe(409)
+    expect(result2.status).not.toBe(409)
+    // 两次都创建 draft
+    expect(mockPrisma.draft.create).toHaveBeenCalled()
+    expect(mockPrisma.draft.create.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('does not write to chapter.status during generation', async () => {
+    // v2 invariant: generate route 仅写 chapter.compiledPrompt, 不翻 status。
+    // 即便并发多次请求, chapter.status 字段也不应在被改。
+    mockPrisma.chapter.findUnique.mockResolvedValue({
+      id: 'c1',
+      storyId: 's1',
+      status: 'draft',
+      content: '',
+      outline: 'outline',
+      title: 'Title',
+      sceneLocation: '',
+      sceneMood: '',
+      sceneGoal: '',
+      number: 1,
+      isSideStory: false,
+      story: { id: 's1', title: 'Story', description: '' }
+    })
+    mockPrisma.draft.count.mockResolvedValue(0)
+    mockPrisma.draft.create.mockResolvedValue({ id: 'd1' })
+
+    await callHandler(
+      routes,
+      'POST',
+      '/api/chapters/:chapterId/generate',
+      {},
+      { chapterId: 'c1' }
+    )
+
+    // chapter.update 只应被调一次 (写 compiledPrompt), 且 data 中不含 status
+    const chapterUpdates = mockPrisma.chapter.update.mock.calls
+    for (const call of chapterUpdates) {
+      expect(call[0].data.status).toBeUndefined()
+    }
   })
 })

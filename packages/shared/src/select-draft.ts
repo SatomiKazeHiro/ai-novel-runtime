@@ -5,7 +5,8 @@ import { z } from 'zod'
  * chapters.ts:505-507 — body 必须有 draftId(选哪个候选)。
  */
 export const SelectDraftRequestSchema = z.object({
-  draftId: z.string().trim().min(1)
+  draftId: z.string().trim().min(1),
+  overrideContent: z.boolean().default(true)
 })
 
 export type SelectDraftRequest = z.infer<typeof SelectDraftRequestSchema>

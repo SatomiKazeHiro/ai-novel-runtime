@@ -1,5 +1,4 @@
 import type { FastifyInstance } from 'fastify'
-import { ChapterStatus } from '@prisma/client'
 import { generateQueue } from '../queue/index.js'
 import { getActivePlotArcs } from '../services/plot-extractor.js'
 import { PromptPipeline } from '@novel-runtime/prompt-runtime'
@@ -143,40 +142,17 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     // 但前端总是会传 — 现在用 chapter.storyId 兜底,反而更稳。
     const storyId = body.storyId ?? chapter.storyId
 
-    // 允许 draft / generated / selected 三态生成候选
-    // - draft: 首次生成
-    // - generated: 已有候选不满意,再生成新的(追加)
-    // - selected: 已选了一个,想多看几个对比(追加,Chapter.content 不动)
-    // (Q#10 当时拒绝 generated 是因为"删旧+重建"无原子性,本改造改为纯加法,
-    // 旧候选全部保留,不存在脏窗口问题)
-    const GENERATE_ALLOWED_STATUSES = ['draft', 'generated', 'selected'] as const
-    if (!GENERATE_ALLOWED_STATUSES.includes(chapter.status as any)) {
+    // v2: archived 章节不允许再生成 (UI 也隐藏按钮,这里兜底)
+    if (chapter.status === 'archived') {
       return reply.status(400).send({
         success: false,
-        error: `章节当前状态为 ${chapter.status}，只允许 draft / generated / selected 状态生成候选`
+        error: '已归档章节不能生成新草稿'
       })
     }
 
-    // 状态机独占锁：原子性 updateMany（防止双击并发产生 2 批 draft）
-    const lockResult = await prisma.chapter.updateMany({
-      where: {
-        id: chapterId,
-        status: { in: [...GENERATE_ALLOWED_STATUSES] as ChapterStatus[] }
-      },
-      data: { status: 'generating' }
-    })
-    if (lockResult.count === 0) {
-      return reply.status(409).send({
-        success: false,
-        error: '章节正在生成中或状态不允许，请刷新后重试'
-      })
-    }
-    // 后续代码已假设 chapter.status === 'generating'，无需重新读取
-
-    // 抢锁前的 chapter.status,worker 完成后用其恢复 chapter.status
-    // (而不是写死 'generated')。selected 状态重生成后保持 selected,这是
-    // 纯加法语义的关键:Chapter.content / 已选 draft 标记都不动。
-    const preLockStatus = chapter.status
+    // 无锁: 候选生成与章节状态正交; worker 用 Draft.status 判断是否跳过
+    // 双击并发会产生 2 批 draft — Draft 表的 (id_chapterId) 唯一索引允许同 chapter 多 draft,
+    // 用户最终看到候选数翻倍,无脏状态。
 
     const story = chapter.story
 
@@ -278,8 +254,7 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
       temperatures: generatingDrafts.map((_, i) => temperatures[i] ?? (0.6 + i * 0.15)),
       maxTokens,
       chapterTitle: chapter.title,
-      chapterOutline: chapter.outline,
-      preLockStatus   // 透传给 worker,决定 status 恢复目标
+      chapterOutline: chapter.outline
     })
 
     app.log.info(`[Generate] Queued ${generatingDrafts.length} drafts for chapter ${chapterId}`)
@@ -297,46 +272,34 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     const chapter = await getOrThrowChapter(prisma, chapterId, reply)
     if (chapter === null) return
 
-    // 允许 generated / scored / selected / generating 四态选择候选
-    // - generated / scored: 首次/评分后选择
-    // - selected: 已选了一个,看到新生成的更好的候选想切换
-    // - generating: 用户在 worker 跑的时候看到喜欢的就立即选;
-    //   配合 generate-processor 的"rejected draft 跳过 + chapter.status 不覆盖"
-    //   兜底,select 不会因为后续 worker 完成而被破坏
-    // 切换路径下,UI 的 handleAdoptDraft 已有"确认覆盖"对话框兜底
-    if (chapter.status !== 'generated' &&
-        chapter.status !== 'scored' &&
-        chapter.status !== 'selected' &&
-        chapter.status !== 'generating') {
+    // v2: archived 章节不允许选候选
+    if (chapter.status === 'archived') {
       return reply.status(400).send({
         success: false,
-        error: `章节当前状态为 ${chapter.status}，只允许 generated / scored / selected / generating 状态选择候选`
+        error: '已归档章节不能选择新候选'
       })
     }
 
-    // Cross-chapter isolation: draftId must belong to current chapterId.
-    // Use the compound unique key (id_chapterId) so the lookup is atomic.
+    // Cross-chapter isolation
     const draft = await prisma.draft.findUnique({
       where: { id_chapterId: { id: body.draftId, chapterId } }
     })
     if (!draft) return reply.status(404).send({ success: false, error: 'Draft not found' })
 
-    // 状态机独占锁：原子性 updateMany（防止双击 select 产生重复 chapter update）
-    const lockResult = await prisma.chapter.updateMany({
-      where: { id: chapterId, status: { in: ['generated', 'scored', 'selected', 'generating'] } },
-      data: { status: 'selected' }
-    })
-    if (lockResult.count === 0) {
-      return reply.status(409).send({
-        success: false,
-        error: '章节正在被其他操作处理中或状态不允许，请刷新后重试'
-      })
-    }
+    // .default(true) 在 z.infer 上是 output 类型,但 parseBody 的 ZodSchema<T> 泛型在
+    // 无显式标注时窄化不到这个字段,这里显式断言 (TS narrowing quirk)。
+    const overrideContent = (body as { overrideContent?: boolean }).overrideContent !== false
 
     await prisma.$transaction(async (tx) => {
       await tx.draft.updateMany({ where: { chapterId }, data: { status: 'rejected' } })
       await tx.draft.update({ where: { id: body.draftId }, data: { status: 'selected' } })
-      await tx.chapter.update({ where: { id: chapterId }, data: { status: 'selected', content: draft.content || undefined } })
+      if (overrideContent) {
+        // v2: 仅写 content，不翻 chapter.status
+        await tx.chapter.update({
+          where: { id: chapterId },
+          data: { content: draft.content || undefined }
+        })
+      }
     })
 
     return { success: true }
