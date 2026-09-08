@@ -87,8 +87,10 @@ model Memory {
 
 ## participants
 
-- **抽取时**：`memory-stage` 从 `characterNames` 让 AI 输出每条记忆的参与者。
-- **落库后**：Memory.vue 允许手动编辑（与临时记忆 CRUD 一致）。
+- **可选**：有明确参与者的记忆才填（关系变化 / 情绪变化 / 事件通常有；纯伏笔 / 纯状态可能无），无则留空。
+- **纯文本姓名**：逗号分隔，不关联角色表——本章新增、尚未建档的角色也直接填名字（后续若要按角色关联，用名字匹配角色表，匹配不到保留纯文本）。
+- **抽取时**：`memory-stage` 让 AI 从正文识别参与者姓名（参考 `characterNames` 但不限于此）。
+- **落库后**：Memory.vue 允许手动编辑。
 
 ## originUid 累加（保留，不引入 isActive）
 
