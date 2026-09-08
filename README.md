@@ -193,12 +193,11 @@ novel-runtime/
 | 模型 | 说明 |
 |------|------|
 | `Story` | 小说工程 |
-| `Chapter` | 章节（含状态机、场景状态、`isSideStory` 番外标记） |
+| `Chapter` | 章节（含状态机、场景状态、`isSideStory` 番外标记；图谱存 `chapterGraph`/`cumulativeGraph` JSON 列） |
 | `Character` | 角色卡（静态属性：性格、外貌、说话风格） |
 | `CharacterBranchState` | 角色历史快照（按 `fromChapterNumber` 记录动态状态变化） |
 | `LoreItem` | 世界观条目（境界/地图/功法/势力/物品/规则） |
 | `Memory` | 记忆（global=每章优化后的状态快照/chapter=原始提取/scene/temporary） |
-| `GraphNode` / `GraphEdge` | 知识图谱节点与边（全局工作表） |
 | `TimelineEvent` | 时间线事件（按 `fromChapterNumber` 标记生命周期） |
 | `PlotArc` | 剧情弧线（全局） |
 | `Draft` | 候选（含 temperature/maxTokens/compiledPrompt/score） |

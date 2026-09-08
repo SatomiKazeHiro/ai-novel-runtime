@@ -45,7 +45,7 @@ pnpm test                 # run all tests via vitest
 pnpm --filter server test # run server tests / vitest directly
 ```
 
-> Note: there are currently no test files, but Vitest is installed and `apps/server` is configured to run it.
+> Tests live in `apps/server/src/__tests__/` (routes + services, mock Prisma) and `apps/web/src/**/__tests__/`; both run via Vitest.
 
 ### Database Commands
 
@@ -85,9 +85,9 @@ draft ──┬─→ preparing-archive ─→ reviewing ─→ archived
 2. User clicks **Generate**: backend enqueues a job creating N `Draft` candidates. Candidates run independently of chapter status — the chapter stays in `draft` while drafts progress through `Draft.status` (`generating` → `completed`/`failed`).
 3. User may **Score** a candidate; AI scores across 7 dimensions, with a rule-based fallback.
 4. User **Selects** one candidate: its content is copied into `Chapter.content`; its siblings are marked `Draft.status='rejected'`. **Chapter status stays unchanged** — selection is a Draft-layer concept. v2: the adopted draft is NOT marked `Draft.status='selected'`; "which draft is adopted" is only known by matching `Chapter.content` against `Draft.content`.
-5. User clicks **Prepare Archive**: the backend runs phase 1 + phase 2 of the archive pipeline, parks the extracted payload in `Chapter.pendingArchiveData` (TEXT, JSON) and sets status to `reviewing`. No DB writes to derived tables yet. On AI-extraction failure, status rolls back to `draft`.
-6. The `ReviewingPanel` lets the user edit memories, character states, timeline events, the chapter graph, and plot arcs. Edits are written back to `Chapter.pendingArchiveData` via `chaptersApi.savePendingArchiveData`. **Cancel = delete the chapter.**
-7. User clicks **Confirm Archive**: the persisted payload is replayed inside a `prisma.$transaction`, chapter status flips to `archived`, and phase 4 (memory optimization) runs after the transaction.
+5. User clicks **Prepare Archive**: the backend runs 4 extraction stages in parallel, parks the payload in `Chapter.pendingArchiveData` (TEXT, JSON, `version: 3`) and sets status to `reviewing`. No DB writes to derived tables or the three graph columns. Single-stage failure is recorded per-stage in the payload, not a rollback.
+6. The `ReviewingPanel` lets the user edit memories, character states, the chapter graph, the cumulative graph, and plot arcs. Edits are written back to `Chapter.pendingArchiveData` via `chaptersApi.update({ pendingArchiveData })`. **Cancel = `POST /prepare-archive/cancel`, reverts status to `draft` and clears `pendingArchiveData`.**
+7. User clicks **Confirm Archive**: the `archive` endpoint validates all stages succeeded and the cumulative graph was generated, copies graph data from `pendingArchiveData` into the `Chapter` columns, clears `pendingArchiveData`, and flips status to `archived`. (Derived-table writes + transaction wrapping are planned follow-up work, currently a gate stub.)
 
 Only `archived` chapters feed forward into the next chapter's prompt.
 
@@ -117,17 +117,17 @@ Each layer has a token budget. The budgets scale relative to the model's `contex
 
 ### Archive Pipeline (Five-Phase)
 
-Archiving is the most complex flow. It is implemented in `apps/server/src/routes/chapters.ts` and the `services/*-extractor/organizer/optimizer` modules. Phases 1–4 are split across two HTTP endpoints: `prepare-archive` runs phases 1–2 and parks the result, `archive` (confirm) runs phases 3–4 from the parked payload.
+Archiving is the most complex flow. It is implemented in `apps/server/src/routes/chapters-archive.ts` and the `services/stages/*` modules. Phases 1–4 are split across HTTP endpoints: `prepare-archive` runs phases 1–2 and parks the result, the user reviews via `ReviewingPanel.vue` (writes via `chaptersApi.update({ pendingArchiveData })`), `archive` (confirm) runs phases 3–4 from the parked payload.
 
 | Phase | File(s) | Endpoint | What happens |
 |-------|---------|----------|--------------|
-| 1. Extract | `combined-extractor.ts`, `memory-extractor.ts`, `graph-extractor.ts`, `plot-extractor.ts` | `prepare-archive` | One AI call extracts memories, raw graph entities, and plot-arc progress. No DB writes yet. |
-| 2. Organize graph | `graph-organizer.ts` | `prepare-archive` | AI merges the previous chapter's global graph snapshot with the new raw extraction, producing `mergedGraph` (cumulative global) and `chapterGraph` (this chapter only). |
-| 2.5. Human review | `ReviewingPanel.vue` (frontend) | `save-pending-archive-data` (debounced) | The full payload is written to `Chapter.pendingArchiveData` (TEXT) and the chapter enters the `reviewing` state. The user can edit memories, graph, plot arcs, etc. before committing. The endpoint is debounced from the composable; cancel = delete the chapter. |
-| 3. Transaction write | `chapters.ts` archive route | `archive` (confirm) | All DB writes run inside `prisma.$transaction` from the parked payload: `Memory`, `CharacterBranchState`, `TimelineEvent`, `PlotArc`, `GraphNode`/`GraphEdge`, `Chapter.graphSnapshot`/`graphDelta`, `Chapter.summary`, and `Chapter.status = 'archived'`. |
+| 1. Extract | `services/stages/{character,memory,plot-arc,graph-extract}-stage.ts` (并行 4 stage) | `prepare-archive` | 4 个 stage 并行 (`Promise.all`) 抽出 characterStates / memories / plotArcs / chapterGraph,各自结果落到 `pendingArchiveData.stages[name]`。单 stage 失败不影响其他 stage。reviewing 期间 `Chapter.chapterGraph / cumulativeGraph / cumulativeGraphGeneratedAt` 三列整个过程不被读写。 |
+| 2. Organize graph | (内嵌在 graph-extract stage 里读 `prevCumulativeGraph`) | `prepare-archive` | graph stage 读上一章归档的 `Chapter.cumulativeGraph` (parent 优先,主线回退) + 本章 chapterGraph,产出新的 `chapterGraph`。累计合成下个 user action 「生成累计图谱」时再走 `services/cumulative-graph.ts`。 |
+| 2.5. Human review | `ReviewingPanel.vue` (前端) | `chaptersApi.update({ pendingArchiveData })` | 用户在审查阶段编辑后点「保存调整」→ `composables/useChapterEditor.ts:savePendingArchiveData` → `PUT /api/chapters/:id` 把整份 `PendingArchiveDataV3` 写回 `Chapter.pendingArchiveData` (TEXT JSON)。累计图谱编辑后保存走同一条路(PATCH 端点已删除)。Cancel = `POST /prepare-archive/cancel`,只清 `pendingArchiveData`。 |
+| 3. Transaction write | `chapters-archive.ts` archive route | `archive` (confirm) | 把 `pendingArchiveData.stages.graph.result.chapterGraph` + `pendingArchiveData.cumulativeGraph` + `pendingArchiveData.cumulativeGraphGeneratedAt` 拷到 `Chapter` 三列;清 `pendingArchiveData`;翻 `status='archived'`。其他表(`Memory` / `CharacterBranchState` / `PlotArc` / `GraphNode`+`GraphEdge`)写入在 v3.5 阶段接入(目前是 gate stub,翻 status 后再补 transaction)。`TimelineEvent` 在 v3 删除,不再写。 |
 | 4. Optimize memory | `memory-optimizer.ts` | `archive` (post-commit) | AI fuses previous global memory with new chapter memory into the next global snapshot. Runs after the transaction; failure is logged but does not roll back the archive. |
 
-This design guarantees that phases 1 and 2 can fail without writing data, phase 2.5 can be re-entered as many times as the user wants without losing work, and phase 3 failures roll back all writes. Memory writes are split into `prepareMemoryWrites` (pure data preparation) and `commitMemoryWrites` (transactional insert) so the archive route controls the transaction boundary.
+**数据流硬规则(v3)**:reviewing 期间所有图谱数据只活 `pendingArchiveData` JSON;`Chapter` 三列(`chapterGraph` / `cumulativeGraph` / `cumulativeGraphGeneratedAt`)在 `archive` confirm 之前一直为 null。`GraphView.vue` 只查 `archived` 章节,读三列,读到的是用户终稿。详见 `docs/superpowers/specs/2026-07-29-graph-cleanup-design.md` + `docs/superpowers/specs/2026-07-29-graph-v2-deadcode-cleanup-design.md`。
 
 ### Queue System
 
@@ -148,18 +148,19 @@ Prompt assembly retrieves relevant memories via semantic similarity (`memory-eng
 
 ### Knowledge Graph
 
-Graph data lives in `GraphNode` and `GraphEdge` tables. Each archived chapter also stores:
+v3: graph data lives entirely on the `Chapter` row as JSON columns (the `GraphNode`/`GraphEdge` tables were dropped in migration `20260729000000_drop_graph_node_edge`):
 
-- `graphSnapshot` — the cumulative global graph after this chapter (`mergedGraph`)
-- `graphDelta` — the chapter-only graph (`chapterGraph`)
+- `chapterGraph` — the chapter-only graph extracted at prepare-archive
+- `cumulativeGraph` — the cumulative global graph up to this chapter (user-triggered merge via `services/cumulative-graph.ts`)
+- `cumulativeGraphGeneratedAt` — when the user first generated the cumulative graph; `null` = not generated
 
-The frontend visualizes this with Cytoscape.
+During `reviewing` these three columns stay `null`; the working copies live in `pendingArchiveData`. Only `archive` confirm writes them. `GraphView.vue` reads the columns of `archived` chapters via `cumulativeGraphApi` and visualizes with Cytoscape.
 
 ### Main vs Side Stories
 
 - Main-line chapters form a strictly linear sequence (`1, 2, 3, ...`).
 - Side stories (`isSideStory = true`) are decimal chapters (`1.01`, `1.02`) and can branch from any archived chapter.
-- Deleting an archived chapter cascades: it removes derived data (memories, timeline events, character branch states) that share the same `fromChapterNumber` and rebuilds the graph from the previous chapter snapshot.
+- Deleting an archived chapter cascades: it removes derived data (memories, timeline events, character branch states, plot arcs, prompt logs) that share the same `fromChapterNumber`. v3: no graph-table rebuild — the cumulative graph is per-chapter JSON (`Chapter.cumulativeGraph`), so earlier chapters keep their own snapshots.
 
 ### Timeline Position Encoding
 
@@ -190,7 +191,7 @@ Both `loadRuntimeBase()` and `loadWorkerTask()` resolve in this order:
 
 ### JSON Fields
 
-Prisma JSON fields (`personality`, `metadata`, `params`, `settings`, `graphSnapshot`, `graphDelta`, `score`, etc.) are manually `JSON.stringify`/`JSON.parse` in route handlers. The frontend often has to `JSON.parse` them after receiving.
+Prisma JSON fields (`personality`, `metadata`, `params`, `settings`, `pendingArchiveData`, `chapterGraph`, `cumulativeGraph`, `score`, etc.) are manually `JSON.stringify`/`JSON.parse` in route handlers. The frontend often has to `JSON.parse` them after receiving.
 
 ### Response Shape
 
@@ -216,12 +217,13 @@ Import each Naive UI component explicitly. Table action columns are rendered wit
 
 - `apps/server/src/server.ts` — entry point: env, queue worker, HTTP listener
 - `apps/server/src/app.ts` — Fastify app assembly
-- `apps/server/src/routes/chapters-*.ts` — chapter API split by concern: `chapters-crud` (create/list/update/delete), `chapters-tree` (chapter-tree endpoint), `chapters-generate` (preview / generate drafts / select), `chapters-archive` (prepare-archive / save-pending-archive-data / archive), and `chapters.ts` (umbrella register + misc). New chapter endpoints should follow this family pattern, not pile into `chapters.ts`.
+- `apps/server/src/routes/chapters-*.ts` — chapter API split by concern: `chapters-crud` (create/list/update/delete), `chapters-tree` (chapter-tree endpoint), `chapters-generate` (preview / generate drafts / select), `chapters-archive` (prepare-archive / prepare-archive/cancel / cumulative-graph get+build / archive), and `chapters.ts` (umbrella register + misc). New chapter endpoints should follow this family pattern, not pile into `chapters.ts`.
 - `apps/server/src/services/ai-call-logger.ts` — mandatory wrapper for all AI calls
 - `apps/server/src/services/generate-processor.ts` — queue worker that generates drafts serially
-- `apps/server/src/services/combined-extractor.ts` — archive phase 1: memory + graph + plot extraction
-- `apps/server/src/services/graph-organizer.ts` — archive phase 2: merge global graph with new extraction
-- `apps/server/src/services/graph-snapshot.ts` — `defaultTokenEstimator` + snapshot/delta helpers used by combined-extractor / graph-organizer; estimation vs validation boundary is documented at the top
+- `apps/server/src/services/stages/` — v3 archive extraction stages (`character-stage` / `memory-stage` / `plot-arc-stage` / `graph-extract-stage`), run in parallel by `prepare-archive`
+- `apps/server/src/services/cumulative-graph.ts` — user-triggered cumulative graph merge (`cumulative-graph/build` endpoint)
+- `apps/server/src/services/combined-extractor.ts` / `graph-organizer.ts` — v2 legacy extraction path; not called by the v3 archive route (only tests import them), pending removal per `docs/superpowers/specs/2026-07-29-graph-v2-deadcode-cleanup-design.md`
+- `apps/server/src/services/graph-snapshot.ts` — `defaultTokenEstimator` + snapshot/delta helpers; estimation vs validation boundary is documented at the top
 - `apps/server/src/services/memory-optimizer.ts` — archive phase 4: global memory fusion
 - `apps/server/src/services/memory-compressor.ts` / `memory-organizer.ts` — memory shaping helpers invoked before/after optimizer
 - `packages/prompt-runtime/src/index.ts` — prompt assembly pipeline
@@ -246,8 +248,8 @@ Import each Naive UI component explicitly. Table action columns are rendered wit
 
 - 接到非平凡的代码任务（新增功能、跨模块改动、bug 修复），AI 应先调 superpowers 的
   `brainstorming` skill 做意图探索，再视情况调 `writing-plans` 出方案。
-- 写实现代码前，对项目已有测试覆盖的路径调 `test-driven-development`；项目目前**无测试文件**
-  （见 `KNOWN-ISSUES.md`），新代码落 TDD 之前需先在 `apps/server` 补最小测试脚手架（Vitest 已就绪）。
+- 写实现代码前，对项目已有测试覆盖的路径调 `test-driven-development`；server 与 web 均已有
+  Vitest 测试（`apps/server/src/__tests__/`、`apps/web/src/**/__tests__/`），改动相关路径时先跑对应测试。
 - 完成任务、准备声称"完成"前，必须先调 `verification-before-completion`，跑过 `pnpm typecheck`
   与 `pnpm lint` 再下结论。
 - 用户可以直接说"这次跳过 brainstorming / 跳过 TDD"——这条规则是兜底，不是镣铐。

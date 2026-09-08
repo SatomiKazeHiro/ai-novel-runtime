@@ -82,7 +82,7 @@
 | 开发 | SQLite（零配置启动，`file:./dev.db`） |
 | 生产 | PostgreSQL（切换仅需改 `.env` + `prisma/schema.prisma` 的 `provider`） |
 
-主要模型：`Story`、`Chapter`、`Draft`、`Character`、`CharacterBranchState`、`LoreItem`、`Memory`、`GraphNode`、`GraphEdge`、`TimelineEvent`、`PlotArc`、`RuntimeProfile`、`WorkerTask`、`AiProviderConfig`、`PromptLog`、`Score`。
+主要模型：`Story`、`Chapter`、`Draft`、`Character`、`CharacterBranchState`、`LoreItem`、`Memory`、`TimelineEvent`、`PlotArc`、`RuntimeProfile`、`WorkerTask`、`AiProviderConfig`、`PromptLog`、`Score`。（`GraphNode`/`GraphEdge` 已在 v3 删除，图谱数据存 `Chapter.chapterGraph`/`cumulativeGraph` JSON 列。）
 
 ### 2.4 共享包
 
@@ -222,13 +222,15 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 | `runtime-loader.ts` | 加载 `RuntimeBase` 和 `WorkerTask`（按 Story → 全局默认 → 硬编码回退） |
 | `runtime-profile-init.ts` | 启动时扫描 `seeds/profiles/*.yaml` 导入 `runtimeProfile`(YAML 解析失败立即报错) |
 | `generate-processor.ts` | 队列处理器：循环为每个 draft 调用 AI，更新 `draft.content` 和 `Draft.status`。**v2**：只读写 `Draft.status`（跳过 `rejected`/`completed`/`failed` 三种用户决定/已完成态；不再有 `selected` 状态），**不读不写 `Chapter.status`**——候选生成与章节状态正交 |
-| `combined-extractor.ts` | **归档核心**：一次 AI 调用同时提取记忆 + 图谱 + 剧情弧线 |
-| `graph-extractor.ts` | 从章节提取图谱节点/边（`importance >= 6`），保存到 `graphNode`/`graphEdge` |
-| `graph-organizer.ts` | AI 合并上一章全局图谱 + 本章提取 → 生成新的 `mergedGraph` + `chapterGraph` |
-| `graph-snapshot.ts` | 将 `mergedGraph` 保存为 `chapter.graphSnapshot`，`chapterGraph` 保存为 `graphDelta` |
+| `stages/` (character/memory/plot-arc/graph-extract) | **v3 归档核心**：4 个 stage 并行提取角色状态/记忆/弧线/本章图谱，结果落 `pendingArchiveData.stages[name]` |
+| `cumulative-graph.ts` | 用户主动触发累计图谱合并（relation 映射归一 + codeMerge 五元组去重），写 `pendingArchiveData.cumulativeGraph` |
+| `combined-extractor.ts` | v2 遗留：一次 AI 调用合并提取（v3 路由不再调用，仅测试引用，待删） |
+| `graph-extractor.ts` | v2 遗留：图谱节点/边提取（GraphNode/GraphEdge 表已删） |
+| `graph-organizer.ts` | v2 遗留：AI 合并上一章全局图谱 + 本章提取（v3 路由不再调用） |
+| `graph-snapshot.ts` | `expandNeighborhood` 邻域展开 + token 估算辅助 |
 | `memory-extractor.ts` | 提取结构化记忆（主线/支线/情绪/伏笔/关系/状态/场景/摘要），Jaccard 去重后存入 `memory` 表 |
 | `memory-organizer.ts` | 归档后 AI 整理记忆：merge/update/delete/keep，有 Jaccard > 0.5 保守校验 |
-| `memory-optimizer.ts` | **阶段 4 全局记忆融合**：`archive` 路由事务提交后调用,把上一章 global 记忆 + 本章 chapter 记忆喂 AI 生成下一章 global 快照;失败不阻塞归档。`chapters-archive.ts:3` import `optimizeMemories` |
+| `memory-optimizer.ts` | 全局记忆融合（v2 阶段 4）：把上一章 global 记忆 + 本章 chapter 记忆喂 AI 生成下一章 global 快照。**v3 当前无调用点**（archive gate stub 尚未接回），函数保留待重新接入 |
 | `memory-compressor.ts` | 每 5 章自动压缩 chapter 记忆为 global 摘要；AI 压缩失败则降级为简单合并 |
 | `plot-extractor.ts` | 提取/更新剧情弧线（`plotArc`），维护 stages/unresolved；`getActivePlotArcs()` 供 Prompt 注入 |
 
@@ -293,7 +295,7 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 
 ### 5.3 JSON 字段处理
 
-Prisma 的 JSON 字段（`personality`、`metadata`、`params`、`settings`、`graphSnapshot`、`graphDelta`、`score` 等）在路由层**手动 `JSON.stringify` / `JSON.parse`**。前端拿到后也常需 `JSON.parse`。
+Prisma 的 JSON 字段（`personality`、`metadata`、`params`、`settings`、`pendingArchiveData`、`chapterGraph`、`cumulativeGraph`、`score` 等）在路由层**手动 `JSON.stringify` / `JSON.parse`**。前端拿到后也常需 `JSON.parse`。
 
 ### 5.4 AI 调用规范
 
@@ -315,24 +317,19 @@ Prisma 的 JSON 字段（`personality`、`metadata`、`params`、`settings`、`g
 3. 全局默认 Profile
 4. 硬编码兜底
 
-### 5.6 归档事务
+### 5.6 归档流程（v3）
 
-归档流程采用**四阶段 + 真实事务**策略：
+归档流程 = 并行提取 + 人工审查 + 落列：
 
-1. **提取阶段**（`extractAll`）：纯 AI 调用，不写数据库
-2. **整理阶段**（`organizeGraph`）：纯 AI 调用，整理知识图谱
-3. **事务写入阶段**（`prisma.$transaction`）：所有数据库操作一次性提交
-   - Memory、CharacterBranchState、TimelineEvent
-   - Chapter.summary
-   - PlotArc
-   - GraphNode/GraphEdge、Chapter.graphSnapshot/graphDelta
-   - Chapter.status = 'archived'
-4. **优化阶段**（`optimizeMemories`）：生成全局记忆，失败不阻塞归档
+1. **提取阶段**（`prepare-archive`）：4 个 stage（character/memory/plot-arc/graph-extract）并行 AI 调用，结果写 `Chapter.pendingArchiveData`（version=3），状态变 `reviewing`。不写衍生表、不写图谱列
+2. **累计图谱**（`cumulative-graph/build`）：用户主动触发，合并结果写 `pendingArchiveData.cumulativeGraph`
+3. **人工审查**（`ReviewingPanel.vue`）：编辑经 `chaptersApi.update({ pendingArchiveData })` 写回；cancel 回退 `draft` 并清 `pendingArchiveData`
+4. **落列阶段**（`archive` confirm）：校验全 stage success + 累计图谱已生成 → 图谱数据从 `pendingArchiveData` 拷到 `Chapter.chapterGraph`/`cumulativeGraph`/`cumulativeGraphGeneratedAt` 三列 → 清 `pendingArchiveData` → status=`archived`
 
 **保证**：
-- 阶段 1/2 失败 → 没有任何数据写入
-- 阶段 3 失败 → 事务回滚，数据零变更
-- 阶段 4 失败 → 归档已成功，仅全局记忆优化未执行
+- reviewing 期间所有图谱数据只活在 `pendingArchiveData`，三列保持 null
+- 单 stage 失败不影响其他 stage，failed 状态落 payload 可按 stage 重试
+- 衍生表（Memory/CharacterBranchState/PlotArc）事务写入与 `optimizeMemories` 重接为后续工作（当前 archive 是 gate stub）
 
 ### 5.7 Naive UI 组件导入
 

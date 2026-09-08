@@ -267,21 +267,15 @@ SPEC 修正说明:Q9(zod 接入)在 spec「背景」节中误标 OPEN,实施时�
 
 ## [P2 follow-up] GraphView.vue 重写消费 chapterGraph/cumulativeGraph
 
-**Status:** 未开始
+**Status:** [RESOLVED 2026-07-29, v3/prepare-archive-stages 分支]
 
 **Context:** v3 重命名 `graphDelta/graphSnapshot` → `chapterGraph/cumulativeGraph`（commit 1）。
-本次不重写 GraphView.vue（`apps/web/src/views/Graph.vue`），仍读 `GraphNode` / `GraphEdge` 工作表，
-旧工作表继续写入。
+当时 GraphView.vue 仍读 `GraphNode` / `GraphEdge` 工作表。
 
-**Why deferred:** GraphView.vue 涉及 Cytoscape 重构 + 工作表数据迁移，独立 scope。
-本次 6-commit 重点在 stage 拆分，GraphView 是消费侧。
-
-**Next step:** 单独 commit 删除 `GraphNode` / `GraphEdge` 表 + 重写 GraphView.vue 消费
-`Chapter.cumulativeGraph`（主视图）+ `Chapter.chapterGraph`（本章详情）。
-
-**追踪:** 此项完成后 `prisma/schema.prisma` 删除 `model GraphNode` / `model GraphEdge`，
-并删 `apps/server/src/services/graph-snapshot.ts` 的 `saveGraphSnapshotAndDelta` /
-`rebuildGraphFromSnapshot`。
+**Resolution:**
+- `GraphView.vue` 已改读 v3 `cumulativeGraphApi`（commit adc7df9），只查 `archived` 章节的三列
+- `GraphNode` / `GraphEdge` 表已删（migration `20260729000000_drop_graph_node_edge`），`routes/graph.ts` / `api/graph.ts` 一并删除
+- `graph-snapshot.ts` 的 `saveGraphSnapshotAndDelta` / `rebuildGraphFromSnapshot` 已删，仅剩 `expandNeighborhood`
 
 ---
 

@@ -20,20 +20,26 @@ draft ──┬─→ reviewing ─→ archived
 - **reviewing** 是人工审查环节（见 `Chapter.pendingArchiveData`）：AI 提取完记忆/图谱/弧线后不直接写库，停在 `reviewing` 状态等用户在 `ReviewingPanel.vue` 编辑后再 commit
 - 只有 `archived` 章节会喂给下一章的 prompt
 
-**归档五阶段**（5-phase pipeline，跨 2 个 HTTP 端点）：
+**归档流水线**（v3 — 跨多个 HTTP 端点，实现在 `routes/chapters-archive.ts`）：
 
 ```
 [prepare-archive]                       [archive 确认]
-阶段 1: extractAll        ─┐
-   合并提取(记忆+图谱+弧线) │
-阶段 2: organizeGraph     ─┤  ← 全部纯 AI 调用，无 DB 写
-   全局图谱整理              │
-   写入 Chapter.pendingArchiveData
-   状态变 reviewing          ┘
-                            ┌─ 阶段 3: 事务写入(Memory/GraphNode/PlotArc/...)
-                            │   状态变 archived
-                            └─ 阶段 4: optimizeMemories (失败不阻塞)
+4 stage 并行 (Promise.all):  ─┐
+  character / memory /        │ ← 纯 AI 调用, 结果各自落
+  plot-arc / graph-extract    │   pendingArchiveData.stages[name]
+  写入 Chapter.pendingArchiveData (version: 3)
+  状态变 reviewing            ┘
+[cumulative-graph/build]  用户主动点「生成累计图谱」→
+  services/cumulative-graph.ts 合并 → 写 pendingArchiveData.cumulativeGraph
+                            ┌─ 校验: 全 stage success + 累计图谱已生成
+                            │   把图谱数据从 pendingArchiveData 拷到
+                            │   Chapter 三列(chapterGraph/cumulativeGraph/
+                            │   cumulativeGraphGeneratedAt), 清 pendingArchiveData
+                            └─  状态变 archived (衍生表事务写入与
+                                optimizeMemories 重接为后续工作)
 ```
+
+**硬规则**: reviewing 期间图谱数据只活在 `pendingArchiveData` JSON, Chapter 三列全程不读写; archive confirm 才落列。
 
 **核心模块地图**（按代码量降序）：
 
@@ -42,10 +48,10 @@ draft ──┬─→ reviewing ─→ archived
 - 共享 `packages/*`：6 个包
 
 **最关键代码位置**（按"被读次数"算）：
-- `apps/server/src/routes/chapters.ts` (809 行) — 归档流水线的事务控制中心
-- `apps/web/src/views/Chapters.vue` (1093 行) — 编辑/审查/归档的前端调度
-- `apps/web/src/views/ReviewingPanel.vue` (498 行) — 人工审查 UI
-- `apps/server/src/services/combined-extractor.ts` (262 行) — 一次 AI 调用同时提取三件事
+- `apps/server/src/routes/chapters-archive.ts` — 归档流水线（prepare-archive / cumulative-graph / archive）
+- `apps/web/src/views/Chapters.vue` — 编辑/审查/归档的前端调度
+- `apps/web/src/views/ReviewingPanel.vue` — 人工审查 UI
+- `apps/server/src/services/stages/` — 4 个并行提取 stage
 
 ---
 
@@ -180,19 +186,19 @@ if (!current || SKIP_STATUSES.includes(current.status)) continue
 
 **v2 关键变化**：worker 循环结束后**不再写 `chapter.status`**（旧版本会 `updateMany where status='generating'` 恢复 chapter 状态）。候选生成与章节状态彻底解耦，worker 只负责 Draft 层。
 
-### 5-phase 归档流水线（详细）
+### 归档流水线（详细, v3）
 
 | 阶段 | 文件 | 端点 | AI 调用 | 失败语义 |
 |------|------|------|---------|---------|
-| 1 提取 | `combined-extractor.ts:extractAll` | `prepare-archive` | 1 次（合并提取，temperature 0.3） | **v2**：catch → 回退 `draft` + 500 |
-| 2 整理 | `graph-organizer.ts:organizeGraph` | `prepare-archive` | 1 次（temperature 0.2，maxTokens 8192） | **v2**：catch → 回退 `draft` + 500 |
-| 2.5 人工审查 | `ReviewingPanel.vue` | `save-pending-archive-data` (用户点"保存调整") | 0 次 | 用户编辑失败可重试 |
-| 3 事务 | `routes/chapters-archive.ts:archive` | `archive` | 0 次 | 事务回滚，章节维持 `reviewing` |
-| 4 优化 | `memory-optimizer.ts:optimizeMemories` | `archive`（事务后） | 1 次（temperature 0.3） | **不阻塞**归档（已 try/catch） |
+| 1 提取 | `services/stages/{character,memory,plot-arc,graph-extract}-stage.ts` | `prepare-archive` | 4 次并行（每 stage 各 1 次） | **v3**：单 stage 失败落 `stages[name].status='failed'`，不影响其他 stage，章节仍进 `reviewing` |
+| 2 累计图谱 | `services/cumulative-graph.ts:buildCumulativeGraph` | `cumulative-graph/build`（用户点"生成累计图谱"） | 1 次 | 失败返回错误，可重试；成功写 `pendingArchiveData.cumulativeGraph` |
+| 2.5 人工审查 | `ReviewingPanel.vue` | `chaptersApi.update({ pendingArchiveData })`（用户点"保存调整"） | 0 次 | 用户编辑失败可重试 |
+| 3 落列 | `routes/chapters-archive.ts:archive` | `archive` | 0 次 | 校验失败返回 400，章节维持 `reviewing`；衍生表事务写入为后续工作（当前 gate stub） |
+| 4 优化 | `memory-optimizer.ts:optimizeMemories` | **当前无调用点** | — | v2 遗留：v3 gate stub 尚未接回，函数保留待后续重新接入 |
 
 > **v3 归档前置条件**: 累计图谱必须已生成（`Chapter.cumulativeGraphGeneratedAt != null`）。否则后端返回 400 `cumulative-graph-not-generated`，前端 ReviewingPanel 也会预先拦截。
 
-**阶段 3 事务范围**：`commitMemoryWrites` + summary 更新 + `commitPlotArcWrites` + `saveGraphSnapshotAndDelta` + `chapter.status = 'archived'` + `pendingArchiveData = null`。**全部成功或全部回滚**。
+**阶段 3 当前实现（gate stub）**：单次 `chapter.update` 把 `pendingArchiveData` 里的图谱数据拷到 Chapter 三列 + `status = 'archived'` + `pendingArchiveData = null`。衍生表（Memory / CharacterBranchState / PlotArc）的事务写入尚未接入。
 
 **阶段 2.5 用户操作**：
 - "保存调整" → `chaptersApi.update({ pendingArchiveData: JSON.stringify(data) })`
@@ -274,7 +280,7 @@ POST /api/chapters/:id/archive
 `shared/jaccardSimilarity` 基于 `js-tiktoken` 的 `cl100k_base` token Set 计算。**0.82** 是去重阈值（在 `memory-extractor.ts` 的某处 hardcode，但代码里我没找到具体数字——KNOW-ISSUES 说有，实际可能散落在 prompt 文案里）。
 
 ### 3. JSON 字段手写序列化
-Prisma schema 把 `personality` / `metadata` / `params` / `settings` / `graphSnapshot` / `graphDelta` / `score` / `pendingArchiveData` / `compiledPrompt` 全部声明为 `String`。路由层手写 `JSON.stringify` / `JSON.parse`（`safeJsonParse` 存在但**只有 3 处用**：`combined-extractor.ts:220` / `chapters.ts:246` / `chapters.ts:646`）。**前后端契约不一致**：`prepare-archive` 路由返回的对象是 `data: pending`（已解析），前端 `useChapterEditor.ts:150` 又 `JSON.parse(res.data.data)` → 抛错 → 吞掉 → ReviewingPanel 进不去。
+Prisma schema 把 `personality` / `metadata` / `params` / `settings` / `chapterGraph` / `cumulativeGraph` / `score` / `pendingArchiveData` / `compiledPrompt` 全部声明为 `String`。路由层手写 `JSON.stringify` / `JSON.parse`（`safeJsonParse` 存在但**只有 3 处用**：`combined-extractor.ts:220` / `chapters.ts:246` / `chapters.ts:646`）。**前后端契约不一致**：`prepare-archive` 路由返回的对象是 `data: pending`（已解析），前端 `useChapterEditor.ts:150` 又 `JSON.parse(res.data.data)` → 抛错 → 吞掉 → ReviewingPanel 进不去。
 
 ### 4. token 计数(2026-06-18 P1 收口后)
 - `@novel-runtime/ai-provider` 的 `countTokens`(`packages/ai-provider/src/token-counter.ts`)—— 基于 `cl100k_base`,**项目 token 计数唯一入口**(commit `5f0ba92` + 修复合并 `792b533`)。所有 `apps/*` + `packages/prompt-runtime` 全部采用。
@@ -310,7 +316,7 @@ AI 调用失败时（`result` 为 null）的降级内容，**是 mock 章节文�
 - `chapters.ts` 事务控制中心；旧的 `assertStatusTransition` / `VALID_STATUS_TRANSITIONS` / `preLockStatus` 补丁均已删除 —— 状态机实际靠 `updateMany where status` 原子锁 + Prisma enum 类型兜底
 - **v2**：`scored` / `generating` / `generated` / `selected` / `rejected` 等旧 chapter 态已从 `ChapterStatus` 移除；评分（score）与选择（select）现在是 Draft 层概念，不再有对应的 chapter 状态
 - 评分路由（`scores.ts`）用了"try 多次 parse + 规则 fallback"，比 extractors 健壮
-- 删除归档章节时（`chapters.ts:184-286`）有一段复杂的"重建图谱"逻辑：找上一章 `graphSnapshot` → `rebuildGraphFromSnapshot` → 兜底 `deleteMany` 全图谱。**失败只 log 不 throw**（line 249-251）—— 删除后图谱可能半残但路由返回 200
+- 删除归档章节时（`chapters-crud.ts`）级联删同 `fromChapterNumber` 的 Memory / TimelineEvent / CharacterBranchState / PlotArc / PromptLog。**v3 不再重建图谱表**：GraphNode/Edge 已 drop（migration `20260729000000_drop_graph_node_edge`），累计图谱以各章 `Chapter.cumulativeGraph` JSON 为准，删章不影响前章快照
 - 4 个 composables 都有"全局 manager"模式（`new MemoryManager()` 等），每次调用 new 一次。功能上无状态，性能上略有浪费
 - `Graph.vue` 是少数用 `as any` 的前端文件（2 处）—— 用于 type any 的 graph 节点数据
 - `ai-provider.ts` 的 POST 路由可以创建/更新 `aiProviderConfig` 含 `apiKey`——但 GET 路由**不过滤** `apiKey` 字段（见 `ISSUES.md` 安全类）

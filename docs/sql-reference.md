@@ -20,7 +20,7 @@
 | `updatedAt` | DateTime | 自动更新 |
 
 **关系**：
-- 1:N `Chapter`、`Character`、`LoreItem`、`Memory`、`GraphNode`、`GraphEdge`、`TimelineEvent`、`Draft`、`Score`、`PlotArc`、`AiProviderConfig`、`WorkerTask`
+- 1:N `Chapter`、`Character`、`LoreItem`、`Memory`、`TimelineEvent`、`Draft`、`Score`、`PlotArc`、`AiProviderConfig`、`WorkerTask`
 - N:1 `RuntimeProfile`（通过 `runtimeProfileId` 绑定，可选）
 
 ---
@@ -45,9 +45,10 @@
 | `sceneGoal` | String? | 场景目标 |
 | `runtimeProfileId` | String? FK → RuntimeProfile | 章节级写作人格覆盖 |
 | `compiledPrompt` | String? | 生成时使用的完整 Prompt（JSON：{ systemMessage, userMessage, meta }）。**注意**：生成候选时 backend 会同步写入此字段，确保前端编辑页面始终能展示当前 Prompt |
-| `graphDelta` | String? | 相对于上一章的图谱变化（JSON：{ addedNodes, updatedNodes, addedEdges, summary }） |
-| `graphSnapshot` | String? | 到当前章节的完整图谱快照（JSON：{ nodes, edges, timestamp }） |
-| `pendingArchiveData` | String? | `reviewing` 状态时 AI 提取的归档 payload（记忆 / 图谱 / 弧线 / 时间线 JSON）;用户 ReviewingPanel 编辑后写回,确认归档时回放进事务。**prepare-archive** 阶段写入,confirm `archive` 阶段读出消费 |
+| `chapterGraph` | String? | 本章图谱（JSON：{ nodes, edges, timestamp }），归档 confirm 时从 pendingArchiveData 拷入 |
+| `cumulativeGraph` | String? | 累计到本章的全局图谱（JSON：{ nodes, edges, timestamp }），归档 confirm 时从 pendingArchiveData 拷入 |
+| `cumulativeGraphGeneratedAt` | DateTime? | 用户首次生成累计图谱的时间；null = 未生成（归档前置条件） |
+| `pendingArchiveData` | String? | `reviewing` 状态时的归档 payload（JSON, `version: 3`，含 4 个 stage 结果 + 累计图谱工作副本）;ReviewingPanel 编辑经 `chaptersApi.update` 写回,confirm `archive` 时拷入 Chapter 三列后清空 |
 | `createdAt` | DateTime | |
 | `updatedAt` | DateTime | |
 
@@ -60,10 +61,11 @@
 - N:1 `RuntimeProfile`
 - 1:N `Draft`、`Memory`、`Score`
 
-**归档行为**：
-- `prepare-archive` 阶段：状态更新 + `combined-extractor.ts` 一次 AI 提取记忆+图谱+弧线 → `graph-organizer.ts` 整理 → 写入 `pendingArchiveData` → 状态变 `reviewing`
-- `archive` 确认阶段：从 `pendingArchiveData` 读出 → `prisma.$transaction` 一次性提交所有 DB 写入(Memory/CharacterBranchState/TimelineEvent/PlotArc/GraphNode+Edge/Chapter.summary/graphSnapshot/graphDelta + status=`archived`) → `optimizeMemories` 阶段 4 全局记忆融合(失败不阻塞)
-- 已 `archived` 再次调用会跳过（防重复污染）
+**归档行为（v3）**：
+- `prepare-archive` 阶段：4 个 stage（character/memory/plot-arc/graph-extract）并行 AI 提取 → 结果写入 `pendingArchiveData`（version=3）→ 状态变 `reviewing`。Chapter 三个图谱列全程不读写
+- `cumulative-graph/build`：用户主动生成累计图谱 → 写 `pendingArchiveData.cumulativeGraph` / `cumulativeGraphGeneratedAt`
+- `archive` 确认阶段：校验全 stage success + 累计图谱已生成 → 图谱数据从 `pendingArchiveData` 拷到 Chapter 三列 → `pendingArchiveData = null` → status=`archived`。衍生表事务写入为后续工作（当前 gate stub）
+- 非 `reviewing` 状态调用 `archive` 返回 400
 
 ---
 
@@ -294,27 +296,15 @@
 
 ## 4. 图谱与时间线
 
-### `GraphNode` / `GraphEdge` — 知识图谱
+### 知识图谱（v3：Chapter JSON 列，无独立表）
 
-**GraphNode**：
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | String PK | |
-| `storyId` | String FK → Story | |
-| `type` | String | `character` / `faction` / `event` / `item` |
-| `key` | String | 唯一标识（英文小写） |
-| `label` | String | 显示名称 |
-| `data` | String | JSON 扩展属性 |
+`GraphNode` / `GraphEdge` 表已在 migration `20260729000000_drop_graph_node_edge` 删除。图谱数据存在 `Chapter` 的三个 JSON 列（见 §1 Chapter 字段表）：
 
-**GraphEdge**：
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | String PK | |
-| `storyId` | String FK → Story | |
-| `fromId` | String FK → GraphNode | |
-| `toId` | String FK → GraphNode | |
-| `relation` | String | 如 `隶属`、`对抗`、`师徒` |
-| `weight` | Int | 默认 1 |
+- `chapterGraph` — 本章图谱
+- `cumulativeGraph` — 累计全局图谱
+- `cumulativeGraphGeneratedAt` — 累计图谱生成时间
+
+图谱 JSON 形状：`{ nodes: [{ type, key, label, data }], edges: [{ fromType, fromKey, toType, toKey, relation, weight }], timestamp }`（zod schema 见 `packages/shared/src/archive.ts` 的 `PendingGraphSnapshotSchema`）。
 
 ---
 
@@ -365,7 +355,6 @@ Story
 ├── Character (1:N) ──→ CharacterBranchState (1:N)
 ├── LoreItem (1:N)
 ├── Memory (1:N, global 层 chapterId 为 null)
-├── GraphNode (1:N) ──→ GraphEdge (from/to)
 ├── TimelineEvent (1:N)
 ├── PlotArc (1:N)
 ├── AiProviderConfig (1:N, storyId 可选)
@@ -379,13 +368,17 @@ Story
 
 ## 7. 迁移历史
 
+> 与 `prisma/migrations/` 目录一一对应。
+
 | 时间戳 | 说明 |
 |--------|------|
-| `20260516092617_init` | 初始建表（Story/Chapter/Character/LoreItem/Memory/GraphNode/GraphEdge/TimelineEvent/Draft/Score） |
-| `20260518000000_add_runtime_profile_worker_task_plot_arc` | 新增 RuntimeProfile、WorkerTask、PlotArc |
-| `20260518000001_add_ai_provider_context_length` | AiProviderConfig 增加 contextLength 字段 |
-| `20260518022500_add_prompt_log` | 新增 PromptLog 表 |
-| `20260518023000_add_chapter_side_story` | Chapter 增加 isSideStory，number 从 Int 改为 Float |
-| `20260518104226_add_character_identity_appearance_temperament` | Character 增加 identity、appearance、temperament 字段 |
-| `20260522211910_add_chapter_branch_and_draft_enhance` | Chapter 新增 parentChapterId/branchName/runtimeProfileId/compiledPrompt/graphDelta/graphSnapshot；Draft 新增 temperature/maxTokens/compiledPrompt/score/errorMessage/updatedAt，status 扩展；Score 移除 loreConsistency/characterConsistency/forbiddenContentRisk，新增 outlineAdherence/sceneMatch/profileConsistency/comment |
-| `20260522214741_add_score_dimensions` | Score 表最终确认 7 维度字段结构 |
+| `20260602053226_init` ~ `20260602071708_init` | 初始建表（4 次 init 合并期） |
+| `20260616044813_add_chapter_status_enum_and_pending_archive_data` | ChapterStatus enum + `Chapter.pendingArchiveData` |
+| `20260616060000_add_draft_id_chapterId_compound_unique` | Draft (id, chapterId) 复合唯一 |
+| `20260624054620_add_story_cover_url` | Story 增加 coverUrl |
+| `20260626000000_timeline_position_encoding` | TimelineEvent.position 改 Y.DDDHH 编码 |
+| `20260627000000_plot_arc_soft_dedup` | PlotArc 软去重 |
+| `20260724000000_chapter_status_v2` | ChapterStatus 缩为 3 值（draft/reviewing/archived） |
+| `20260725000000_rename_graph_fields` | Chapter 列重命名：graphDelta → chapterGraph，graphSnapshot → cumulativeGraph |
+| `20260727062235_add_cumulative_graph_generated_at` | Chapter 增加 cumulativeGraphGeneratedAt |
+| `20260729000000_drop_graph_node_edge` | 删除 GraphNode/GraphEdge 表（v3 图谱唯一数据源 = Chapter JSON 列） |

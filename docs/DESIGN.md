@@ -461,7 +461,7 @@ Max-width 1200px centered container, light theme throughout except one dark deve
 
 **Trade-off**:
 - 老的 1 次合并提取拆为 4 次 AI 调用，平均 AI 成本上升，但单 stage 失败可独立重试（前端"重新解析"按钮按 stage 触发）
-- `GraphNode` / `GraphEdge` 工作表过渡期仍写入；GraphView.vue 重写延后到下一个独立 commit
+- `GraphNode` / `GraphEdge` 工作表过渡期仍写入；GraphView.vue 重写延后到下一个独立 commit（**已完成 2026-07-29**: GraphView 改读 `cumulativeGraphApi`，两表随 migration `20260729000000_drop_graph_node_edge` 删除）
 - 老 v1/v2 blob 无 `version` 字段 → 前端检测后提示"数据格式过旧，请重新准备归档"
 
 详细 stage 边界与 `pendingArchiveData` v3 字段语义见 `docs/LOGIC.md` 中"Stage 边界 (v3)"章节。
