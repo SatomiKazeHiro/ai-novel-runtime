@@ -54,6 +54,6 @@ describe('GET /api/chapters/:chapterId/cumulative-graph', () => {
     )
     expect(res.body.success).toBe(true)
     expect(res.body.data.generatedAt).toBe(isoNow)
-    expect(res.body.data.graph.nodes).toEqual(storedGraph.nodes)
+    expect(res.body.data.graph).toEqual(storedGraph)
   })
 })
