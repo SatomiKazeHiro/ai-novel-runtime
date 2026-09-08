@@ -5,7 +5,6 @@ import type { GraphSnapshot } from '../graph-snapshot.js'
 export interface BuildAndSaveInput {
   storyId: string
   chapterId: string
-  chapterNumber: number
   chapterGraph: GraphSnapshot
   prevCumulativeGraph: GraphSnapshot | null
 }
@@ -27,7 +26,6 @@ export async function buildCumulativeGraphWithTimestamp(
   const result = await buildCumulativeGraph(app, {
     storyId: input.storyId,
     chapterId: input.chapterId,
-    chapterNumber: input.chapterNumber,
     chapterGraph: input.chapterGraph,
     prevCumulativeGraph: input.prevCumulativeGraph,
   })

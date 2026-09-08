@@ -53,7 +53,7 @@ describe('buildCumulativeGraph', () => {
     const prev = { nodes: [{ type: 'character', key: 'a', label: 'A', data: {} }], edges: [], timestamp: ts }
 
     const result = await buildCumulativeGraph(mockApp, {
-      storyId: 's1', chapterId: 'c1', chapterNumber: 2,
+      storyId: 's1', chapterId: 'c1',
       chapterGraph: { nodes: [], edges: [], timestamp: ts },
       prevCumulativeGraph: prev
     })
@@ -67,7 +67,7 @@ describe('buildCumulativeGraph', () => {
     const chapterGraph = { nodes: [{ type: 'character', key: 'a', label: 'A', data: {} }], edges: [], timestamp: ts }
 
     const result = await buildCumulativeGraph(mockApp, {
-      storyId: 's1', chapterId: 'c1', chapterNumber: 1,
+      storyId: 's1', chapterId: 'c1',
       chapterGraph, prevCumulativeGraph: null
     })
 
@@ -118,7 +118,7 @@ describe('buildCumulativeGraph', () => {
     ;(callAIWithLog as any).mockResolvedValueOnce(JSON.stringify(aiMapping))
 
     const result = await buildCumulativeGraph(mockApp, {
-      storyId: 's1', chapterId: 'c1', chapterNumber: 3,
+      storyId: 's1', chapterId: 'c1',
       chapterGraph, prevCumulativeGraph: prev
     })
 
@@ -148,7 +148,7 @@ describe('buildCumulativeGraph', () => {
     ;(callAIWithLog as any).mockResolvedValueOnce(JSON.stringify({ mappings: [] }))
 
     const result = await buildCumulativeGraph(mockApp, {
-      storyId: 's1', chapterId: 'c1', chapterNumber: 2,
+      storyId: 's1', chapterId: 'c1',
       chapterGraph, prevCumulativeGraph: prev
     })
 
@@ -163,7 +163,7 @@ describe('buildCumulativeGraph', () => {
     ;(callAIWithLog as any).mockResolvedValueOnce(null)
 
     await expect(buildCumulativeGraph(mockApp, {
-      storyId: 's1', chapterId: 'c1', chapterNumber: 2,
+      storyId: 's1', chapterId: 'c1',
       chapterGraph, prevCumulativeGraph: prev
     })).rejects.toThrow()
   })

@@ -9,7 +9,6 @@ import { buildRelationMappingPrompt } from './stages/relation-mapping.prompt.js'
 export interface CumulativeGraphInput {
   storyId: string
   chapterId: string
-  chapterNumber: number
   chapterGraph: GraphSnapshot | null
   prevCumulativeGraph: GraphSnapshot | null
 }
