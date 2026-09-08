@@ -66,7 +66,7 @@
           <header class="char-card__title">
             <h3 class="char-card__name">
               {{ char.name }}
-              <span v-if="char.protagonist" class="char-card__protagonist" title="主角" aria-label="主角">★</span>
+              <span v-if="char.protagonist" class="char-card__protagonist" title="主角" aria-label="主角">主角</span>
             </h3>
             <span class="char-card__slug">{{ char.slug }}</span>
           </header>
@@ -487,14 +487,13 @@ onMounted(() => {
 .char-card__protagonist {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
+  padding: 2px 8px;
   font-size: 11px;
   background: var(--accent);
   color: var(--text-on-accent, #fff);
-  border-radius: 50%;
-  font-weight: var(--weight-bold);
+  border-radius: 4px;
+  letter-spacing: 1px;
+  font-weight: var(--weight-medium);
 }
 .char-card__slug {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
