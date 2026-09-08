@@ -312,14 +312,12 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
       })
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.draft.updateMany({ where: { chapterId }, data: { status: 'rejected' } })
-      // 2026-07-24: 不再 set Draft.status='selected' —— chapter.content 才是"哪个候选被采用"的唯一真相源。
-      // 没有 'selected' draft 标记,UI 也就不再展示 ✓ 已选徽章。
-      await tx.chapter.update({
-        where: { id: chapterId },
-        data: { content: draft.content || undefined }
-      })
+    // v2: 采用 = 仅把选中候选的 content 写到 Chapter.content。
+    // 不再置其他候选 rejected —— 候选是用户的素材库：采用后仍可参考/换用其他候选，
+    // 甚至用其他候选的内容替换当前正文的瑕疵部分。"哪个被采用"靠 chapter.content 匹配。
+    await prisma.chapter.update({
+      where: { id: chapterId },
+      data: { content: draft.content }
     })
 
     return { success: true }

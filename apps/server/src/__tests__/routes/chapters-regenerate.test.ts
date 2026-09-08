@@ -72,7 +72,7 @@ describe('select route — v2 no chapter.status lock', () => {
     )
 
     expect(result.status).not.toBe(409)
-    expect(mockPrisma.$transaction).toHaveBeenCalled()
+    expect(mockPrisma.chapter.update).toHaveBeenCalledWith({ where: { id: 'c1' }, data: { content: 'text' } })
     expect(result.body).toEqual({ success: true })
   })
 

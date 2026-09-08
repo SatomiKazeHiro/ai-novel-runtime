@@ -15,7 +15,7 @@ describe('POST /api/chapters/:chapterId/select', () => {
     }
     return {
       tx,
-      chapter: { findUnique: vi.fn().mockResolvedValue({ id: 'c1', storyId: 's1', status: 'draft' }) },
+      chapter: { findUnique: vi.fn().mockResolvedValue({ id: 'c1', storyId: 's1', status: 'draft' }), update: vi.fn().mockResolvedValue({ id: 'c1' }) },
       draft: { findUnique: vi.fn().mockResolvedValue(draft) },
       $transaction: vi.fn(async (fn: any) => fn(tx))
     }
@@ -55,10 +55,9 @@ describe('POST /api/chapters/:chapterId/select', () => {
     const res = await callHandler(
       routes, 'POST', '/api/chapters/:chapterId/select', { draftId: 'd1' }, { chapterId: 'c1' }
     )
-    expect(prisma.tx.draft.updateMany).toHaveBeenCalledWith({
-      where: { chapterId: 'c1' }, data: { status: 'rejected' }
-    })
-    expect(prisma.tx.chapter.update).toHaveBeenCalledWith({
+    // 不再废弃其他候选（候选是素材库，采用后仍可参考/换用）
+    expect(prisma.tx.draft.updateMany).not.toHaveBeenCalled()
+    expect(prisma.chapter.update).toHaveBeenCalledWith({
       where: { id: 'c1' }, data: { content: '正文' }
     })
     expect(res.body).toEqual({ success: true })

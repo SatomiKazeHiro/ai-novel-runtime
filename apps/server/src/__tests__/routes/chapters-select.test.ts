@@ -78,7 +78,7 @@ describe('chapters select route — chapterId isolation', () => {
       { chapterId: 'chapterA' }
     )
 
-    expect(mockPrisma.$transaction).toHaveBeenCalled()
+    expect(mockPrisma.chapter.update).toHaveBeenCalledWith({ where: { id: 'chapterA' }, data: { content: 'hello' } })
     // Route uses bare return — callHandler captures the handler's return value.
     expect(result.body).toEqual({ success: true })
   })

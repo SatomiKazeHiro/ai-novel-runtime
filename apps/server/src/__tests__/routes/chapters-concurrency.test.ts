@@ -156,7 +156,7 @@ describe('select route — v2 orthogonal to chapter status (3-value enum)', () =
     )
 
     expect(result.status).not.toBe(400)
-    expect(mockPrisma.$transaction).toHaveBeenCalled()
+    expect(mockPrisma.chapter.update).toHaveBeenCalled()
   })
 
   it('accepts reviewing status (v2 — orthogonal)', async () => {
@@ -175,7 +175,7 @@ describe('select route — v2 orthogonal to chapter status (3-value enum)', () =
     )
 
     expect(result.status).not.toBe(400)
-    expect(mockPrisma.$transaction).toHaveBeenCalled()
+    expect(mockPrisma.chapter.update).toHaveBeenCalled()
   })
 
   it('rejects archived status with 400', async () => {
