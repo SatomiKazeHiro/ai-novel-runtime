@@ -81,13 +81,7 @@ export async function fetchCharacterDisplay(
             return { value: parsed, sourceChapterNumber: bs.fromChapterNumber }
           }
         }
-        // 无 snapshot → 退到 base
-        if (baseValue) {
-          const parsed = safeJsonParse<Record<string, any> | null>(baseValue, null)
-          if (parsed !== null && parsed !== undefined) {
-            return { value: parsed, sourceChapterNumber: null }
-          }
-        }
+        // Snapshot fields stay null when no archive snapshot exists; base fields are returned separately.
         return null
       }
       // 指定 chapter 模式: 只看该章

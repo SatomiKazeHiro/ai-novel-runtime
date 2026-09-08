@@ -26,10 +26,8 @@ describe('fetchCharacterDisplay', () => {
     const result = await fetchCharacterDisplay(prisma, 's1', null)
     expect(result).toHaveLength(1)
     expect(result[0].name).toBe('林凡')
-    expect(result[0].relationships?.value).toEqual({ '张三': '师兄' })
-    expect(result[0].relationships?.sourceChapterNumber).toBe(null)
-    expect(result[0].status?.value).toEqual({ realm: '筑基' })
-    expect(result[0].status?.sourceChapterNumber).toBe(null)
+    expect(result[0].relationships).toBe(null)
+    expect(result[0].status).toBe(null)
     expect(result[0].costume).toBe(null)
   })
 
