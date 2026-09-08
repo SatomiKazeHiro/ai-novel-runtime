@@ -251,6 +251,7 @@
         <ReviewingPanel
             v-if="chapter?.status === 'reviewing' && pendingArchiveData?.version === 3"
             :pending="pendingArchiveData"
+            :retrying-stages="retryingStages"
             @save="(data) => emit('save-pending-archive', data)"
             @confirm="(data) => emit('confirm-archive-with-data', data)"
             @cancel="emit('prepare-archive-cancel')"
@@ -407,6 +408,7 @@ const props = defineProps<{
     savingContent: boolean;
     archiving: boolean;
     repreparingArchive: boolean;
+    retryingStages: Partial<Record<"character" | "memory" | "plotArc" | "graph", boolean>>;
     prompt: any;
     drafts: any;
 }>();

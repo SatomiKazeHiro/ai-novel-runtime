@@ -33,6 +33,7 @@
         :saving-content="editor.savingContent"
         :archiving="archiving"
         :repreparing-archive="repreparingArchive"
+        :retrying-stages="retryingStages"
         :prompt="prompt"
         :drafts="drafts"
         @back="handleBackToTree"
@@ -82,6 +83,8 @@ const debouncedSaveConfig = useDebounceFn(editor.saveConfig, 500);
 const archiving = ref(false);
 // 重新准备归档的 loading 状态(reviewing → reviewing 重试路径)
 const repreparingArchive = ref(false);
+// 单 stage 重跑 in-flight 标记(per stage 独立 key)
+const retryingStages = ref<Partial<Record<"character" | "memory" | "plotArc" | "graph", boolean>>>({});
 const dialog = useDialog();
 const message = useMessage();
 
@@ -342,6 +345,12 @@ function handleCancelReviewing() {
 
 async function handleRetryStage(stageName: "character" | "memory" | "plotArc" | "graph") {
     // 单 stage 重跑: 只重跑指定 stage, 不动其他 stage 结果, 不撤销整章
-    await editor.retryChapterStage(stageName);
+    if (retryingStages.value[stageName]) return;
+    retryingStages.value = { ...retryingStages.value, [stageName]: true };
+    try {
+        await editor.retryChapterStage(stageName);
+    } finally {
+        retryingStages.value = { ...retryingStages.value, [stageName]: false };
+    }
 }
 </script>

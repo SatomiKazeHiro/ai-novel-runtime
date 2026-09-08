@@ -48,8 +48,10 @@
           </template>
           <div v-if="stageStatus('character') === 'failed'" class="rp-stage-error">
             <strong>解析失败:</strong> {{ props.pending?.stages?.character?.errorMessage || '未知错误' }}
-            <n-button size="small" type="primary" style="margin-left: 12px" @click="emit('retry-stage', 'character')">
-              重新解析此阶段
+          </div>
+          <div class="rp-stage-actions">
+            <n-button size="small" :disabled="isRetrying('character')" @click="emit('retry-stage', 'character')">
+              {{ isRetrying('character') ? '重新解析中…' : '重新解析此阶段' }}
             </n-button>
           </div>
           <n-empty v-if="characterStates.length === 0" description="暂无角色状态, 点击下方添加" />
@@ -120,8 +122,10 @@
           </template>
           <div v-if="stageStatus('memory') === 'failed'" class="rp-stage-error">
             <strong>解析失败:</strong> {{ props.pending?.stages?.memory?.errorMessage || '未知错误' }}
-            <n-button size="small" type="primary" style="margin-left: 12px" @click="emit('retry-stage', 'memory')">
-              重新解析此阶段
+          </div>
+          <div class="rp-stage-actions">
+            <n-button size="small" :disabled="isRetrying('memory')" @click="emit('retry-stage', 'memory')">
+              {{ isRetrying('memory') ? '重新解析中…' : '重新解析此阶段' }}
             </n-button>
           </div>
           <n-space vertical size="large" style="width: 100%">
@@ -179,8 +183,10 @@
           </template>
           <div v-if="stageStatus('plotArc') === 'failed'" class="rp-stage-error">
             <strong>解析失败:</strong> {{ props.pending?.stages?.plotArc?.errorMessage || '未知错误' }}
-            <n-button size="small" type="primary" style="margin-left: 12px" @click="emit('retry-stage', 'plotArc')">
-              重新解析此阶段
+          </div>
+          <div class="rp-stage-actions">
+            <n-button size="small" :disabled="isRetrying('plotArc')" @click="emit('retry-stage', 'plotArc')">
+              {{ isRetrying('plotArc') ? '重新解析中…' : '重新解析此阶段' }}
             </n-button>
           </div>
           <!-- 剧情弧线编辑器 -->
@@ -360,8 +366,10 @@
           </template>
           <div v-if="stageStatus('graph') === 'failed'" class="rp-stage-error">
             <strong>解析失败:</strong> {{ props.pending?.stages?.graph?.errorMessage || '未知错误' }}
-            <n-button size="small" type="primary" style="margin-left: 12px" @click="emit('retry-stage', 'graph')">
-              重新解析此阶段
+          </div>
+          <div class="rp-stage-actions">
+            <n-button size="small" :disabled="isRetrying('graph')" @click="emit('retry-stage', 'graph')">
+              {{ isRetrying('graph') ? '重新解析中…' : '重新解析此阶段' }}
             </n-button>
           </div>
           <!-- 图谱编辑器 -->
@@ -401,6 +409,7 @@ import {
 
 const props = defineProps<{
   pending: V3PendingArchiveData
+  retryingStages?: Partial<Record<StageName, boolean>>
 }>()
 
 type StageName = 'character' | 'memory' | 'plotArc' | 'graph'
@@ -437,6 +446,10 @@ onUnmounted(() => { if (saveTimer) clearTimeout(saveTimer) })
 // === tab header 状态圆点 ===
 function stageStatus(name: StageName): string {
   return props.pending?.stages?.[name]?.status ?? 'pending'
+}
+// 哪个 stage 正在重跑,父组件持有状态后通过 prop 传进来
+function isRetrying(name: StageName): boolean {
+  return !!props.retryingStages?.[name]
 }
 function dotColor(name: StageName): string {
   const status = stageStatus(name)
@@ -612,20 +625,26 @@ function handleConfirm() {
   flex-shrink: 0;
 }
 
-/* === stage 失败提示条: 暖底红字 + 重新解析按钮 === */
+/* === stage 失败提示条: 暖底红字 === */
 .rp-stage-error {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
   padding: 10px 14px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   border-radius: 6px;
   background: rgba(217, 75, 75, 0.08);
   border: 1px solid rgba(217, 75, 75, 0.35);
   color: #a83232;
   font-size: 13px;
   line-height: 1.5;
+}
+/* === stage 操作行: 重新解析按钮 (始终可见,失败时与 .rp-stage-error 联动) === */
+.rp-stage-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
 }
 
 /* === Editorial storyboard entry — plot arc card ===

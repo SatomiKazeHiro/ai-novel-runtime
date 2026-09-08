@@ -177,7 +177,7 @@ export function useChapterEditor(storyId: () => string | undefined) {
       const res = await chaptersApi.update(currentChapter.value.id, { pendingArchiveData: json })
       if (res.data.success) {
         pendingArchiveData.value = data
-        message.success('归档数据已保存')
+        // 自动防抖保存静默,不弹 toast (避免编辑→撤销→编辑循环刷屏)
         return { success: true }
       } else {
         message.error(res.data.error || '保存归档数据失败')
