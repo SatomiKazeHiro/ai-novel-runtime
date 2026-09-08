@@ -269,30 +269,38 @@ model StoryWorkerBinding {
   @@unique([storyId, workerType])
 }
 
-// 剧情弧线
+// 剧情弧线（v2 重构：事实 + 派生状态）
 model PlotArc {
-  id                    String   @id @default(uuid())
-  storyId               String
-  name                  String   // 弧线名称，如"光明顶之战"
-  type                  String   @default("main") // main | side (AI 可在 update 时翻转)
-  status                String   @default("active") // active | resolving | completed | closed | stale
-  progress              Int      @default(0) // 0-100
-  stages                String   @default("[]") // JSON: [{stage, completed, description}]
-  currentStage          String?  // 当前阶段名称
-  nextGoal              String?  // 下一目标
-  unresolved            String   @default("[]") // JSON: 未解悬念列表
-  summary               String?  // 弧线摘要
-  closedReason          String?  // status='closed' 时填: 'duplicate' 等
-  closedTargetArcId     String?  // status='closed' 时指向被合并到的 arc id
-  lastTouchedChapter    Int?     // 上次被 AI update 推进的章节号 (stale 检测)
-  similarToExistingIds  String   @default("[]") // JSON: ["arc-id-1", ...] (Jaccard tag, UI badge 用)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  storyId            String
+  name               String
+  isMainline         Boolean  @default(false) // 主线/支线
+  status             String   @default("active") // active | inactive | completed | closed（代码推导）
+  firstChapterNumber Int      // 弧线来源章节号
+  closedBy           String?  // user | ai-similar（关闭时填）
+  closedTargetArcId  String?  // AI 相似关闭时指向合并目标
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
-  story                 Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  story          Story                 @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  progressPoints PlotArcProgressPoint[]
 
   @@index([storyId, status])
-  @@index([storyId, status, lastTouchedChapter])
+}
+
+// 剧情推进点（独立表，每弧线每章最多一条）
+model PlotArcProgressPoint {
+  id            String   @id @default(uuid())
+  arcId         String
+  chapterNumber Int
+  content       String   // 推进内容（核心简练）
+  isEnd         Boolean  @default(false) // 是否「完成」标志（AI 软判断）
+  createdAt     DateTime @default(now())
+
+  arc PlotArc @relation(fields: [arcId], references: [id], onDelete: Cascade)
+
+  @@index([arcId, chapterNumber])
+  @@index([chapterNumber])
 }
 
 // 评分记录
