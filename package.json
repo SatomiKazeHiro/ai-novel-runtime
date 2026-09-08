@@ -12,7 +12,8 @@
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "db:backfill-character-base": "tsx scripts/backfill-character-base.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
