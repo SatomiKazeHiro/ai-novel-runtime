@@ -177,24 +177,24 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
       }
     }
 
-    // 级联清理：删除同 fromChapterNumber 的派生数据
+    // 级联清理 + 删章节：包进事务，任一步失败整体回滚（不再吞错，错误向上冒泡 → 500）
     if (chapter.status === 'archived' && chapter.number > 0) {
-      try {
-        const { count: memCount } = await prisma.memory.deleteMany({
+      const { memCount, bsCount, arcCount } = await prisma.$transaction(async (tx) => {
+        const { count: memCount } = await tx.memory.deleteMany({
           where: { storyId: chapter.storyId, fromChapterNumber: chapter.number }
         })
-        const { count: bsCount } = await prisma.characterBranchState.deleteMany({
+        const { count: bsCount } = await tx.characterBranchState.deleteMany({
           where: { storyId: chapter.storyId, fromChapterNumber: chapter.number }
         })
         // 剧情弧线级联：firstChapterNumber 相等 → 整条删（级联推进点）；否则删该章的推进点
-        const { count: arcCount } = await prisma.plotArc.deleteMany({
+        const { count: arcCount } = await tx.plotArc.deleteMany({
           where: { storyId: chapter.storyId, firstChapterNumber: chapter.number }
         })
-        await prisma.plotArcProgressPoint.deleteMany({
+        await tx.plotArcProgressPoint.deleteMany({
           where: { arc: { storyId: chapter.storyId }, chapterNumber: chapter.number }
         })
         // 重推导受影响弧线的状态（删了 isEnd 推进点 → 完成回退为激活/待激活）
-        const affectedArcs = await prisma.plotArc.findMany({
+        const affectedArcs = await tx.plotArc.findMany({
           where: { storyId: chapter.storyId },
           include: { progressPoints: { orderBy: { chapterNumber: 'desc' } } }
         })
@@ -208,13 +208,17 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
             currentChapter: chapter.number
           })
           if (status !== arc.status) {
-            await prisma.plotArc.update({ where: { id: arc.id }, data: { status } })
+            await tx.plotArc.update({ where: { id: arc.id }, data: { status } })
           }
         }
-        app.log.info(`[Delete] Cascade cleanup for chapter ${chapter.number}: memory=${memCount}, branchState=${bsCount}, plotArc=${arcCount}`)
-      } catch (err: any) {
-        app.log.error(`[Delete] Cascade cleanup failed: ${err.message}`)
-      }
+        // 删章节（事务内最后一步：任一步失败 → 上面所有级联删除全部回滚）
+        await tx.chapter.delete({ where: { id: chapterId } })
+        return { memCount, bsCount, arcCount }
+      })
+      app.log.info(`[Delete] Chapter ${chapter.number} deleted with cascade cleanup: memory=${memCount}, branchState=${bsCount}, plotArc=${arcCount}`)
+    } else {
+      // 非归档章节（draft/reviewing）无派生数据，直接删
+      await prisma.chapter.delete({ where: { id: chapterId } })
     }
 
     // v3 累计图谱以 Chapter.cumulativeGraph JSON 为唯一 source-of-truth,
@@ -228,8 +232,6 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
       { storyId: chapter.storyId, deletedChapterNumber: chapter.number, prevChapterNumber: prevChapter?.number },
       '[Delete] v3 累计图谱以 Chapter.cumulativeGraph JSON 为准, 不重建 GraphNode/Edge 表'
     )
-
-    await prisma.chapter.delete({ where: { id: chapterId } })
 
     // 如果这是最后一个章节，清理故事级别的派生数据
     const remainingChapters = await prisma.chapter.count({
@@ -245,7 +247,8 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
         })
         app.log.info(`[Delete] Last chapter removed. Cleaned plotArc=${arcCount}, promptLog=${logCount}`)
       } catch (err: any) {
-        app.log.error(`[Delete] Final cleanup failed: ${err.message}`)
+        // 章节已删、故事已空，此处是尽力而为的垃圾回收；失败只残留孤儿数据，不影响任何后续读取
+        app.log.warn(`[Delete] Final cleanup failed (chapter already deleted, residual orphan data): ${err.message}`)
       }
     }
 
