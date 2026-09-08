@@ -4,6 +4,7 @@ import { cleanJsonBlock, aliasKey, GRAPH_NODE_EDGES_ALIASES } from '@novel-runti
 import { loadRuntimeBase, loadWorkerTask } from '../runtime-loader.js'
 import { callAIWithStageRetry, type StageContext, type StageState } from './types.js'
 import type { GraphSnapshot } from '../graph-snapshot.js'
+import { buildGraphExtractPrompt } from './graph-extract.prompt.js'
 
 export interface GraphExtractStageInput extends StageContext {
   characterNames: string[]
@@ -20,7 +21,7 @@ export interface GraphExtractStageResult {
  * 不读 importance —— 上一轮实验证明 AI 自评 -1 / 配角 > 主角 等范式不可靠，
  * 改由【主线事件合并 / 支线独立 / 角色优先】三原则让 AI 按剧情作用判定。
  */
-function normalizeGraph(parsed: any): { nodes: any[]; edges: any[] } {
+export function parseGraphResponse(parsed: any): { nodes: any[]; edges: any[] } {
   const rawNodes = Array.isArray(aliasKey(parsed, GRAPH_NODE_EDGES_ALIASES, 'nodes')) ? aliasKey<any[]>(parsed, GRAPH_NODE_EDGES_ALIASES, 'nodes')! : []
   const rawEdges = Array.isArray(aliasKey(parsed, GRAPH_NODE_EDGES_ALIASES, 'edges')) ? aliasKey<any[]>(parsed, GRAPH_NODE_EDGES_ALIASES, 'edges')! : []
 
@@ -34,10 +35,7 @@ function normalizeGraph(parsed: any): { nodes: any[]; edges: any[] } {
       .map((n: any) => ({
         type: aliasKey<string>(n, GRAPH_NODE_EDGES_ALIASES, 'type')!,
         key: aliasKey<string>(n, GRAPH_NODE_EDGES_ALIASES, 'key')!,
-        label: (() => {
-          const l = aliasKey<string>(n, GRAPH_NODE_EDGES_ALIASES, 'label')
-          return typeof l === 'string' ? l : aliasKey<string>(n, GRAPH_NODE_EDGES_ALIASES, 'key')!
-        })(),
+        label: aliasKey<string>(n, GRAPH_NODE_EDGES_ALIASES, 'label') || aliasKey<string>(n, GRAPH_NODE_EDGES_ALIASES, 'key')!,
         data: (() => {
           const d = aliasKey<Record<string, unknown>>(n, GRAPH_NODE_EDGES_ALIASES, 'data')
           return d && typeof d === 'object' ? d : {}
@@ -48,14 +46,70 @@ function normalizeGraph(parsed: any): { nodes: any[]; edges: any[] } {
       fromKey: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'fromKey'),
       toType: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'toType'),
       toKey: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'toKey'),
-      relation: (() => {
-        const r = aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'relation')
-        return typeof r === 'string' ? r : ''
-      })(),
+      relation: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'relation') || '',
       // extract 阶段永远是新增边, weight 由 cumulative-graph.ts codeMerge 累加
       weight: 1
     }))
   }
+}
+
+/**
+ * drop orphan edges (endpoints not in node list)
+ */
+export function dropOrphanEdges(
+  nodes: any[],
+  edges: any[],
+  log: { info: (msg: string) => void } = { info: () => {} }
+): any[] {
+  const nodeKeySet = new Set(nodes.map((n: any) => `${n.type}:${n.key}`))
+  const valid = edges.filter((e: any) =>
+    nodeKeySet.has(`${e.fromType}:${e.fromKey}`) &&
+    nodeKeySet.has(`${e.toType}:${e.toKey}`)
+  )
+  if (edges.length !== valid.length) {
+    log.info(
+      `[GraphExtractStage] orphan edges dropped: ${edges.length - valid.length} (endpoints not in node list)`
+    )
+  }
+  return valid
+}
+
+/**
+ * dedup by unordered pair, keep top 2 by weight (distinct relation, per prompt spec)
+ */
+export function dedupEdgesByPair(
+  edges: any[],
+  log: { info: (msg: string) => void } = { info: () => {} },
+  maxPerPair = 2
+): any[] {
+  const grouped = new Map<string, any[]>()
+  for (const e of edges) {
+    const a = `${e.fromType}:${e.fromKey}`
+    const b = `${e.toType}:${e.toKey}`
+    const pairKey = a < b ? `${a}|${b}` : `${b}|${a}`
+    if (!grouped.has(pairKey)) grouped.set(pairKey, [])
+    grouped.get(pairKey)!.push(e)
+  }
+
+  const deduped: any[] = []
+  for (const [, group] of grouped) {
+    const sorted = [...group].sort((x, y) => (y.weight ?? 1) - (x.weight ?? 1))
+    const seenRels = new Set<string>()
+    const kept: any[] = []
+    for (const e of sorted) {
+      if (kept.length >= maxPerPair) break
+      if (seenRels.has(e.relation)) continue
+      seenRels.add(e.relation)
+      kept.push(e)
+    }
+    deduped.push(...kept)
+  }
+  if (edges.length !== deduped.length) {
+    log.info(
+      `[GraphExtractStage] edge dedup: ${edges.length} → ${deduped.length} (keep top ${maxPerPair} per unordered pair, distinct relation)`
+    )
+  }
+  return deduped
 }
 
 /**
@@ -69,9 +123,9 @@ export async function runGraphExtractStage(
   input: GraphExtractStageInput
 ): Promise<StageState<GraphExtractStageResult>> {
   const completedAt = new Date().toISOString()
-  const charList = input.characterNames.join('、') || '（无）'
-  // keyList 预过滤: 只把本章正文里出现过的实体塞进 prompt, 避免污染 AI 抽取
   const content = input.content || ''
+
+  // keyList 预过滤: 只把本章正文里出现过的实体塞进 prompt, 避免污染 AI 抽取
   const matchedNodes = input.prevCumulativeGraphNodes.filter(
     (n) => n.label && content.includes(n.label)
   )
@@ -80,51 +134,18 @@ export async function runGraphExtractStage(
       `[GraphExtractStage] keyList pre-filter: ${input.prevCumulativeGraphNodes.length} → ${matchedNodes.length} (matched labels in content)`
     )
   }
-  const keyList = matchedNodes.length
-    ? matchedNodes.map((n) => `${n.type}:${n.key}`).join(', ')
-    : '（空，本章可自由起 key）'
-
-  const prompt = `【任务】
-分析章节内容，提取对剧情有实质推动作用的核心实体和它们之间的关系。
-
-【实体与关系定义】
-- type 可选值：character(角色), faction(势力/组织), event(事件), item(物品/道具)
-- relation 建议值：隶属、对抗、师徒、配偶、兄弟、持有、发生地点、涉及
-- relation 应是简洁的核心词或短语（2-6字为佳），直接表达两实体间的核心联系，不要带状语、从句或补充说明
-
-【提取规则】
-1. 【主线事件合并】同一主线剧情链的连续事件必须合并为一个整体事件节点。例如"许青找食材→下厨炒菜→姜禾品尝→指点厨艺"应合并为一个事件节点"许青教姜禾厨艺"，而不是拆成多个事件。
-2. 【支线独立】与主线并行的独立支线（如第三方暗中观察、配角个人线）可以作为独立事件节点。
-3. 【角色优先】主角和重要配角必须提取；路人、一次性提及的次要角色不要提取。
-4. 【物品克制】只提取对剧情有实质推动的关键物品（主角佩剑/关键道具/信物），日常用品（餐具/衣物/家电/家具/书籍）不要提取，即便主角日常使用也不算关键物品。
-5. 【事件 label 简短】label 只给图谱节点显示用, 4-8 字概括核心动作, 不堆叠人名; 不要写"许青收留姜禾并安置起居"这类含多动作的复合句, 详细情节放 data.desc。
-
-【已有实体】（不要重复提取，但可补充新属性）：${keyList}
-
-【章节内容】
-${input.content}
-
-【输出格式】
-返回严格 JSON 格式，不要 markdown 代码块。**严格用下方短名**，不要用长名：
-
-字段映射：n=nodes, e=edges, t=type, k=key, l=label, d=data, ft=fromType, fk=fromKey, tt=toType, tk=toKey, r=relation
-
-{
-  "n": [
-    { "t": "character", "k": "xu_qing", "l": "许青", "d": { "role": "本章主角,应届毕业生" } },
-    { "t": "faction", "k": "yan_bang", "l": "盐帮", "d": { "location": "古代江湖" } },
-    { "t": "event", "k": "jiang_he_chuan_yue", "l": "姜禾穿越", "d": { "desc": "姜禾从古代穿越到现代,出现在许青家中,持有盐帮佩剑" } }
-  ],
-  "e": [
-    { "ft": "character", "fk": "xu_qing", "tt": "character", "tk": "jiang_he", "r": "收留" }
-  ]
-}`
 
   try {
     const prisma = app.prisma
     const base = await loadRuntimeBase(input.storyId, prisma)
     const task = await loadWorkerTask(input.storyId, 'graph', prisma)
     const compiler = new RuntimePromptCompiler()
+
+    const prompt = buildGraphExtractPrompt({
+      content: input.content,
+      characterNames: input.characterNames,
+      prevCumulativeGraphNodes: input.prevCumulativeGraphNodes
+    })
     const compiled = compiler.compile(base, task, prompt)
 
     const raw = await callAIWithStageRetry(app, {
@@ -136,51 +157,9 @@ ${input.content}
     })
 
     const parsed = JSON.parse(cleanJsonBlock(raw))
-    const { nodes, edges } = normalizeGraph(parsed)
-
-    const nodeKeySet = new Set(nodes.map((n: any) => `${n.type}:${n.key}`))
-
-    // drop orphan edges (endpoints not in node list)
-    const validEdges = edges.filter((e: any) =>
-      nodeKeySet.has(`${e.fromType}:${e.fromKey}`) &&
-      nodeKeySet.has(`${e.toType}:${e.toKey}`)
-    )
-    if (edges.length !== validEdges.length) {
-      app.log.info(
-        `[GraphExtractStage] orphan edges dropped: ${edges.length - validEdges.length} (endpoints not in node list)`
-      )
-    }
-
-    // dedup by unordered pair, keep top 2 by weight (distinct relation, per prompt spec)
-    const MAX_EDGES_PER_PAIR = 2
-    const grouped = new Map<string, any[]>()
-    for (const e of validEdges) {
-      const a = `${e.fromType}:${e.fromKey}`
-      const b = `${e.toType}:${e.toKey}`
-      const pairKey = a < b ? `${a}|${b}` : `${b}|${a}`
-      if (!grouped.has(pairKey)) grouped.set(pairKey, [])
-      grouped.get(pairKey)!.push(e)
-    }
-
-    const dedupedEdges: any[] = []
-    for (const [, edges] of grouped) {
-      // sort by weight desc
-      const sorted = [...edges].sort((x, y) => (y.weight ?? 1) - (x.weight ?? 1))
-      const seenRels = new Set<string>()
-      const kept: any[] = []
-      for (const e of sorted) {
-        if (kept.length >= MAX_EDGES_PER_PAIR) break
-        if (seenRels.has(e.relation)) continue
-        seenRels.add(e.relation)
-        kept.push(e)
-      }
-      dedupedEdges.push(...kept)
-    }
-    if (validEdges.length !== dedupedEdges.length) {
-      app.log.info(
-        `[GraphExtractStage] edge dedup: ${validEdges.length} → ${dedupedEdges.length} (keep top ${MAX_EDGES_PER_PAIR} per unordered pair, distinct relation)`
-      )
-    }
+    const { nodes, edges } = parseGraphResponse(parsed)
+    const validEdges = dropOrphanEdges(nodes, edges, app.log)
+    const dedupedEdges = dedupEdgesByPair(validEdges, app.log)
 
     const chapterGraph: GraphSnapshot = {
       nodes: nodes.map((n: any) => ({
