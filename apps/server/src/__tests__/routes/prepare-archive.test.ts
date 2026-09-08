@@ -179,7 +179,7 @@ describe('prepare-archive route — v3 status pre-check (no updateMany lock)', (
     )
     expect(finalUpdateCall).toBeDefined()
     expect(finalUpdateCall[0].data.pendingArchiveData).not.toBe('')
-    expect(JSON.parse(finalUpdateCall[0].data.pendingArchiveData).version).toBe(3)
+    expect(JSON.parse(finalUpdateCall[0].data.pendingArchiveData).version).toBe(4)
   })
 
   it('accepts draft state without 409 — no updateMany race barrier', async () => {

@@ -104,8 +104,8 @@ describe('POST /api/chapters/:chapterId/cumulative-graph/build', () => {
       cumulativeGraph: null, cumulativeGraphGeneratedAt: null,
       parentChapterId: null, isSideStory: false, content: 'x',
       pendingArchiveData: JSON.stringify({
-        version: 3,
-        stages: { character: { status: 'success' }, memory: { status: 'success' }, plotArc: { status: 'success' }, graph: { status: 'success' } },
+        version: 4,
+        stages: { character: { status: 'success' }, memoryExtract: { status: 'success' }, memoryOptimize: { status: 'success' }, plotArc: { status: 'success' }, graph: { status: 'success' } },
         meta: { extractedAt: '2026-07-27T09:00:00.000Z', chapterNumber: 1 },
       }),
     })

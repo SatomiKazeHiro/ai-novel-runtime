@@ -262,11 +262,12 @@ describe('archive route — v3 commit (single $transaction, no 409 lock)', () =>
     expect(mockPrisma.chapter.updateMany).not.toHaveBeenCalled()
   })
 
-  it('proceeds from reviewing with v3 pendingArchiveData (single $transaction, no updateMany lock)', async () => {
-    // v3 archive (Task 4.2): reviewing + version=3 + all stages success + cumulativeGraph
-    // → 单 prisma.$transaction 内依次: 写 Memory 三层 (chapter/scene/global) + 写
-    // Chapter.summary + 拷 pendingArchiveData 三列 + 翻 status=archived。
-    // v3 全程无 updateMany 锁 (UI 防双击)。
+  it('proceeds from reviewing with v4 pendingArchiveData (single $transaction, no updateMany lock)', async () => {
+    // v4 archive (Task 4.2): reviewing + version=4 + 5 stage 全 success + cumulativeGraph
+    // → 单 prisma.$transaction 内依次: 写 Memory 三层 (chapter/scene/global) +
+    // commitPlotArcWrites + commitCharacterBranchStateWrites + 写 Chapter.summary +
+    // 拷 pendingArchiveData 三列 + 翻 status=archived。
+    // v4 全程无 updateMany 锁 (UI 防双击)。
     mockPrisma.chapter.findUnique.mockResolvedValue({
       id: 'c1',
       storyId: 's1',
@@ -275,10 +276,11 @@ describe('archive route — v3 commit (single $transaction, no 409 lock)', () =>
       content: 'a'.repeat(200),
       number: 1,
       pendingArchiveData: JSON.stringify({
-        version: 3,
+        version: 4,
         stages: {
           character: { status: 'success', result: {}, completedAt: ts },
-          memory: { status: 'success', result: {}, completedAt: ts },
+          memoryExtract: { status: 'success', result: {}, completedAt: ts },
+          memoryOptimize: { status: 'success', result: { memories: [] }, completedAt: ts },
           plotArc: { status: 'success', result: {}, completedAt: ts },
           graph: { status: 'success', result: { chapterGraph: { nodes: [], edges: [], timestamp: ts } }, completedAt: ts }
         },
@@ -303,9 +305,9 @@ describe('archive route — v3 commit (single $transaction, no 409 lock)', () =>
 
     expect(result.status).not.toBe(400)
     expect(result.body).toEqual(expect.objectContaining({ success: true }))
-    // v3: archive 用单 $transaction 写 memory 三层 + chapter.update
+    // v4: archive 用单 $transaction 写 memory 三层 + chapter.update
     expect(mockPrisma.$transaction).toHaveBeenCalled()
-    // v3 全程无 updateMany 锁
+    // v4 全程无 updateMany 锁
     expect(mockPrisma.chapter.updateMany).not.toHaveBeenCalled()
     // archive 路径应至少一次 chapter.update (翻 status → archived)
     expect(mockPrisma.chapter.update).toHaveBeenCalled()
