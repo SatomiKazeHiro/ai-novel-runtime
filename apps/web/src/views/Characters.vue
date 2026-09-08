@@ -538,27 +538,22 @@ onMounted(() => {
   color: var(--text-primary);
 }
 .char-card__attr-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
-  background: var(--color-muted-ash);
+  background: var(--color-mid-gray);
   flex: 0 0 auto;
   transform: translateY(-2px);
+  opacity: 0.5;
 }
-.char-card__attr[data-kind="identity"] .char-card__attr-dot { background: var(--accent); }
-.char-card__attr[data-kind="appearance"] .char-card__attr-dot { background: var(--color-info, #4a5a7a); }
-.char-card__attr[data-kind="temperament"] .char-card__attr-dot { background: var(--color-warm, #d4a04a); }
-.char-card__attr[data-kind="personality"] .char-card__attr-dot { background: var(--color-positive, #5a7a4f); }
-.char-card__attr[data-kind="speechStyle"] .char-card__attr-dot { background: var(--color-protagonist, #b8581e); }
 
 .char-card__attr-key {
-  color: var(--color-muted-ash);
-  font-size: 11px;
-  letter-spacing: 0.3px;
+  color: var(--color-mid-gray);
+  font-size: 12px;
 }
 .char-card__attr-value {
   color: var(--text-primary);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
 }
 
 /* === 章节快照 === */
@@ -580,24 +575,11 @@ onMounted(() => {
 }
 .char-card__snapshot-label {
   flex: 0 0 44px;
-  font-size: 10px;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-  color: var(--accent);
-  font-weight: var(--weight-semibold);
+  font-size: 11px;
+  letter-spacing: 0.8px;
+  color: var(--color-mid-gray);
+  font-weight: var(--weight-regular);
   padding-top: 3px;
-  position: relative;
-}
-.char-card__snapshot-label::before {
-  content: '';
-  position: absolute;
-  left: -10px;
-  top: 5px;
-  width: 3px;
-  height: 12px;
-  background: var(--accent);
-  border-radius: 2px;
-  opacity: 0.55;
 }
 .char-card__snapshot-content {
   flex: 1;
@@ -618,6 +600,6 @@ onMounted(() => {
   color: var(--color-muted-ash);
   font-weight: var(--weight-medium);
 }
-.char-card__source.is-snapshot { color: var(--accent); }
-.char-card__source.is-base { color: var(--color-positive, #5a7a4f); }
+.char-card__source.is-snapshot,
+.char-card__source.is-base { color: var(--color-muted-ash); font-weight: var(--weight-regular); }
 </style>
