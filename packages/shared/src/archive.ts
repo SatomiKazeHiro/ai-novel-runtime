@@ -46,8 +46,8 @@ export interface PendingTimelineEventWrite {
 }
 
 /**
- * All memory-related writes bundled together. Matches the server-side
- * `ArchiveMemoryData` from `apps/server/src/services/memory-extractor.ts`.
+ * All memory-related writes bundled together. (Legacy v2 shape — v3 archive
+ * routes results through `PendingArchiveDataV3.stages` instead.)
  */
 export interface PendingMemories {
   memories: PendingMemoryWrite[]
