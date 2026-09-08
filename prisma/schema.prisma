@@ -41,13 +41,8 @@ model Story {
 
 enum ChapterStatus {
   draft
-  generating
-  generated
-  scored
-  selected
   reviewing
   archived
-  rejected
 }
 
 // 章节

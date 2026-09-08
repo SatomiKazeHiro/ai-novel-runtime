@@ -2,13 +2,8 @@
 
 export const ChapterStatus = {
   DRAFT: 'draft',
-  GENERATING: 'generating',
-  GENERATED: 'generated',
-  SCORED: 'scored',
-  SELECTED: 'selected',
   REVIEWING: 'reviewing',
-  ARCHIVED: 'archived',
-  REJECTED: 'rejected'
+  ARCHIVED: 'archived'
 } as const
 
 export type ChapterStatusType = typeof ChapterStatus[keyof typeof ChapterStatus]
