@@ -343,20 +343,23 @@ describe('POST /chapters/:chapterId/develop — DevelopRequestSchema', () => {
 })
 
 describe('POST /chapters/:chapterId/prepare-archive — PrepareArchiveRequestSchema (empty strict)', () => {
-  // 复用 prepare-archive.test.ts 的 mock 模式:mock combined-extractor + memory-optimizer + graph-snapshot
-  vi.mock('../../services/combined-extractor.js', () => ({
-    prepareArchiveData: vi.fn(),
-    extractAll: vi.fn()
+  // v3 archive route 用 4 个 stage, mock 它们让 route 走完并行段而不打真实 AI。
+  // 配合 character.findMany / characterBranchState.findMany / plotArc.findMany
+  // 让 prepare-archive 的 pre-stage 查询不会因 undefined.findMany 失败。
+  vi.mock('../../services/stages/character-stage.js', () => ({
+    runCharacterStage: vi.fn()
   }))
-  vi.mock('../../services/memory-optimizer.js', () => ({
-    optimizeMemories: vi.fn().mockResolvedValue(0)
+  vi.mock('../../services/stages/memory-stage.js', () => ({
+    runMemoryStage: vi.fn()
   }))
-  vi.mock('../../services/graph-snapshot.js', () => ({
-    saveGraphSnapshotAndDelta: vi.fn().mockResolvedValue({
-      snapshot: { nodes: [], edges: [], timestamp: '' },
-      delta: { nodes: [], edges: [], timestamp: '' }
-    })
+  vi.mock('../../services/stages/plot-arc-stage.js', () => ({
+    runPlotArcStage: vi.fn()
   }))
+  vi.mock('../../services/stages/graph-extract-stage.js', () => ({
+    runGraphExtractStage: vi.fn()
+  }))
+
+  const ts = '2026-07-25T00:00:00.000Z'
 
   let mockPrisma: any
   let routes: Record<string, any>
@@ -372,19 +375,36 @@ describe('POST /chapters/:chapterId/prepare-archive — PrepareArchiveRequestSch
           number: 1, parentChapterId: null,
           story: { id: 's1' }
         }),
-        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        findFirst: vi.fn().mockResolvedValue(null),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
         update: vi.fn().mockResolvedValue({ id: 'c1', status: 'reviewing' })
-      }
-    })
-    const { prepareArchiveData } = await import('../../services/combined-extractor.js')
-    ;(prepareArchiveData as any).mockResolvedValue({
-      memories: { memories: [], characterStates: [], timelineEvents: [], summary: null, timelinePosition: null },
-      graph: {
-        mergedGraph: { nodes: [], edges: [], timestamp: '2026-06-18T00:00:00.000Z' },
-        chapterGraph: { nodes: [], edges: [], timestamp: '2026-06-18T00:00:00.000Z' }
       },
-      plotArcs: [],
-      meta: { extractedAt: '2026-06-18T00:00:00.000Z', chapterNumber: 1 }
+      character: { findMany: vi.fn().mockResolvedValue([]) },
+      characterBranchState: { findMany: vi.fn().mockResolvedValue([]) },
+      plotArc: { findMany: vi.fn().mockResolvedValue([]) }
+    })
+    const { runCharacterStage } = await import('../../services/stages/character-stage.js')
+    const { runMemoryStage } = await import('../../services/stages/memory-stage.js')
+    const { runPlotArcStage } = await import('../../services/stages/plot-arc-stage.js')
+    const { runGraphExtractStage } = await import('../../services/stages/graph-extract-stage.js')
+    ;(runCharacterStage as any).mockResolvedValue({
+      status: 'success', result: { characterStates: [] }, completedAt: ts
+    })
+    ;(runMemoryStage as any).mockResolvedValue({
+      status: 'success',
+      result: {
+        mainEvents: [], sideEvents: [], emotions: [], foreshadowing: [],
+        relationshipChanges: [], scenes: [], timelinePosition: null, summary: ''
+      },
+      completedAt: ts
+    })
+    ;(runPlotArcStage as any).mockResolvedValue({
+      status: 'success', result: { plotArcs: [] }, completedAt: ts
+    })
+    ;(runGraphExtractStage as any).mockResolvedValue({
+      status: 'success',
+      result: { chapterGraph: { nodes: [], edges: [], timestamp: ts } },
+      completedAt: ts
     })
     const { chapterRoutes } = await import('../../routes/chapters.js')
     const built = createMockApp(mockPrisma)
