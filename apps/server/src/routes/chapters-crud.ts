@@ -183,9 +183,6 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
         const { count: memCount } = await prisma.memory.deleteMany({
           where: { storyId: chapter.storyId, fromChapterNumber: chapter.number }
         })
-        const { count: teCount } = await prisma.timelineEvent.deleteMany({
-          where: { storyId: chapter.storyId, fromChapterNumber: chapter.number }
-        })
         const { count: bsCount } = await prisma.characterBranchState.deleteMany({
           where: { fromChapterNumber: chapter.number }
         })
@@ -214,7 +211,7 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
             await prisma.plotArc.update({ where: { id: arc.id }, data: { status } })
           }
         }
-        app.log.info(`[Delete] Cascade cleanup for chapter ${chapter.number}: memory=${memCount}, timeline=${teCount}, branchState=${bsCount}, plotArc=${arcCount}`)
+        app.log.info(`[Delete] Cascade cleanup for chapter ${chapter.number}: memory=${memCount}, branchState=${bsCount}, plotArc=${arcCount}`)
       } catch (err: any) {
         app.log.error(`[Delete] Cascade cleanup failed: ${err.message}`)
       }

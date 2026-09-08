@@ -11,7 +11,6 @@ import { storyRoutes } from './routes/stories.js'
 import { coverRoutes } from './routes/covers.js'
 import { characterRoutes } from './routes/characters.js'
 import { loreRoutes } from './routes/lore.js'
-import { timelineRoutes } from './routes/timeline.js'
 import { chapterRoutes } from './routes/chapters.js'
 import { promptLogRoutes } from './routes/prompt-logs.js'
 import { draftRoutes } from './routes/drafts.js'
@@ -72,7 +71,6 @@ export async function buildApp() {
   await app.register(coverRoutes)
   await app.register(characterRoutes)
   await app.register(loreRoutes)
-  await app.register(timelineRoutes)
   await app.register(chapterRoutes)
   await app.register(draftRoutes)
   await app.register(memoryRoutes)
