@@ -110,7 +110,7 @@ export async function buildCumulativeGraph(
  *   [{ from, to, variants: [...], canonical: "..." }, ...]
  * from/to 是 "type:key" 格式 (代码内部统一)
  */
-function parseRelationMapping(raw: any[]): Map<string, string> {
+export function parseRelationMapping(raw: any[]): Map<string, string> {
   const map = new Map<string, string>()  // key = `${from}|${variant}`, value = canonical
   for (const m of raw) {
     if (!m || typeof m !== 'object') continue
@@ -130,7 +130,7 @@ function parseRelationMapping(raw: any[]): Map<string, string> {
 /**
  * 应用 relation 映射到 snapshot: 重写每条边的 relation 字面
  */
-function applyRelationMapping(snapshot: GraphSnapshot, mapping: Map<string, string>): GraphSnapshot {
+export function applyRelationMapping(snapshot: GraphSnapshot, mapping: Map<string, string>): GraphSnapshot {
   if (mapping.size === 0) return snapshot
   const rewrittenEdges = snapshot.edges.map(e => {
     const k = `${e.fromType}:${e.fromKey}|${e.relation}|${e.toType}:${e.toKey}`
@@ -149,7 +149,7 @@ function applyRelationMapping(snapshot: GraphSnapshot, mapping: Map<string, stri
   }
 }
 
-function codeMerge(prev: GraphSnapshot, chapterGraph: GraphSnapshot, now: string): GraphSnapshot {
+export function codeMerge(prev: GraphSnapshot, chapterGraph: GraphSnapshot, now: string): GraphSnapshot {
   const nodeMap = new Map<string, any>()
   for (const n of prev.nodes) nodeMap.set(`${n.type}:${n.key}`, { ...n, data: n.data || {} })
   for (const n of chapterGraph.nodes) nodeMap.set(`${n.type}:${n.key}`, { ...n, data: n.data || {} })
