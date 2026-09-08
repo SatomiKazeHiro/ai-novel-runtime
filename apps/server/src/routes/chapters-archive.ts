@@ -359,6 +359,24 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     return { success: true, data: updatedPending }
   })
 
+  // GET /api/chapters/:chapterId/cumulative-graph
+  // 拉取累计图谱草稿 + generatedAt; 未生成时返回 { generatedAt: null, graph: null }
+  app.get('/api/chapters/:chapterId/cumulative-graph', async (request, reply) => {
+    const { chapterId } = request.params as any
+    const prisma = app.prisma
+    const chapter = await getOrThrowChapter(prisma, chapterId, reply)
+    if (chapter === null) return
+
+    const generatedAt = chapter.cumulativeGraphGeneratedAt
+      ? chapter.cumulativeGraphGeneratedAt.toISOString()
+      : null
+    const graph = chapter.cumulativeGraph
+      ? safeJsonParse<GraphSnapshot | null>(chapter.cumulativeGraph, null)
+      : null
+
+    return { success: true, data: { generatedAt, graph } }
+  })
+
   app.post('/api/chapters/:chapterId/archive', async (request, reply) => {
     const { chapterId } = request.params as any
     const prisma = app.prisma
