@@ -32,6 +32,7 @@ export interface LocalCharacterState {
   key: string
   status: string            // JSON 字符串
   relationships: string     // JSON 字符串
+  costume?: string          // v4: 衣着快照(留空表示未描写)
   isNew: boolean
 }
 
@@ -225,6 +226,7 @@ export function fromV4(pending: V4PendingArchiveData | null | undefined): LocalD
     characterId: state?.characterId ?? null,
     name: state?.name ?? '', key: state?.key ?? '',
     status: stringifyJson(state?.status), relationships: stringifyJson(state?.relationships),
+    costume: typeof state?.costume === 'string' ? state.costume : '',
     isNew: !!state?.isNew
   }))
   return {
@@ -269,7 +271,9 @@ export function toV4(local: LocalData, original: V4PendingArchiveData): V4Pendin
   stages.character.result = {
     characterStates: memories.characterStates.map((state) => ({
       characterId: state.characterId, name: state.name, key: state.key,
-      status: parseJson(state.status), relationships: parseJson(state.relationships), isNew: state.isNew
+      status: parseJson(state.status), relationships: parseJson(state.relationships),
+      costume: state.costume ?? '',
+      isNew: state.isNew
     }))
   }
   if (!stages.plotArc) stages.plotArc = { status: 'success' }

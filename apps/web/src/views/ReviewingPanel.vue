@@ -45,6 +45,21 @@
           <div v-if="stageStatus('character') === 'failed'" class="rp-stage-error">
             <strong>解析失败:</strong> {{ props.pending?.stages?.character?.errorMessage || '未知错误' }}
           </div>
+          <n-alert
+            v-if="conflicts && conflicts.length > 0"
+            type="error"
+            title="AI 抽取与现有角色冲突"
+            style="margin-bottom: 16px"
+          >
+            <p style="margin: 0 0 8px 0">以下条目需要在归档前处理:</p>
+            <ul style="margin: 0 0 8px 0; padding-left: 20px">
+              <li v-for="c in conflicts" :key="c.writeIndex" style="margin-bottom: 4px">
+                AI 返回 name="{{ c.aiWrite?.name }}", slug="{{ c.aiWrite?.key }}"
+                与已有 name="{{ c.existingCharacter?.name }}", slug="{{ c.existingCharacter?.slug }}" 冲突
+              </li>
+            </ul>
+            <p style="margin: 0">请在下方表格中纠正(选已有 / 修改 AI 返回的 key),或取消归档。</p>
+          </n-alert>
           <div class="rp-stage-actions">
             <n-button size="small" :disabled="isRetrying('character')" @click="emit('retry-stage', 'character')">
               {{ isRetrying('character') ? '重新解析中…' : '重新解析此阶段' }}
@@ -67,6 +82,7 @@
                   </div>
                   <h3 class="cap-character-card__item-name-wrap">
                     <span>{{ state.name || state.characterId }}</span>
+                    <span v-if="state.isNew" class="cap-pill is-sm is-warm" style="margin-left: 8px">新角色</span>
                     <button
                       type="button"
                       class="cap-pill is-sm is-danger cap-character-card__item-remove"
@@ -76,6 +92,16 @@
                     >删除</button>
                   </h3>
                 </header>
+                <div v-if="state.isNew" class="cap-character-card__field">
+                  <span class="cap-character-card__field-label">00 · 纠正为已有角色</span>
+                  <n-select
+                    :value="state.characterId"
+                    :options="existingCharacterOptions"
+                    placeholder="如果这是已有角色, 请选择"
+                    clearable
+                    @update:value="(val: string | null) => onCorrectCharacter(state, val)"
+                  />
+                </div>
                 <div class="cap-character-card__field">
                   <span class="cap-character-card__field-label">01 · 状态</span>
                   <n-input
@@ -462,16 +488,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import {
   NCard, NSpace, NTabs, NTabPane, NCollapse, NCollapseItem,
   NInput, NInputNumber, NButton, NEmpty, NGrid, NGi, NText,
-  NSelect, NSlider,
+  NSelect, NSlider, NAlert,
   useDialog, useMessage
 } from 'naive-ui'
 import EditableGraph from '../components/graph/EditableGraph.vue'
 import { cumulativeGraphApi } from '../api/cumulative-graph'
 import DynamicTags from '../components/DynamicTags.vue'
+import { charactersApi } from '../api/characters'
+import { chaptersApi } from '../api/chapters'
 import {
   fromV4, toV4,
   type V4PendingArchiveData, type LocalData
@@ -484,6 +512,13 @@ const props = defineProps<{
   archiveRunning?: boolean
   // 可选: 指定默认激活的 tab (默认 'characters')。父组件可传入 'memories' 等
   defaultTab?: string
+  // 可选: archive 端点 409 返回的冲突信息(由父组件持有并传入,用于显示冲突横幅)
+  conflicts?: Array<{
+    writeIndex: number
+    reason: string
+    existingCharacter?: { id: string; slug: string; name: string }
+    aiWrite?: { name: string; key: string }
+  }>
 }>()
 
 const defaultTab = computed(() => props.defaultTab ?? 'characters')
@@ -634,6 +669,31 @@ function removeMemory(mem: any) {
     if (idx >= 0) localData.value.memories.memories.splice(idx, 1)
   })
 }
+// v4: 纠正下拉 — 已加载当前 story 的所有 character,作为下拉选项
+interface CharacterOption { label: string; value: string }
+const existingCharacterOptions = ref<CharacterOption[]>([])
+async function loadExistingCharacters() {
+  if (!props.chapterId) return
+  try {
+    const chapterRes = await chaptersApi.get(props.chapterId)
+    const storyId = chapterRes.data?.data?.storyId
+    if (!storyId) return
+    const list = await charactersApi.list(storyId)
+    existingCharacterOptions.value = (list.data?.data ?? []).map((c: any) => ({
+      label: `${c.name} (${c.slug})`,
+      value: c.id
+    }))
+  } catch {
+    // 静默失败: 纠正下拉空着,用户仍可手动编辑 key/name 触发 resolve 流程
+  }
+}
+function onCorrectCharacter(state: any, correctedId: string | null) {
+  state.characterId = correctedId
+  // 选了已有角色 → 不再新建;不选或清空 → 保留 isNew 让后端走自动建档流程
+  state.isNew = correctedId === null
+}
+onMounted(loadExistingCharacters)
+
 function addCharacterState() {
   localData.value.memories.characterStates.push({
     characterId: null,
