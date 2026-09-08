@@ -140,7 +140,7 @@
       </div>
     </n-spin>
 
-    <!-- 新建/编辑角色弹窗 (v4: 不再编辑关系/状态,走 PUT append snapshot) -->
+    <!-- 新建/编辑角色弹窗 (v4: base 始终可编辑; 快照只读, 仅归档时由 AI 写入) -->
     <n-modal v-model:show="showModal" :title="isEdit ? '编辑角色' : '新建角色'" preset="card" :style="{ width: editingHasSnapshot ? '960px' : '640px' }">
       <div :class="{ 'character-edit-columns': editingHasSnapshot }">
       <n-form :model="form" label-placement="left" label-width="80">
@@ -168,14 +168,15 @@
         <n-form-item label="说话风格">
           <DynamicTags v-model="form.speechStyle" />
         </n-form-item>
+        <n-divider title-placement="left">基础状态与关系</n-divider>
+        <n-alert v-if="editingHasSnapshot" type="info" :show-icon="true">
+          该角色已有章节快照（见右侧），生成章节时 AI 优先参考快照中的关系/状态；此处的修改在快照存在时不生效。
+        </n-alert>
         <n-form-item label="基础关系"><n-input v-model:value="form.relationshipsText" type="textarea" placeholder="e.g. {&quot;Alice&quot;: &quot;friend&quot;}" /></n-form-item>
         <n-form-item label="Base status"><n-input v-model:value="form.statusText" type="textarea" placeholder="e.g. {&quot;rank&quot;: &quot;level 1&quot;}" /></n-form-item>
-        <n-alert type="info" :show-icon="true" style="margin-top: 8px">
-          AI 优先参考章节快照；无章节快照时，使用此处的基础设定。
-        </n-alert>
       </n-form>
         <aside v-if="editingHasSnapshot && editingCharacter" class="character-edit-snapshot">
-          <span class="character-edit-snapshot__hint">章节快照由归档分析生成，仅供查看，暂不支持手动编辑。</span>
+          <span class="character-edit-snapshot__hint">章节快照由归档 AI 分析生成，仅供查看，不可编辑。</span>
           <n-select v-model:value="snapshotChapter" :options="chapterOptions" size="small" placeholder="Select snapshot chapter" />
           <span class="char-card__label">最新章节快照</span>
           <div class="character-edit-snapshot__row"><strong>关系</strong><span>{{ formatObject(snapshotCharacter?.relationships?.value) || '未提取' }}</span></div>
@@ -199,7 +200,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NSpace, NButton, NModal, NForm, NFormItem, NInput, NCheckbox,
-  NSelect, NAlert, NSpin, NEmpty, useDialog, useMessage
+  NSelect, NAlert, NSpin, NEmpty, NDivider, useDialog, useMessage
 } from 'naive-ui'
 import { charactersApi, type CharacterDisplayRow } from '../api/characters'
 /**
