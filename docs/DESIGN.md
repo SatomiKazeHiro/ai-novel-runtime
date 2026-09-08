@@ -423,6 +423,30 @@ Max-width 1200px centered container, light theme throughout except one dark deve
 
 **下个 phase 候选 (v3 之前)**：
 - **拆分"归档中"工作流**：当前 `prepare-archive` 一路由串了 4 phase（extract → organize graph → human review → confirm），状态机层面已用 `reviewing` 收口但路由仍单点。v3 应把 4 phase 拆为独立 sub-route 或后台 job，让每步可独立 retry / observability。前端 ReviewingPanel 当前承担了"review" 阶段的 UI，下一步要把"extract / organize" 也搬到前端可见的进度条。
+- **删除 TimelineEvent**（v3 标记，2026-07-24 已写入 schema 注释）：详见下方决策日志"Y3 标记：TimelineEvent 废弃"。
 - **如何开始**：当再次出现"某个 phase 失败要把整个 archive 流程回退"的报告时，就是 v3 的触发信号。
 
 实现细节：5 个 commit × 1 branch，spec 在 `docs/superpowers/specs/2026-07-24-v2-state-machine-design.md`，plan 在 `docs/superpowers/plans/2026-07-24-v2-state-machine.md`。
+
+## Y3 标记：TimelineEvent 废弃（2026-07-24，仅标记，不实施）
+
+**Why**: TimelineEvent 在当前实现里有两个不可调和的设计缺陷 —
+- **强时间戳假设**：`position` 是 Y.DDDHH 浮点数（年.年内第N天第N小时），预设"故事存在一根绝对时间轴"。无时间设定、时间模糊（"几十年前"）、嵌套叙事、回忆、平行世界等类型下，AI 要么强行编一个无意义的 Y.DDDHH（污染），要么抽不出（丢信息）。
+- **全文注入反模式**：`chapters-generate.ts:74,103` 用 `findMany` 全量拉所有 TimelineEvent 塞进 prompt，与 Memory.semantic recall top-K 形成对比 —— 章节越多 prompt 越长，但绝大多数事件与"当前章节要写什么"无关。
+- **与 Memory 大量重叠**：Memory 已经是检索驱动、容忍模糊、自由文本，能覆盖 timeline 约 80% 的职责。多出来的 20%（"按时间排序的世界事件序列"）对很多故事类型无意义。
+
+**What**: v3 实施时一次性砍掉。具体动作待 v3 brainstorm 时定，目前候选两个方向：
+- A. **完全删除 TimelineEvent 表**，把"事件"作为 Memory 的一个 layer（`layer='event'`）。最简。
+- B. **保留但弱化**：`position` 改可选（null = 时间未定），`chapterNumber` 必填 + 可选 `narrativeTime`（"几天前"、"第一章时"）；注入改 top-K 检索共享 memory 路径。保留序列感。
+
+**Trade-off**:
+- A 失去"按绝对时间排序"能力，对无时间/模糊时间类故事无损失；对有绝对纪年类故事需先确认是否真的需要这能力。
+- B 向后兼容更好，但保留一个 schema 复杂度换 20% 功能。
+- 无论 A/B，都不再承担"独立于 memory 的世界事件索引"这一职责 —— 这是这次决策的核心。
+
+**How to apply**:
+- v2 期间**不动 TimelineEvent 表**（保留向后兼容，已有数据继续可用）。新增 prompt 注入、archive 抽取逻辑继续走 TimelineEvent。
+- **新功能不要依赖 TimelineEvent**（schema 已加 `/// @deprecated` 注释，IDE 会显示）。遇到"需要按时间排序的世界事件"的场景，先评估 semantic memory 是否能覆盖。
+- **前端不要写新 UI 引用 TimelineEvent**。ChapterEditor / ReviewingPanel 中已有的 timeline 视图保留到 v3。
+- v3 启动时连同其他候选（拆分 prepare-archive 工作流）一并规划 migration。
+- **触发条件**：v3 真正开始时。如果项目长期停留在 v2，timeline 也不应急于删除 —— 留着比砍了更安全（数据还在）。

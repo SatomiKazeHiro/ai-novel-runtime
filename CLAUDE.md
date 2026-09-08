@@ -165,6 +165,8 @@ The frontend visualizes this with Cytoscape.
 
 `TimelineEvent.position` is stored as a single-decimal **Y.DDDHH** float where the integer part is the year (negative = pre-history) and the decimal part is exactly 5 digits `DDDHH` (day-of-year 1–365 + hour 0–23). Rendered through `formatTimelinePosition()` (currently in `apps/server/src/routes/chapters-generate.ts`); use the same encoding when inserting or comparing positions. Schema migration `20260626000000_timeline_position_encoding` introduced this; pre-migration rows should already be backfilled.
 
+> **TimelineEvent 在 v3 删除**（2026-07-24 标记）。强 Y.DDDHH 时间戳假设排除无时间/模糊时间类故事；`findMany` 全量注入与 Memory.semantic recall 重复。v3 实施见 `docs/DESIGN.md` 决策日志。v2 期间不要在新代码里依赖 TimelineEvent。
+
 ## Key Conventions
 
 ### Import Rules
