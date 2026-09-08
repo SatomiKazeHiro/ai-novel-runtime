@@ -369,14 +369,55 @@
           </div>
           <div class="rp-stage-actions">
             <n-button size="small" :disabled="isRetrying('graph')" @click="emit('retry-stage', 'graph')">
-              {{ isRetrying('graph') ? '重新解析中…' : '重新解析此阶段' }}
+              {{ isRetrying('graph') ? '重新解析中…' : '重新解析本章图谱' }}
             </n-button>
           </div>
-          <!-- 图谱编辑器自管 state, 不回传; save/confirm 时通过 graphRef.getData() 拉回 -->
-          <EditableGraph
-            ref="graphRef"
-            :initial-graph-data="graphData"
-          />
+
+          <!-- 本章图谱: 编辑器自管 state, 不回传; save/confirm 时通过 chapterGraphRef.getData() 拉回 -->
+          <n-card title="本章图谱" size="small" style="margin-bottom: 16px">
+            <EditableGraph
+              ref="chapterGraphRef"
+              :initial-graph-data="graphData"
+            />
+          </n-card>
+
+          <!-- 累计图谱: 用户维护的草稿, 由 cumulative-graph 子路由独立读写 -->
+          <n-card title="累计图谱" size="small">
+            <template #header-extra>
+              <n-space>
+                <n-button
+                  v-if="!cumulativeGeneratedAt"
+                  size="small"
+                  type="primary"
+                  :loading="buildingCumulative"
+                  @click="handleBuildCumulative"
+                >生成累计图谱</n-button>
+                <template v-else>
+                  <n-button
+                    size="small"
+                    :loading="buildingCumulative"
+                    @click="handleBuildCumulative"
+                  >重新生成</n-button>
+                  <n-button
+                    size="small"
+                    type="primary"
+                    :loading="savingCumulative"
+                    @click="handleSaveCumulative"
+                  >保存调整</n-button>
+                </template>
+              </n-space>
+            </template>
+            <n-empty
+              v-if="!cumulativeGeneratedAt"
+              description="本章图谱编辑差不多后, 点上面「生成累计图谱」生成。"
+              style="margin: 24px 0"
+            />
+            <EditableGraph
+              v-else
+              ref="cumulativeGraphRef"
+              :initial-graph-data="cumulativeGraphDraft"
+            />
+          </n-card>
         </n-tab-pane>
       </n-tabs>
 
@@ -384,21 +425,22 @@
       <n-space justify="end" style="width: 100%; margin-top: 16px">
         <n-button @click="emit('cancel')">取消</n-button>
         <n-button type="primary" :loading="saving" @click="handleSave">保存调整</n-button>
-        <n-button type="success" :loading="confirming" @click="handleConfirm">确认归档</n-button>
+        <n-button type="success" :loading="archiveRunning ?? false" @click="handleConfirm">确认归档</n-button>
       </n-space>
     </n-space>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import {
   NCard, NSpace, NTabs, NTabPane, NCollapse, NCollapseItem,
   NInput, NInputNumber, NButton, NEmpty, NGrid, NGi, NText,
   NSelect, NSlider,
-  useDialog
+  useDialog, useMessage
 } from 'naive-ui'
 import EditableGraph from '../components/graph/EditableGraph.vue'
+import { cumulativeGraphApi } from '../api/cumulative-graph'
 import DynamicTags from '../components/DynamicTags.vue'
 import {
   fromV3, toV3,
@@ -408,6 +450,8 @@ import {
 const props = defineProps<{
   pending: V3PendingArchiveData
   retryingStages?: Partial<Record<StageName, boolean>>
+  chapterId: string
+  archiveRunning?: boolean
 }>()
 
 type StageName = 'character' | 'memory' | 'plotArc' | 'graph'
@@ -421,9 +465,30 @@ const emit = defineEmits<{
 }>()
 
 const saving = ref(false)
-const confirming = ref(false)
 const dialog = useDialog()
-const graphRef = ref<InstanceType<typeof EditableGraph> | null>(null)
+const message = useMessage()
+const chapterGraphRef = ref<InstanceType<typeof EditableGraph> | null>(null)
+// 累计图谱: 独立于 pendingArchiveData, 由 cumulative-graph 子路由读写
+const cumulativeGraphRef = ref<InstanceType<typeof EditableGraph> | null>(null)
+const cumulativeGraphDraft = ref<any>({ nodes: [], edges: [] })
+const cumulativeGeneratedAt = ref<string | null>(null)
+const buildingCumulative = ref(false)
+const savingCumulative = ref(false)
+
+async function loadCumulativeGraph() {
+  if (!props.chapterId) return
+  try {
+    const res: any = await cumulativeGraphApi.get(props.chapterId)
+    const data = res?.data?.data
+    cumulativeGeneratedAt.value = data?.generatedAt ?? null
+    cumulativeGraphDraft.value = data?.graph ?? { nodes: [], edges: [] }
+  } catch (err) {
+    // 静默; UI 仍会显示 "未生成" 状态
+  }
+}
+
+onMounted(() => { loadCumulativeGraph() })
+watch(() => props.chapterId, () => { loadCumulativeGraph() })
 
 const localData = ref<LocalData>(fromV3(props.pending))
 
@@ -587,8 +652,41 @@ function removePlotArc(idx: number) {
 }
 // 把 EditableGraph 自管的草稿拉回到 localData, 然后再 toV3 发送
 function pullGraphDraftIntoLocalData() {
-  const g = graphRef.value?.getData()
+  const g = chapterGraphRef.value?.getData()
   if (g) localData.value.graph.chapterGraph = g
+}
+
+// === 累计图谱: 生成 / 保存 ===
+async function handleBuildCumulative() {
+  const chapterGraph = chapterGraphRef.value?.getData()
+  if (!chapterGraph) return
+  buildingCumulative.value = true
+  try {
+    const res: any = await cumulativeGraphApi.build(props.chapterId, chapterGraph)
+    const data = res?.data?.data
+    cumulativeGraphDraft.value = data?.graph ?? { nodes: [], edges: [] }
+    cumulativeGeneratedAt.value = data?.generatedAt ?? new Date().toISOString()
+  } catch (err: any) {
+    const msg = err?.response?.data?.error ?? err?.message ?? '累计图谱生成失败'
+    message.error(msg)
+  } finally {
+    buildingCumulative.value = false
+  }
+}
+
+async function handleSaveCumulative() {
+  if (!cumulativeGraphRef.value) return
+  const graph = cumulativeGraphRef.value.getData()
+  savingCumulative.value = true
+  try {
+    await cumulativeGraphApi.save(props.chapterId, graph)
+    message.success('已保存')
+  } catch (err: any) {
+    const msg = err?.response?.data?.error ?? err?.message ?? '保存失败'
+    message.error(msg)
+  } finally {
+    savingCumulative.value = false
+  }
 }
 
 // === 底部三按钮 ===
@@ -596,13 +694,17 @@ function handleSave() {
   pullGraphDraftIntoLocalData()
   saving.value = true
   try { emit('save', toV3(localData.value, props.pending)) }
-  finally { setTimeout(() => { saving.value = false }, 200) }
+  finally { saving.value = false }
 }
 function handleConfirm() {
+  // 前置软校验: 累计图谱未生成时拦截 emit, 弹 toast
+  if (!cumulativeGeneratedAt.value) {
+    message.error('请先生成累计图谱再归档')
+    return
+  }
   pullGraphDraftIntoLocalData()
-  confirming.value = true
-  try { emit('confirm', toV3(localData.value, props.pending)) }
-  finally { setTimeout(() => { confirming.value = false }, 200) }
+  // 注意: 按钮 loading 由父组件 archiveRunning 控制, 这里不再 set confirming
+  emit('confirm', toV3(localData.value, props.pending))
 }
 </script>
 
