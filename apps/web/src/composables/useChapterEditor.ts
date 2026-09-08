@@ -5,6 +5,10 @@ import { plotArcApi } from '../api/plot-arc'
 import { runtimeApi as runtimeProfileApi } from '../api/runtime'
 import { aiProviderApi } from '../api/ai-provider'
 
+// v3 pendingArchiveData 空骨架。撤销审查 / 版本不匹配时可作为占位默认值,
+// 避免模板访问 stages/meta 时报 undefined。
+export const V3_EMPTY_PAYLOAD = { version: 3, stages: {}, meta: { extractedAt: '', chapterNumber: 0 } }
+
 export function useChapterEditor(storyId: () => string | undefined) {
   const message = useMessage()
 
@@ -18,7 +22,7 @@ export function useChapterEditor(storyId: () => string | undefined) {
   const editForm = ref({ outline: '', content: '', sceneLocation: '', sceneMood: '', sceneGoal: '' })
   const plotArcs = ref<any[]>([])
   const chapterGraph = ref<any>(null)
-  const pendingArchiveData = ref<any>(null)
+  const pendingArchiveData = ref<any>(null)  // v3 shape: { version: 3, stages: {...}, meta }
   const savingContent = ref(false)
 
   async function loadProfiles() {
@@ -185,6 +189,31 @@ export function useChapterEditor(storyId: () => string | undefined) {
     }
   }
 
+  async function prepareArchiveCancel() {
+    if (!currentChapter.value) return { success: false }
+    if (currentChapter.value.status !== 'reviewing') {
+      message.warning('只有 reviewing 状态可以撤销审查')
+      return { success: false }
+    }
+    try {
+      const res = await chaptersApi.prepareArchiveCancel(currentChapter.value.id)
+      if (res.data.success) {
+        currentChapter.value.status = 'draft'
+        currentChapter.value.pendingArchiveData = null
+        currentChapter.value.chapterGraph = null
+        pendingArchiveData.value = null
+        message.success('已撤销审查，回到草稿')
+        return { success: true }
+      } else {
+        message.error(res.data.error || '撤销审查失败')
+        return { success: false }
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.error || '撤销审查失败')
+      return { success: false }
+    }
+  }
+
   async function archiveChapter() {
     if (!currentChapter.value) return { success: false }
     if (currentChapter.value.status !== 'reviewing') {
@@ -229,6 +258,7 @@ export function useChapterEditor(storyId: () => string | undefined) {
     saveContent,
     savePendingArchiveData,
     prepareArchive,
+    prepareArchiveCancel,
     archiveChapter
   })
 }

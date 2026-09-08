@@ -249,16 +249,15 @@
 
         <!-- ========== Step 3.5: 归档审查 (嵌入 ReviewingPanel) ========== -->
         <ReviewingPanel
-            v-if="chapter?.status === 'reviewing' && pendingArchiveData"
-            ref="reviewingPanelRef"
-            :chapter="chapter"
-            :pending-archive-data="pendingArchiveData"
-            @save="(data: any) => emit('save-pending-archive', data)"
-            @confirm="(data: any) => emit('confirm-archive', data)"
-            @cancel="emit('cancel-reviewing')"
+            v-if="chapter?.status === 'reviewing' && pendingArchiveData?.version === 3"
+            :pending="pendingArchiveData"
+            @reprepare="emit('reprepare-archive')"
+            @cancel="emit('prepare-archive-cancel')"
+            @archive="emit('confirm-archive')"
+            @update-stage="(stageName: string, result: unknown) => emit('update-stage', stageName, result)"
         />
 
-        <!-- reviewing 但无待归档数据:提示异常 -->
+        <!-- reviewing 但无待归档数据 / 数据版本过旧:提示异常 -->
         <n-card
             v-else-if="chapter?.status === 'reviewing'"
             title="归档审查"
@@ -357,7 +356,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { computed } from "vue";
 import {
     NSpace,
     NButton,
@@ -439,24 +438,12 @@ const emit = defineEmits<{
     (e: "generate-custom"): void;
     (e: "adopt-draft", draft: any): void;
     (e: "prepare-archive"): void;
-    (e: "save-pending-archive", data: any): void;
-    (e: "confirm-archive", data: any): void;
+    (e: "confirm-archive"): void;
+    (e: "prepare-archive-cancel"): void;
+    (e: "update-stage", stageName: string, result: unknown): void;
     (e: "reprepare-archive"): void;
     (e: "cancel-reviewing"): void;
 }>();
-
-// ReviewingPanel ref(子组件内部持有,view shell 通过 chapterEditorRef.startConfirm / stopConfirm 间接调用)
-const reviewingPanelRef = ref<InstanceType<typeof ReviewingPanel> | null>(null);
-
-function startConfirm() {
-    reviewingPanelRef.value?.startConfirm();
-}
-
-function stopConfirm() {
-    reviewingPanelRef.value?.stopConfirm();
-}
-
-defineExpose({ startConfirm, stopConfirm });
 
 // v2 细粒度 readonly:
 // canEdit: 后端 chapters-crud 允许修改字段 = status==='draft'

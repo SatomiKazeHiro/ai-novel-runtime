@@ -20,7 +20,6 @@
     />
     <ChapterEditor
         v-else
-        ref="chapterEditorRef"
         :chapter="editor.currentChapter"
         v-model:edit-title="editor.editTitle"
         v-model:edit-form="editor.editForm"
@@ -44,8 +43,9 @@
         @generate-custom="handleGenerateCustom"
         @adopt-draft="handleAdoptDraft"
         @prepare-archive="handlePrepareArchive"
-        @save-pending-archive="handleSavePendingArchiveData"
         @confirm-archive="handleConfirmArchive"
+        @prepare-archive-cancel="handlePrepareArchiveCancel"
+        @update-stage="handleUpdateStage"
         @reprepare-archive="handleReprepareArchive"
         @cancel-reviewing="handleCancelReviewing"
     />
@@ -82,8 +82,6 @@ const archiving = ref(false);
 const repreparingArchive = ref(false);
 const dialog = useDialog();
 const message = useMessage();
-// 引用 ChapterEditor,用于 confirm 流程触发 ReviewingPanel.startConfirm / stopConfirm
-const chapterEditorRef = ref<InstanceType<typeof ChapterEditor> | null>(null);
 
 // ========== 生命周期 ==========
 onMounted(() => {
@@ -256,20 +254,36 @@ function handlePrepareArchive() {
     });
 }
 
-async function handleSavePendingArchiveData(data: any) {
-    await editor.savePendingArchiveData(data);
+async function handleConfirmArchive() {
+    // v3: ReviewingPanel 只读,pendingArchiveData 在 prepareArchive 时已写入 DB。
+    // archive 端点直接读 Chapter.pendingArchiveData 并 commit。
+    const result = await editor.archiveChapter();
+    if (result.success) await handleBackToTree();
 }
 
-async function handleConfirmArchive(data: any) {
-    chapterEditorRef.value?.startConfirm();
-    try {
-        const saveResult = await editor.savePendingArchiveData(data);
-        if (!saveResult.success) return;
-        const result = await editor.archiveChapter();
-        if (result.success) await handleBackToTree();
-    } finally {
-        chapterEditorRef.value?.stopConfirm();
-    }
+async function handlePrepareArchiveCancel() {
+    // v3: 撤销审查回退到 draft(不删章节)。弹窗确认避免误操作。
+    if (!editor.currentChapter) return;
+    const ok = await new Promise<boolean>((resolve) => {
+        dialog.warning({
+            title: "撤销审查",
+            content: "撤销后将回到草稿状态,本次提取的记忆/图谱/弧线数据会清空(章节本身保留)。是否继续?",
+            positiveText: "撤销",
+            negativeText: "保留审查",
+            positiveButtonProps: { type: "warning" },
+            onPositiveClick: () => resolve(true),
+            onNegativeClick: () => resolve(false),
+            onClose: () => resolve(false),
+        });
+    });
+    if (!ok) return;
+    await editor.prepareArchiveCancel();
+}
+
+async function handleUpdateStage(stageName: string, result: unknown) {
+    // v3: StageCard 是只读展示,目前不向父组件传回 stage 变更;
+    // 留作未来允许用户在面板内编辑 stage 数据的扩展点。
+    console.debug("[handleUpdateStage] noop", stageName, result);
 }
 
 async function handleReprepareArchive() {
