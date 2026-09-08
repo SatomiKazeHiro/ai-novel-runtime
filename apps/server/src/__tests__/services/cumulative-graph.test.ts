@@ -16,14 +16,6 @@ vi.mock('../../services/runtime-loader.js', () => ({
   })
 }))
 
-vi.mock('../../services/graph-snapshot.js', async () => {
-  const actual = await vi.importActual<any>('../../services/graph-snapshot.js')
-  return {
-    ...actual,
-    expandNeighborhood: vi.fn()
-  }
-})
-
 vi.mock('../../services/ai-provider-init.js', () => ({
   resolveProvider: vi.fn().mockResolvedValue({
     provider: {},
@@ -48,7 +40,6 @@ vi.mock('@novel-runtime/ai-provider', () => {
 
 import { buildCumulativeGraph } from '../../services/cumulative-graph.js'
 import { callAIWithLog } from '../../services/ai-call-logger.js'
-import { expandNeighborhood } from '../../services/graph-snapshot.js'
 
 const mockApp: any = {
   prisma: {},
@@ -70,7 +61,6 @@ describe('buildCumulativeGraph', () => {
     expect(result.aiCalled).toBe(false)
     expect(result.cumulativeGraph).toEqual(prev)
     expect(callAIWithLog).not.toHaveBeenCalled()
-    expect(expandNeighborhood).not.toHaveBeenCalled()
   })
 
   it('returns chapterGraph copy when prev is null (first chapter)', async () => {
@@ -84,53 +74,85 @@ describe('buildCumulativeGraph', () => {
     expect(result.aiCalled).toBe(false)
     expect(result.cumulativeGraph.nodes).toEqual(chapterGraph.nodes)
     expect(callAIWithLog).not.toHaveBeenCalled()
-    expect(expandNeighborhood).not.toHaveBeenCalled()
   })
 
-  it('calls AI dedup and merges when both chapterGraph and prev are non-empty', async () => {
+  it('applies relation mapping from AI and merges chapterGraph into prev', async () => {
+    // 模拟 3 章累积的"老字面漂移"数据: c1 写"收留/决定帮助", c2 写"收留并帮助"
     const prev = {
       nodes: [
-        { type: 'character', key: 'a', label: 'A', data: {} },
-        { type: 'character', key: 'b', label: 'B', data: {} }
+        { type: 'character', key: 'xu_qing', label: '许青', data: {} },
+        { type: 'character', key: 'jiang_he', label: '姜禾', data: {} }
       ],
+      edges: [
+        { fromType: 'character', fromKey: 'xu_qing', toType: 'character', toKey: 'jiang_he', relation: '收留/决定帮助', weight: 1 },
+        { fromType: 'character', fromKey: 'jiang_he', toType: 'character', toKey: 'xu_qing', relation: '被收留/戒备与初步信任', weight: 1 }
+      ],
+      timestamp: ts
+    }
+    const chapterGraph = {
+      nodes: [{ type: 'character', key: 'xu_qing', label: '许青', data: { newAttr: 'x' } }],
+      edges: [
+        { fromType: 'character', fromKey: 'xu_qing', toType: 'character', toKey: 'jiang_he', relation: '收留并帮助', weight: 1 },
+        { fromType: 'character', fromKey: 'jiang_he', toType: 'character', toKey: 'xu_qing', relation: '初步信任并依赖', weight: 1 }
+      ],
+      timestamp: ts
+    }
+
+    // AI dedup 输出 relation 归一映射: 把同义字面统一
+    const aiMapping = {
+      mappings: [
+        {
+          from: 'character:xu_qing',
+          to: 'character:jiang_he',
+          variants: ['收留/决定帮助', '收留并帮助'],
+          canonical: '收留'
+        },
+        {
+          from: 'character:jiang_he',
+          to: 'character:xu_qing',
+          variants: ['被收留/戒备与初步信任', '初步信任并依赖'],
+          canonical: '初步信任'
+        }
+      ]
+    }
+    ;(callAIWithLog as any).mockResolvedValueOnce(JSON.stringify(aiMapping))
+
+    const result = await buildCumulativeGraph(mockApp, {
+      storyId: 's1', chapterId: 'c1', chapterNumber: 3,
+      chapterGraph, prevCumulativeGraph: prev
+    })
+
+    expect(result.aiCalled).toBe(true)
+    expect(callAIWithLog).toHaveBeenCalled()
+    // 应用映射后: 4 条不同字面的边 → 2 条统一字面的边, weight 累加
+    expect(result.cumulativeGraph.edges).toHaveLength(2)
+    const xqToJh = result.cumulativeGraph.edges.find(e => e.fromKey === 'xu_qing' && e.toKey === 'jiang_he')!
+    const jhToXq = result.cumulativeGraph.edges.find(e => e.fromKey === 'jiang_he' && e.toKey === 'xu_qing')!
+    expect(xqToJh.relation).toBe('收留')
+    expect(jhToXq.relation).toBe('初步信任')
+    expect(xqToJh.weight).toBe(2)  // prev + chapterGraph 各贡献 1
+    expect(jhToXq.weight).toBe(2)
+  })
+
+  it('passes through when AI returns empty mapping (no relation changes)', async () => {
+    const prev = {
+      nodes: [{ type: 'character', key: 'a', label: 'A', data: {} }],
       edges: [{ fromType: 'character', fromKey: 'a', toType: 'character', toKey: 'b', relation: '朋友', weight: 1 }],
       timestamp: ts
     }
     const chapterGraph = {
-      nodes: [{ type: 'character', key: 'a', label: 'A', data: { newAttr: 'x' } }],
+      nodes: [{ type: 'character', key: 'a', label: 'A', data: {} }],
       edges: [{ fromType: 'character', fromKey: 'a', toType: 'character', toKey: 'b', relation: '敌对', weight: 1 }],
       timestamp: ts
     }
-
-    // AI dedup 后的子图
-    const deduped = {
-      nodes: [
-        { type: 'character', key: 'a', label: 'A', data: { newAttr: 'x' } },
-        { type: 'character', key: 'b', label: 'B', data: {} }
-      ],
-      edges: [
-        { fromType: 'character', fromKey: 'a', toType: 'character', toKey: 'b', relation: '朋友', weight: 1 },
-        { fromType: 'character', fromKey: 'a', toType: 'character', toKey: 'b', relation: '敌对', weight: 1 }
-      ]
-    }
-    ;(expandNeighborhood as any).mockReturnValueOnce({
-      nodes: prev.nodes,
-      edges: prev.edges,
-      truncated: false,
-      estimatedTokens: 0
-    })
-    ;(callAIWithLog as any).mockResolvedValueOnce(JSON.stringify(deduped))
+    ;(callAIWithLog as any).mockResolvedValueOnce(JSON.stringify({ mappings: [] }))
 
     const result = await buildCumulativeGraph(mockApp, {
       storyId: 's1', chapterId: 'c1', chapterNumber: 2,
       chapterGraph, prevCumulativeGraph: prev
     })
 
-    expect(result.aiCalled).toBe(true)
-    expect(callAIWithLog).toHaveBeenCalled()
-    expect(expandNeighborhood).toHaveBeenCalled()
-    // a 在 dedup 中保留,b 也保留,两条边都保留
-    expect(result.cumulativeGraph.nodes).toHaveLength(2)
+    // AI 没给 mapping → 不重写 → 两条字面不同的边都保留(关系演化)
     expect(result.cumulativeGraph.edges).toHaveLength(2)
   })
 
@@ -138,12 +160,6 @@ describe('buildCumulativeGraph', () => {
     const chapterGraph = { nodes: [{ type: 'character', key: 'a', label: 'A', data: {} }], edges: [], timestamp: ts }
     const prev = { nodes: [{ type: 'character', key: 'a', label: 'A', data: {} }], edges: [], timestamp: ts }
 
-    ;(expandNeighborhood as any).mockReturnValueOnce({
-      nodes: prev.nodes,
-      edges: prev.edges,
-      truncated: false,
-      estimatedTokens: 0
-    })
     ;(callAIWithLog as any).mockResolvedValueOnce(null)
 
     await expect(buildCumulativeGraph(mockApp, {

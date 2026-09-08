@@ -455,7 +455,8 @@ Max-width 1200px centered container, light theme throughout except one dark deve
 - `buildCumulativeGraph` (`apps/server/src/services/cumulative-graph.ts`):
   1. 空 chapterGraph → 继承 prev (no AI)
   2. 首章 → chapterGraph 自身 (no AI)
-  3. 正常 → 2-hop BFS over prev 找与 chapterGraph 共享 type:key 的邻域 → AI dedup → code merge
+  3. 正常 → AI 做 relation 字面归一映射(同义/升级/反转归到一个字面)→ 程序按映射重写 prev + chapterGraph 全部 relation → codeMerge 按五元组 key 合并
+- relation 漂移解决方案: AI dedup 阶段只输出 `mappings: [{from, to, variants, canonical}]`,程序 `applyRelationMapping` 重写边 relation 字面,再交给 `codeMerge` 按 `${fromType}:${fromKey}|${relation}|${toType}:${toKey}` 五元组去重 + weight 累加。原"1 跳邻域 AI 压缩图谱"在跨章 relation 字面漂移(例: c1 收留/决定帮助, c2 收留并帮助, c3 收留)下会让累计图谱累积多条字面不同的边,改用全量 prev 输入 + 映射表方案后能真正合并。
 - v3 删除所有 `updateMany({where: {status: ...}})` 锁。仅依赖状态机自身 + UI 按钮 disabled 防双击。
 
 **Trade-off**:

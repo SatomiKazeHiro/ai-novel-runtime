@@ -3,13 +3,25 @@ import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
 import { cleanJsonBlock } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
-import { expandNeighborhood, type GraphSnapshot } from './graph-snapshot.js'
+import { type GraphSnapshot } from './graph-snapshot.js'
 
-const SAFETY_MARGIN_TOKENS = 2000
-const NEIGHBORHOOD_MAX_DEPTH = 2
-const NEIGHBORHOOD_MAX_ENTITIES = 200
+/**
+ * 短→长字段映射, 用于解析 AI 返回 JSON。
+ * 优先短名, fallback 长名 —— 老数据 / AI 偶尔写长名也接受。
+ */
+const FIELD_ALIASES = {
+  mappings: 'mappings',
+  from: 'f',
+  to: 't',
+  variants: 'v',
+  canonical: 'c'
+} as const
 
-const NON_EVENT_TYPES = new Set(['character', 'faction', 'item'])
+function aliasKey<T = any>(obj: any, long: keyof typeof FIELD_ALIASES): T | undefined {
+  if (!obj || typeof obj !== 'object') return undefined
+  const short = FIELD_ALIASES[long]
+  return (obj[short] ?? obj[long]) as T | undefined
+}
 
 export interface CumulativeGraphInput {
   storyId: string
@@ -30,8 +42,14 @@ export interface CumulativeGraphResult {
  * 路径:
  *   - 空 chapterGraph → 继承 prev
  *   - 首章 (prev = null) → 直接用 chapterGraph
- *   - 正常 → 2-hop BFS 找 prev 中与 chapterGraph 共享 type:key 的邻域 → 与 chapterGraph 合并 →
- *           AI 去重(对邻域内的边和节点)→ code merge 进 prev(基于 fromType:fromKey:relation:toType:toKey 去重)
+ *   - 正常 → AI 做 relation 字面归一映射(同义/升级/反转归到一个字面)→
+ *           程序按映射重写 prev 全部 relation → codeMerge 把 chapterGraph 按归一后字面合并进 prev
+ *
+ * 设计动机(2026-07-28):
+ *   原 dedup 阶段让 AI 输出"去重后图谱",但 AI 在 1 跳邻域内只能压缩局部,跨章 relation 漂移
+ *   (例: c1 收留/决定帮助, c2 收留并帮助, c3 收留) 累积成多条字面不同的边, codeMerge 按
+ *   `${from}|${relation}|${to}` 五元组去重直接失败。改让 AI 只做"relation 字面归一映射",
+ *   图谱合并完全交给程序 —— 归一后 codeMerge 的五元组 key 自然命中, weight 累加。
  */
 export async function buildCumulativeGraph(
   app: FastifyInstance,
@@ -57,63 +75,19 @@ export async function buildCumulativeGraph(
     }
   }
 
-  // 3. 正常路径:2-hop BFS + AI 去重 + code merge
+  // 3. 正常路径:AI 做 relation 归一映射 → 程序应用 → codeMerge
   const prisma = app.prisma
-
-  // 收集 chapterGraph 中的非 event 节点作为锚点
-  const nonEventKeys = chapterGraph.nodes
-    .filter(n => NON_EVENT_TYPES.has(n.type))
-    .map(n => `${n.type}:${n.key}`)
-
-  // prev 中匹配这些 key 的节点
-  const prevKeySet = new Set(prev.nodes.map(n => `${n.type}:${n.key}`))
-  const matchedKeys = nonEventKeys.filter(k => prevKeySet.has(k))
-
-  // 如果没有非 event 节点匹配 → code merge chapterGraph 进 prev(不调 AI)
-  if (matchedKeys.length === 0) {
-    return {
-      cumulativeGraph: codeMerge(prev, chapterGraph, now),
-      aiCalled: false
-    }
-  }
-
-  // 2-hop BFS over prev 从 matchedKeys 出发
   const base = await loadRuntimeBase(input.storyId, prisma)
   const task = await loadWorkerTask(input.storyId, 'graph', prisma)
 
-  const firstCompiler = new RuntimePromptCompiler()
-  const firstCompiled = firstCompiler.compile(base, task, buildDedupPrompt(prev, chapterGraph))
-  const nonGraphTokens = firstCompiled.meta.totalTokens
-
-  const resolved = await (await import('./ai-provider-init.js')).resolveProvider(prisma, input.storyId, input.chapterId)
-  const contextLength = resolved?.config?.contextLength || 64000
-  const outputReserve = resolved?.config?.maxTokens || 16384
-  const graphBudget = Math.max(
-    0,
-    contextLength - nonGraphTokens - outputReserve - SAFETY_MARGIN_TOKENS
-  )
-
-  const neighborhood = expandNeighborhood(prev, matchedKeys, {
-    maxDepth: NEIGHBORHOOD_MAX_DEPTH,
-    maxTokens: graphBudget,
-    maxEntities: NEIGHBORHOOD_MAX_ENTITIES
-  })
-
-  // 用 trimmed neighborhood 作为 dedup 输入的一部分
-  const trimmedPrev: GraphSnapshot = {
-    nodes: neighborhood.nodes,
-    edges: neighborhood.edges,
-    timestamp: prev.timestamp
-  }
-
   const compiler = new RuntimePromptCompiler()
-  const compiled = compiler.compile(base, task, buildDedupPrompt(trimmedPrev, chapterGraph))
+  const compiled = compiler.compile(base, task, buildRelationMappingPrompt(prev, chapterGraph))
 
   let raw: string | null
   try {
     raw = await callAIWithLog(app, {
       storyId: input.storyId, chapterId: input.chapterId, callType: 'cumulative_dedup',
-      compiled, temperature: 0.2, maxTokens: 16384
+      compiled, temperature: 0.2, maxTokens: 8192
     })
   } catch (err: any) {
     app.log.error(`[CumulativeGraph] AI call failed: ${err.message}`)
@@ -129,43 +103,126 @@ export async function buildCumulativeGraph(
     throw new Error(`AI 返回格式错误: ${err.message}`)
   }
 
-  const deduped: GraphSnapshot = {
-    nodes: parsed.nodes || [],
-    edges: parsed.edges || [],
-    timestamp: now
-  }
+  // 解析 AI 返回的 relation 归一映射
+  const mappingRaw = Array.isArray(aliasKey(parsed, 'mappings')) ? aliasKey<any[]>(parsed, 'mappings')! : []
+  const mapping = parseRelationMapping(mappingRaw)
 
-  // code merge deduped → prev
-  const merged = codeMerge(prev, deduped, now)
+  // 应用映射: 重写 prev 全部边 relation 字面
+  const normalizedPrev = applyRelationMapping(prev, mapping)
+  const normalizedChapter = applyRelationMapping(chapterGraph, mapping)
+
+  // codeMerge 按归一后字面合并 → 五元组 key 自然命中
+  const merged = codeMerge(normalizedPrev, normalizedChapter, now)
 
   app.log.info(
-    `[CumulativeGraph] Neigh: ${neighborhood.nodes.length} nodes. ` +
-    `Deduped: ${deduped.nodes.length} nodes, ${deduped.edges.length} edges. ` +
+    `[CumulativeGraph] Mapping rules: ${mapping.size}. ` +
+    `Prev edges: ${prev.edges.length} → ${normalizedPrev.edges.length}. ` +
     `Merged cumulative: ${merged.nodes.length} nodes, ${merged.edges.length} edges.`
   )
 
   return { cumulativeGraph: merged, aiCalled: true }
 }
 
-function buildDedupPrompt(neighborhood: GraphSnapshot, chapterGraph: GraphSnapshot): string {
-  return `你是小说知识图谱去重助手。
+/**
+ * 解析 AI 返回的 mapping:
+ *   [{ from, to, variants: [...], canonical: "..." }, ...]
+ * from/to 是 "type:key" 格式 (代码内部统一)
+ */
+function parseRelationMapping(raw: any[]): Map<string, string> {
+  const map = new Map<string, string>()  // key = `${from}|${variant}`, value = canonical
+  for (const m of raw) {
+    if (!m || typeof m !== 'object') continue
+    const from = aliasKey<string>(m, 'from')
+    const to = aliasKey<string>(m, 'to')
+    const canonical = aliasKey<string>(m, 'canonical')
+    const variants = Array.isArray(aliasKey<any[]>(m, 'variants')) ? aliasKey<any[]>(m, 'variants')! : []
+    if (typeof from !== 'string' || typeof to !== 'string' || typeof canonical !== 'string') continue
+    for (const v of variants) {
+      if (typeof v !== 'string') continue
+      map.set(`${from}|${v}|${to}`, canonical)
+    }
+    // 兜底: 即使 variants 缺, from/to/canonical 自身也算一条
+    map.set(`${from}|${canonical}|${to}`, canonical)
+  }
+  return map
+}
 
-【任务】基于"上一章邻域子图"和"本章图谱",生成去重后的"小范围子图"。
-- 节点去重:相同 type:key 合并 data,以最新为准
-- 边去重:相同 (fromType:fromKey, relation, toType:toKey) 只保留一条
-- 删除孤立的"上一章"节点(没有任何边,且不在 chapterGraph 中)
+/**
+ * 应用 relation 映射到 snapshot: 重写每条边的 relation 字面
+ */
+function applyRelationMapping(snapshot: GraphSnapshot, mapping: Map<string, string>): GraphSnapshot {
+  if (mapping.size === 0) return snapshot
+  const rewrittenEdges = snapshot.edges.map(e => {
+    const k = `${e.fromType}:${e.fromKey}|${e.relation}|${e.toType}:${e.toKey}`
+    const canonical = mapping.get(k)
+    if (canonical && canonical !== e.relation) {
+      return { ...e, relation: canonical }
+    }
+    return e
+  })
+  return { ...snapshot, edges: rewrittenEdges }
+}
 
-【上一章邻域子图】
-${JSON.stringify(neighborhood)}
+function buildRelationMappingPrompt(prev: GraphSnapshot, chapterGraph: GraphSnapshot): string {
+  return `你是小说知识图谱 relation 字面归一助手。
 
-【本章图谱】
-${JSON.stringify(chapterGraph)}
+【任务】
+基于"全局累计图(全部历史章节)边"和"本章图谱边",输出一份 relation 归一映射表(mapping)。
+不输出图谱,只输出 mapping —— 程序会按 mapping 重写累计图里所有 relation 字面,再用统一字面合并。
 
-【输出严格 JSON】
+【核心思路】
+跨章节 AI 抽取的 relation 字面会漂移(同一段关系,不同章节写法不同)。例:
+- ch#1: character:xu_qing -[收留/决定帮助]-> character:jiang_he
+- ch#2: character:xu_qing -[收留并帮助]-> character:jiang_he
+- ch#3: character:xu_qing -[收留]-> character:jiang_he
+这三条字面不同,程序无法合并(按 from+relation+to 五元组去重失败)。
+归一后全部映射到 "收留" 这一字面,程序自然合并, weight 累加。
+
+【方向感知】
+按 (fromType:fromKey → toType:toKey) 有序对处理,A→B 与 B→A 是两个独立关系,分别归一。
+例: character:xu_qing → character:jiang_he 与 character:jiang_he → character:xu_qing 各自有自己的 variants 和 canonical。
+
+【归一策略(同一有序对内的多条 relation)】
+1. 【同义】字面或释义重复 → 合并为一个最简洁字面
+   例: 收留/决定帮助 / 收留并帮助 / 决定帮助 / 收留 → 收留
+2. 【升级】前后章存在阶段递进(关系强度由弱到强)→ 合并到终点状态
+   例: 同事 / 恋人 / 夫妻 → 夫妻
+   例: 师徒 / 仇敌 → 仇敌
+3. 【反转】前后章关系性质反向 → 合并到反映剧情转折的那条
+   例: 被刺 / 弃暗投明 → 弃暗投明
+   例: 隶属 / 叛逃 → 叛逃
+4. 字面差异明显、无法判断同义/升级/反转 → 不要输出这条 mapping,程序会保留原字面
+
+【weight 字段】
+代码内部用,不需要你处理。mapping 表里不要带 weight。
+
+【累计图(全部历史边)】
+${JSON.stringify({ edges: prev.edges })}
+
+【本章图谱(全部边)】
+${JSON.stringify({ edges: chapterGraph.edges })}
+
+【输出格式】
+返回严格 JSON,不要 markdown 代码块。
+
 {
-  "nodes": [{ "type": "character", "key": "zhangsan", "label": "张三", "data": {} }],
-  "edges": [{ "fromType": "character", "fromKey": "zhangsan", "toType": "character", "toKey": "lisi", "relation": "兄弟", "weight": 1 }]
-}`
+  "mappings": [
+    {
+      "from": "character:xu_qing",
+      "to": "character:jiang_he",
+      "variants": ["收留/决定帮助", "收留并帮助", "收留"],
+      "canonical": "收留"
+    },
+    {
+      "from": "character:jiang_he",
+      "to": "character:xu_qing",
+      "variants": ["被收留/戒备与初步信任", "初步信任并依赖"],
+      "canonical": "依赖"
+    }
+  ]
+}
+
+没有需要归一的关系时, mappings 返回空数组 []。`
 }
 
 function codeMerge(prev: GraphSnapshot, chapterGraph: GraphSnapshot, now: string): GraphSnapshot {
@@ -178,11 +235,9 @@ function codeMerge(prev: GraphSnapshot, chapterGraph: GraphSnapshot, now: string
   //   - 合并命中: weight += 1 (chapterGraph 里 AI 的 weight 字段被忽略)
   //   - 语义: weight=N 表示这条关系在 N 个章节被 AI 抽出过
   //
-  // TODO(2026-07-28) 已知局限 — 命名漂移会让 weight 失真:
-  //   - relation 漂移: AI 第 1 章写"收留", 第 3 章写"帮助", 第 5 章写"扶持"
-  //     → 3 条不同边, weight 各 = 1, 实际是同一段关系
-  //   - key 漂移: 同理, "xu_qing" / "xq" 不归一也算两条不同节点
-  // 解决需要额外调一次 AI 做 relation / entity 归一化 (独立 scope).
+  // 关系字面漂移由 dedup 阶段 (buildRelationMappingPrompt) 处理:
+  //   - AI 输出 mappings, 程序 applyRelationMapping 重写 prev/chapterGraph 的 relation 字段
+  //   - 这里 codeMerge 看到的是归一后字面, 五元组 key 命中, weight 累加正确
   const edgeMap = new Map<string, any>()
   for (const e of [...prev.edges, ...chapterGraph.edges]) {
     const k = `${e.fromType}:${e.fromKey}|${e.relation}|${e.toType}:${e.toKey}`

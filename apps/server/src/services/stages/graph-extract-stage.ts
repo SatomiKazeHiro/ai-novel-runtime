@@ -16,29 +16,66 @@ export interface GraphExtractStageResult {
 }
 
 /**
- * 把 AI 返回的长字段名 JSON 归一化为内部结构。
+ * AI JSON 字段名短→长映射。prompt 用短名省 token, 代码内部仍用长名。
+ * 取值时优先短名, fallback 长名 —— 老数据 / AI 偶尔写长名也接受。
+ */
+const FIELD_ALIASES = {
+  nodes: 'n',
+  edges: 'e',
+  type: 't',
+  key: 'k',
+  label: 'l',
+  data: 'd',
+  fromType: 'ft',
+  fromKey: 'fk',
+  toType: 'tt',
+  toKey: 'tk',
+  relation: 'r'
+} as const
+
+function aliasKey<T = any>(obj: any, long: keyof typeof FIELD_ALIASES): T | undefined {
+  if (!obj || typeof obj !== 'object') return undefined
+  const short = FIELD_ALIASES[long]
+  return (obj[short] ?? obj[long]) as T | undefined
+}
+
+/**
+ * 把 AI 返回的短名 JSON 归一化为内部结构（长名）。
  * 不读 importance —— 上一轮实验证明 AI 自评 -1 / 配角 > 主角 等范式不可靠，
  * 改由【主线事件合并 / 支线独立 / 角色优先】三原则让 AI 按剧情作用判定。
  */
 function normalizeGraph(parsed: any): { nodes: any[]; edges: any[] } {
-  const rawNodes = Array.isArray(parsed?.nodes) ? parsed.nodes : []
-  const rawEdges = Array.isArray(parsed?.edges) ? parsed.edges : []
+  const rawNodes = Array.isArray(aliasKey(parsed, 'nodes')) ? aliasKey<any[]>(parsed, 'nodes')! : []
+  const rawEdges = Array.isArray(aliasKey(parsed, 'edges')) ? aliasKey<any[]>(parsed, 'edges')! : []
 
   return {
     nodes: rawNodes
-      .filter((n: any) => n && typeof n === 'object' && typeof n.type === 'string' && typeof n.key === 'string')
+      .filter((n: any) => {
+        const t = aliasKey<string>(n, 'type')
+        const k = aliasKey<string>(n, 'key')
+        return n && typeof n === 'object' && typeof t === 'string' && typeof k === 'string'
+      })
       .map((n: any) => ({
-        type: n.type,
-        key: n.key,
-        label: typeof n.label === 'string' ? n.label : n.key,
-        data: (n.data && typeof n.data === 'object') ? n.data : {}
+        type: aliasKey<string>(n, 'type')!,
+        key: aliasKey<string>(n, 'key')!,
+        label: (() => {
+          const l = aliasKey<string>(n, 'label')
+          return typeof l === 'string' ? l : aliasKey<string>(n, 'key')!
+        })(),
+        data: (() => {
+          const d = aliasKey<Record<string, unknown>>(n, 'data')
+          return d && typeof d === 'object' ? d : {}
+        })()
       })),
     edges: rawEdges.map((e: any) => ({
-      fromType: typeof e.fromType === 'string' ? e.fromType : undefined,
-      fromKey: typeof e.fromKey === 'string' ? e.fromKey : undefined,
-      toType: typeof e.toType === 'string' ? e.toType : undefined,
-      toKey: typeof e.toKey === 'string' ? e.toKey : undefined,
-      relation: typeof e.relation === 'string' ? e.relation : '',
+      fromType: aliasKey<string>(e, 'fromType'),
+      fromKey: aliasKey<string>(e, 'fromKey'),
+      toType: aliasKey<string>(e, 'toType'),
+      toKey: aliasKey<string>(e, 'toKey'),
+      relation: (() => {
+        const r = aliasKey<string>(e, 'relation')
+        return typeof r === 'string' ? r : ''
+      })(),
       // extract 阶段永远是新增边, weight 由 cumulative-graph.ts codeMerge 累加
       weight: 1
     }))
@@ -71,35 +108,41 @@ export async function runGraphExtractStage(
     ? matchedNodes.map((n) => `${n.type}:${n.key}`).join(', ')
     : '（空，本章可自由起 key）'
 
-  const prompt = `请分析以下章节内容，提取其中对剧情有实质推动作用的核心实体以及它们之间的关系。
+  const prompt = `【任务】
+分析章节内容，提取对剧情有实质推动作用的核心实体和它们之间的关系。
 
-提取原则（非常重要）：
+【实体与关系定义】
+- type 可选值：character(角色), faction(势力/组织), event(事件), item(物品/道具)
+- relation 建议值：隶属、对抗、师徒、配偶、兄弟、持有、发生地点、涉及
+- relation 应是简洁的核心词或短语（2-6字为佳），直接表达两实体间的核心联系，不要带状语、从句或补充说明
+
+【提取规则】
 1. 【主线事件合并】同一主线剧情链的连续事件必须合并为一个整体事件节点。例如"许青找食材→下厨炒菜→姜禾品尝→指点厨艺"应合并为一个事件节点"许青教姜禾厨艺"，而不是拆成多个事件。
 2. 【支线独立】与主线并行的独立支线（如第三方暗中观察、配角个人线）可以作为独立事件节点。
 3. 【角色优先】主角和重要配角必须提取；路人、一次性提及的次要角色不要提取。
 4. 【物品克制】只提取对剧情有实质推动的关键物品（主角佩剑/关键道具/信物），日常用品（餐具/衣物/家电/家具/书籍）不要提取，即便主角日常使用也不算关键物品。
 5. 【事件 label 简短】label 只给图谱节点显示用, 4-8 字概括核心动作, 不堆叠人名; 不要写"许青收留姜禾并安置起居"这类含多动作的复合句, 详细情节放 data.desc。
 
-type 可选值：character(角色), faction(势力/组织), event(事件), item(物品/道具)
-relation 建议值：隶属、对抗、师徒、配偶、兄弟、持有、发生地点、涉及
-relation 应该是一个简洁的核心词或短语（2-6字为佳），直接表达两实体间的核心联系，不要带状语、从句或补充说明。
+【已有实体】（不要重复提取，但可补充新属性）：${keyList}
 
-返回严格 JSON 格式，不要 markdown 代码块：
+【章节内容】
+${input.content}
+
+【输出格式】
+返回严格 JSON 格式，不要 markdown 代码块。**严格用下方短名**，不要用长名：
+
+字段映射：n=nodes, e=edges, t=type, k=key, l=label, d=data, ft=fromType, fk=fromKey, tt=toType, tk=toKey, r=relation
+
 {
-  "nodes": [
-    { "type": "character", "key": "xu_qing", "label": "许青", "data": { "role": "本章主角,应届毕业生" } },
-    { "type": "faction", "key": "yan_bang", "label": "盐帮", "data": { "location": "古代江湖" } },
-    { "type": "event", "key": "jiang_he_chuan_yue", "label": "姜禾穿越", "data": { "desc": "姜禾从古代穿越到现代,出现在许青家中,持有盐帮佩剑" } }
+  "n": [
+    { "t": "character", "k": "xu_qing", "l": "许青", "d": { "role": "本章主角,应届毕业生" } },
+    { "t": "faction", "k": "yan_bang", "l": "盐帮", "d": { "location": "古代江湖" } },
+    { "t": "event", "k": "jiang_he_chuan_yue", "l": "姜禾穿越", "d": { "desc": "姜禾从古代穿越到现代,出现在许青家中,持有盐帮佩剑" } }
   ],
-  "edges": [
-    { "fromKey": "xu_qing", "fromType": "character", "toKey": "jiang_he", "toType": "character", "relation": "收留" }
+  "e": [
+    { "ft": "character", "fk": "xu_qing", "tt": "character", "tk": "jiang_he", "r": "收留" }
   ]
-}
-
-已有实体（不要重复提取，但可补充新属性）：${keyList}
-
-章节内容如下：
-${input.content}`
+}`
 
   try {
     const prisma = app.prisma

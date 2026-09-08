@@ -351,10 +351,11 @@ Stage 输入里的 `characterNames` / `characterKeys` / `latestBranchStates` / `
 
 - `Chapter.chapterGraph` = `graph-extract-stage` 的本章产出（gacha，单次 AI 抽取；v3 起由用户主动编辑）
 - `Chapter.cumulativeGraph` (v3 重新定义) = **用户在 ReviewingPanel 主动生成 + 编辑的工作产物**,不再是 archive 时由后端 `buildCumulativeGraph` 派生的字段
-  - 首次生成：用户在 ReviewingPanel 点"生成累计图谱" → 后端调 AI dedup → 同时写入 `cumulativeGraph` JSON + `cumulativeGraphGeneratedAt` 时间戳
+  - 首次生成：用户在 ReviewingPanel 点"生成累计图谱" → 后端 `buildCumulativeGraph` 调 AI 做 relation 字面归一映射 → 程序按映射重写 prev + chapterGraph 全部 relation → codeMerge 按五元组 key 合并 → 写入 `cumulativeGraph` JSON + `cumulativeGraphGeneratedAt` 时间戳
   - 后续编辑：用户在累计图谱区块继续编辑 → 点"保存调整" → 仅写 graph JSON,不动 `cumulativeGraphGeneratedAt`
-  - 累计图谱的算法语义(merge 本章 + prev + AI dedup)与原 `buildCumulativeGraph` 等价
+  - 累计图谱的算法语义(merge 本章 + prev + relation 归一)与原 `buildCumulativeGraph` 等价
   - v3 起不再走 archive 阶段的 AI 重建路径
+- **relation 字面归一（2026-07-28）**：dedup 阶段 AI 只输出 `mappings: [{from, to, variants, canonical}]`，程序 `applyRelationMapping` 重写边 relation 字段后交给 `codeMerge` 按 `${fromType}:${fromKey}|${relation}|${toType}:${toKey}` 五元组去重 + weight 累加。解决了跨章节 AI 抽取 relation 字面漂移（c1 "收留/决定帮助" / c2 "收留并帮助" / c3 "收留"）累积成多条字面不同的边的问题。归一策略：同义合并 / 升级到终点 / 反转到转折那条。AI 选不出时宁可不输出 mapping，保留原字面演化历史。
 
 ### 累计图谱归档前置条件（v3 新增）
 
