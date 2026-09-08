@@ -157,6 +157,10 @@ v3: graph data lives entirely on the `Chapter` row as JSON columns (the `GraphNo
 
 During `reviewing` these three columns stay `null`; the working copies live in `pendingArchiveData`. Only `archive` confirm writes them. `GraphView.vue` reads the columns of `archived` chapters via `cumulativeGraphApi` and visualizes with Cytoscape.
 
+### Character Snapshot Editing
+
+已归档的角色快照（`CharacterBranchState`，每角色每归档章一行）可在角色页编辑弹窗的右侧快照面板中手动编辑（`PUT /api/stories/:storyId/characters/:charId/snapshot/:chapterNumber`，`updateMany` 幂等更新，无行则 404）。手动修改由用户负责（UI 有 warning 提醒），编辑结果直接作为后续章节生成时的角色参考（`getCharactersWithLatestState` 无缓存）；删除章节时该章快照连同修改一并删除。详见 `docs/superpowers/specs/2026-08-13-character-snapshot-editing-design.md`。
+
 ### Main vs Side Stories
 
 - Main-line chapters form a strictly linear sequence (`1, 2, 3, ...`).
