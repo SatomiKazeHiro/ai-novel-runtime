@@ -122,10 +122,10 @@ Archiving is the most complex flow. It is implemented in `apps/server/src/routes
 | Phase | File(s) | Endpoint | What happens |
 |-------|---------|----------|--------------|
 | 1. Extract | `services/stages/{character,memory,plot-arc,graph-extract}-stage.ts` (并行 4 stage) | `prepare-archive` | 4 个 stage 并行 (`Promise.all`) 抽出 characterStates / memories / plotArcs / chapterGraph,各自结果落到 `pendingArchiveData.stages[name]`。单 stage 失败不影响其他 stage。reviewing 期间 `Chapter.chapterGraph / cumulativeGraph / cumulativeGraphGeneratedAt` 三列整个过程不被读写。 |
+| 1.5. Optimize memory | `memory-optimizer.ts` | `prepare-archive` (4 stage 完成之后) | 在 4 stage `Promise.all` 完成后追加调 optimizer,读现有 `layer='global'` + 当前 memory-stage output,AI 融合产出 `stages.memory.result.memories`(统一数组,每条 `{content, originUid, importance, type: 'event'\|'state'}`,后端落表时加 `'auto-extracted'` 前缀)。覆盖原 raw output,user review 时看到的是融合结果。**不再** post-commit 跑(原 v2 `archive` post-commit 触发已删除)。失败时该 stage 标记 failed,不影响 graph / character / plot-arc。 |
 | 2. Organize graph | (内嵌在 graph-extract stage 里读 `prevCumulativeGraph`) | `prepare-archive` | graph stage 读上一章归档的 `Chapter.cumulativeGraph` (parent 优先,主线回退) + 本章 chapterGraph,产出新的 `chapterGraph`。累计合成下个 user action 「生成累计图谱」时再走 `services/cumulative-graph.ts`。 |
 | 2.5. Human review | `ReviewingPanel.vue` (前端) | `chaptersApi.update({ pendingArchiveData })` | 用户在审查阶段编辑后点「保存调整」→ `composables/useChapterEditor.ts:savePendingArchiveData` → `PUT /api/chapters/:id` 把整份 `PendingArchiveDataV3` 写回 `Chapter.pendingArchiveData` (TEXT JSON)。累计图谱编辑后保存走同一条路(PATCH 端点已删除)。Cancel = `POST /prepare-archive/cancel`,只清 `pendingArchiveData`。 |
-| 3. Transaction write | `chapters-archive.ts` archive route | `archive` (confirm) | 把 `pendingArchiveData.stages.graph.result.chapterGraph` + `pendingArchiveData.cumulativeGraph` + `pendingArchiveData.cumulativeGraphGeneratedAt` 拷到 `Chapter` 三列;清 `pendingArchiveData`;翻 `status='archived'`。其他表(`Memory` / `CharacterBranchState` / `PlotArc` / `GraphNode`+`GraphEdge`)写入在 v3.5 阶段接入(目前是 gate stub,翻 status 后再补 transaction)。`TimelineEvent` 在 v3 删除,不再写。 |
-| 4. Optimize memory | `memory-optimizer.ts` | `archive` (post-commit) | AI fuses previous global memory with new chapter memory into the next global snapshot. Runs after the transaction; failure is logged but does not roll back the archive. |
+| 3. Transaction write | `chapters-archive.ts` archive route | `archive` (confirm) | commit-only 端点,**不调 AI 不调 optimizer**。`prisma.$transaction` 内依次:① `tx.memory.create` 写三层(`chapter` from main/sideEvents/emotions/foreshadowing/relationshipChanges、`scene` from scenes、`global` from optimizer 融合 memories)② `tx.chapter.update({summary})` ③ `tx.chapter.update({chapterGraph, cumulativeGraph, cumulativeGraphGeneratedAt, status: 'archived', pendingArchiveData: null})`。**CharacterBranchState / PlotArc 写入另文档讨论**;`TimelineEvent` 在 v3 删除,不再写。 |
 
 **数据流硬规则(v3)**:reviewing 期间所有图谱数据只活 `pendingArchiveData` JSON;`Chapter` 三列(`chapterGraph` / `cumulativeGraph` / `cumulativeGraphGeneratedAt`)在 `archive` confirm 之前一直为 null。`GraphView.vue` 只查 `archived` 章节,读三列,读到的是用户终稿。详见 `docs/superpowers/specs/2026-07-29-graph-cleanup-design.md` + `docs/superpowers/specs/2026-07-29-graph-v2-deadcode-cleanup-design.md`。
 
@@ -139,12 +139,16 @@ Drafts are generated **serially** inside `generate-processor.ts` to reduce insta
 
 Memories are stored in a single `Memory` table with a `layer` column:
 
-- `global` — cross-chapter state, optimized after every archive
-- `chapter` — raw extraction from a single chapter
-- `scene` — high-importance locations
-- `temporary` — ephemeral context
+- `global` — cross-chapter state, written by `memory-optimizer` after every archive (optimizer 在 prepare-archive 阶段跑,覆盖 `stages.memory.result.memories`;tags=`['auto-extracted','event'|'state']`)
+- `chapter` — raw extraction from a single chapter, written by archive confirm 直接从 memory-stage 原 mainEvents / sideEvents / emotions / foreshadowing / relationshipChanges 转表(tags=`['auto-extracted']`,mainEvents 多带 `'main-plot'`)
+- `scene` — key locations (`scenes[]` 字段),archive confirm 转表,importance 7-10(tags=`['auto-extracted','scene-memory']`,**不进 prompt 注入,仅 Memory.vue UI 显示**)
+- `temporary` — ephemeral context,API 手动 CRUD;当前业务未使用
 
-Prompt assembly retrieves relevant memories via semantic similarity (`memory-engine`) and Jaccard deduplication. The same logical memory may have multiple historical versions; prompt assembly takes the latest by `originUid`.
+archive confirm **commit-only 不调 AI**,在 `prisma.$transaction` 内一次写完三层。`Chapter.summary` 写 `Chapter.summary` 列,**不进 Memory 表**(理由:`memory-engine.searchRelevant` 不读 summary 字段)。
+
+Prompt assembly retrieves relevant memories via semantic similarity (`memory-engine`) and Jaccard deduplication. `searchRelevant` (`packages/memory-engine/src/index.ts:103`) 读 `layer IN ('global', 'chapter')`,按相似度排序、按 content 文本相似度 > 0.82 去重。**v3 memory system 拍板**:`searchRelevant` 加 originUid 分组取最新版本逻辑(**仅 layer='global'**),避免同 UID 多版本同时塞 prompt 导致 AI 矛盾描述。layer='chapter' 不参与 UID 分组(章节内 raw 提取独立)。
+
+optimizer 每章归档对同 UID 产生新行 layer='global'(**累加**,不是 update by UID)。删除章节(`chapters-crud.ts:179-194`)只 delete where `fromChapterNumber=N`,前 N-1 章同 UID 版本保留 → searchRelevant 取最新版本自然实现"删章节回退"语义,无需特殊代码。
 
 ### Knowledge Graph
 
@@ -222,10 +226,8 @@ Import each Naive UI component explicitly. Table action columns are rendered wit
 - `apps/server/src/services/generate-processor.ts` — queue worker that generates drafts serially
 - `apps/server/src/services/stages/` — v3 archive extraction stages (`character-stage` / `memory-stage` / `plot-arc-stage` / `graph-extract-stage`), run in parallel by `prepare-archive`
 - `apps/server/src/services/cumulative-graph.ts` — user-triggered cumulative graph merge (`cumulative-graph/build` endpoint)
-- `apps/server/src/services/combined-extractor.ts` / `graph-organizer.ts` — v2 legacy extraction path; not called by the v3 archive route (only tests import them), pending removal per `docs/superpowers/specs/2026-07-29-graph-v2-deadcode-cleanup-design.md`
-- `apps/server/src/services/graph-snapshot.ts` — `defaultTokenEstimator` + snapshot/delta helpers; estimation vs validation boundary is documented at the top
-- `apps/server/src/services/memory-optimizer.ts` — archive phase 4: global memory fusion
-- `apps/server/src/services/memory-compressor.ts` / `memory-organizer.ts` — memory shaping helpers invoked before/after optimizer
+- `apps/server/src/services/graph-snapshot.ts` — graph snapshot data shapes (`GraphNodeSnapshot` / `GraphEdgeSnapshot` / `GraphSnapshot`)
+- `apps/server/src/services/memory-optimizer.ts` — 在 `prepare-archive` 阶段(4 stage `Promise.all` 完成后)调,读现有 `layer='global'` + memory-stage output,AI 融合产出统一 `memories[]`,覆盖 `pendingArchiveData.stages.memory.result.memories`。archive confirm **不**再调(commit-only)。详见 `docs/superpowers/specs/2026-07-30-v3-memory-system-design.md`。
 - `packages/prompt-runtime/src/index.ts` — prompt assembly pipeline
 - `packages/ai-provider/src/index.ts` — provider abstraction and runtime compiler
 - `packages/memory-engine/src/index.ts` — semantic search and memory formatting

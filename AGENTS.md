@@ -224,14 +224,8 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 | `generate-processor.ts` | 队列处理器：循环为每个 draft 调用 AI，更新 `draft.content` 和 `Draft.status`。**v2**：只读写 `Draft.status`（跳过 `rejected`/`completed`/`failed` 三种用户决定/已完成态；不再有 `selected` 状态），**不读不写 `Chapter.status`**——候选生成与章节状态正交 |
 | `stages/` (character/memory/plot-arc/graph-extract) | **v3 归档核心**：4 个 stage 并行提取角色状态/记忆/弧线/本章图谱，结果落 `pendingArchiveData.stages[name]` |
 | `cumulative-graph.ts` | 用户主动触发累计图谱合并（relation 映射归一 + codeMerge 五元组去重），写 `pendingArchiveData.cumulativeGraph` |
-| `combined-extractor.ts` | v2 遗留：一次 AI 调用合并提取（v3 路由不再调用，仅测试引用，待删） |
-| `graph-extractor.ts` | v2 遗留：图谱节点/边提取（GraphNode/GraphEdge 表已删） |
-| `graph-organizer.ts` | v2 遗留：AI 合并上一章全局图谱 + 本章提取（v3 路由不再调用） |
-| `graph-snapshot.ts` | `expandNeighborhood` 邻域展开 + token 估算辅助 |
-| `memory-extractor.ts` | 提取结构化记忆（主线/支线/情绪/伏笔/关系/状态/场景/摘要），Jaccard 去重后存入 `memory` 表 |
-| `memory-organizer.ts` | 归档后 AI 整理记忆：merge/update/delete/keep，有 Jaccard > 0.5 保守校验 |
+| `graph-snapshot.ts` | 图谱快照数据结构（GraphNodeSnapshot / GraphEdgeSnapshot / GraphSnapshot） |
 | `memory-optimizer.ts` | 全局记忆融合（v2 阶段 4）：把上一章 global 记忆 + 本章 chapter 记忆喂 AI 生成下一章 global 快照。**v3 当前无调用点**（archive gate stub 尚未接回），函数保留待重新接入 |
-| `memory-compressor.ts` | 每 5 章自动压缩 chapter 记忆为 global 摘要；AI 压缩失败则降级为简单合并 |
 | `plot-extractor.ts` | 提取/更新剧情弧线（`plotArc`），维护 stages/unresolved；`getActivePlotArcs()` 供 Prompt 注入 |
 
 ### 4.4 队列系统
@@ -347,7 +341,7 @@ Prisma 的 JSON 字段（`personality`、`metadata`、`params`、`settings`、`p
 ## 6. 测试说明
 
 - **测试框架**：Vitest（根目录 + 各包 devDependencies）
-- **当前状态**：已有测试,集中在 `apps/server/src/__tests__/`(vitest 后端,e.g. `combined-extractor.test.ts` / `graph-organizer-neighborhood.test.ts` / `chapters-zod-validation.test.ts` / `chapters-concurrency.test.ts` 等 9 个文件);`packages/ai-provider` 也有 `runtime-compiler.test.ts`(13 个 case)
+- **当前状态**：已有测试,集中在 `apps/server/src/__tests__/`(vitest 后端,e.g. `chapters-zod-validation.test.ts` / `chapters-concurrency.test.ts` / `stages-*.test.ts` / `cumulative-graph.test.ts` / `prepare-archive-v3.test.ts` 等);`packages/ai-provider` 也有 `runtime-compiler.test.ts`(13 个 case)
 - 根目录 `pnpm test` 会递归执行各包的 test 脚本;`apps/server` 的 `pretest` hook 会先 build 所有 packages 避免 stale dist
 
 **建议**：新增测试时放在与被测代码同级或 `__tests__` 目录，使用 Vitest 的 API。TDD 优先 — 写失败测试 → 写实现 → 重构。
@@ -414,7 +408,7 @@ DEEPSEEK_CONTEXT_LENGTH=64000
 - `packages/shared` 的 `estimateTokens`（启发式，无依赖）—— 仅供 `prompt-runtime/budget.ts` 在 `js-tiktoken` 不可用时 fallback
 - `packages/{shared,memory-engine,prompt-runtime}` 3 个包**保留** `js-tiktoken` 直接装，因结构性原因（dep cycle / token ID API / model-aware encoding）无法切到 `countTokens`。详见 `KNOWN-ISSUES.md` 第 10 条。
 - `prompt-runtime/budget.ts` 用 `encodingForModel(model)` + heuristic fallback，model-aware 路径（不是单纯 `cl100k_base`）
-- `memory-engine` / `memory-extractor` / `memory-organizer` 直接使用 `js-tiktoken` 做 `encode()`（用于 Jaccard 相似度计算，token ID 数组，非单纯计数）
+- `memory-engine` 直接使用 `js-tiktoken` 做 `encode()`（用于 Jaccard 相似度计算，token ID 数组，非单纯计数）
 
 ---
 
@@ -433,8 +427,7 @@ DEEPSEEK_CONTEXT_LENGTH=64000
 | Prompt 日志 | `apps/server/src/routes/prompt-logs.ts` | `apps/web/src/views/PromptLogs.vue` |
 | 写作人格加载 | `apps/server/src/services/runtime-loader.ts` | — |
 | Worker Task 加载 | `apps/server/src/services/runtime-loader.ts` | — |
-| 合并提取器 | `apps/server/src/services/combined-extractor.ts` | — |
-| 记忆整理 | `apps/server/src/services/memory-organizer.ts` | — |
+| v3 归档 stage（4 stage 并行） | `apps/server/src/services/stages/{character,memory,plot-arc,graph-extract}-stage.ts` | — |
 | Prompt Pipeline | `packages/prompt-runtime/src/index.ts` | — |
 | 预算缩放 | `packages/shared/src/index.ts` (`scaleBudget`) | — |
 

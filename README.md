@@ -103,15 +103,15 @@ novel-runtime/
 │   │           ├── runtime-loader.ts        # 加载 RuntimeBase / WorkerTask（Story→默认→fallback）
 │   │           ├── generate-processor.ts    # BullMQ 队列处理器：循环生成 draft
 │   │           ├── ai-call-logger.ts        # **强制** AI 调用包装：自动写 PromptLog
-│   │           ├── combined-extractor.ts    # 归档核心：一次 AI 提取记忆+图谱+弧线
-│   │           ├── graph-extractor.ts       # legacy（已被 combined-extractor 取代，保留死代码）
-│   │           ├── graph-organizer.ts       # 归档阶段 2：合并全局图谱 + 本章新增
-│   │           ├── graph-snapshot.ts        # 扩展邻域 / 图谱快照数据结构
-│   │           ├── memory-extractor.ts      # legacy（保留死代码）
-│   │           ├── memory-organizer.ts      # AI 整理：merge/update/delete/keep + Jaccard 校验
-│   │           ├── memory-optimizer.ts      # 归档阶段 4：全局记忆融合（失败不阻塞归档）
-│   │           ├── memory-compressor.ts     # @deprecated，未被路由调用
-│   │           └── plot-extractor.ts        # 提取/更新剧情弧线
+│   │           ├── graph-snapshot.ts        # 图谱快照数据结构（GraphNodeSnapshot / GraphEdgeSnapshot / GraphSnapshot）
+│   │           ├── cumulative-graph.ts      # 用户触发累计图谱合并（relation 归一 → 程序 codeMerge）
+│   │           ├── memory-optimizer.ts      # 归档阶段 4：全局记忆融合（v3 暂未接入，见 §待办）
+│   │           ├── plot-extractor.ts        # 提取/更新剧情弧线
+│   │           └── stages/                  # v3 归档 4 stage 并行提取
+│   │               ├── character-stage.ts
+│   │               ├── memory-stage.ts
+│   │               ├── plot-arc-stage.ts
+│   │               └── graph-extract-stage.ts
 │   └── web/                 # Vue 3 前端
 │       └── src/
 │           ├── main.ts
