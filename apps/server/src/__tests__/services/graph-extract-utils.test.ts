@@ -78,6 +78,23 @@ describe('parseGraphResponse', () => {
     const result = parseGraphResponse(parsed)
     expect(result.edges[0].relation).toBe('')
   })
+
+  it('filters edges missing from/to type or key', () => {
+    const parsed = {
+      n: [
+        { t: 'character', k: 'a' },
+        { t: 'character', k: 'b' }
+      ],
+      e: [
+        { ft: 'character', fk: 'a', tt: 'character', tk: 'b' },  // OK
+        { ft: 'character', fk: 'a' },                             // 缺 toType/toKey
+        { tt: 'character', tk: 'b' },                             // 缺 fromType/fromKey
+        null                                                       // 非对象
+      ]
+    }
+    const result = parseGraphResponse(parsed)
+    expect(result.edges).toHaveLength(1)
+  })
 })
 
 describe('dropOrphanEdges', () => {

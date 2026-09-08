@@ -42,15 +42,23 @@ export function parseGraphResponse(parsed: any): { nodes: any[]; edges: any[] } 
           return d && typeof d === 'object' ? d : {}
         })()
       })),
-    edges: rawEdges.map((e: any) => ({
-      fromType: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'fromType'),
-      fromKey: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'fromKey'),
-      toType: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'toType'),
-      toKey: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'toKey'),
-      relation: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'relation') || '',
-      // extract 阶段永远是新增边, weight 由 cumulative-graph.ts codeMerge 累加
-      weight: 1
-    }))
+    edges: rawEdges
+      .filter((e: any) => {
+        const ft = aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'fromType')
+        const fk = aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'fromKey')
+        const tt = aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'toType')
+        const tk = aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'toKey')
+        return typeof ft === 'string' && typeof fk === 'string' && typeof tt === 'string' && typeof tk === 'string'
+      })
+      .map((e: any) => ({
+        fromType: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'fromType')!,
+        fromKey: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'fromKey')!,
+        toType: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'toType')!,
+        toKey: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'toKey')!,
+        relation: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'relation') || '',
+        // extract 阶段永远是新增边, weight 由 cumulative-graph.ts codeMerge 累加
+        weight: 1
+      }))
   }
 }
 
