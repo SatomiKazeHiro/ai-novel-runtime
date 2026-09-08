@@ -677,14 +677,21 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
         error: '归档失败：pendingArchiveData 版本不匹配，请重新准备归档'
       })
     }
-    // v4 严格校验 5 stage 全 success:character / memoryExtract / memoryOptimize / plotArc / graph
-    const failedStages = Object.entries(pending.stages)
-      .filter(([_, s]) => s.status !== 'success')
-      .map(([name]) => name)
+    // v4 严格校验 5 stage 全存在且 success：character / memoryExtract / memoryOptimize / plotArc / graph
+    // 用户可写 pendingArchiveData，stages 结构可能残缺 → 显式校验，避免 Object.entries(undefined) 崩溃
+    const stages = (pending as any)?.stages
+    const requiredStages = ['character', 'memoryExtract', 'memoryOptimize', 'plotArc', 'graph'] as const
+    if (!stages || typeof stages !== 'object') {
+      return reply.status(400).send({
+        success: false,
+        error: '归档失败：pendingArchiveData 缺少 stages 数据'
+      })
+    }
+    const failedStages = requiredStages.filter(name => !stages[name] || stages[name].status !== 'success')
     if (failedStages.length > 0) {
       return reply.status(400).send({
         success: false,
-        error: `归档失败：以下 stage 未通过：${failedStages.join(', ')}`
+        error: `归档失败：以下 stage 缺失或未通过：${failedStages.join(', ')}`
       })
     }
 

@@ -189,6 +189,32 @@ describe('archive confirm v4 — strict 5-stage validation + split data sources'
     expect(mockPrisma.$transaction).not.toHaveBeenCalled()
   })
 
+  it('rejects when stages is missing (no Object.entries crash)', async () => {
+    mockPrisma.chapter.findUnique.mockResolvedValue(
+      makeChapter(JSON.stringify({ version: 4 }))
+    )
+
+    const result = await callHandler(routes, 'POST', ROUTE, undefined, { chapterId: 'abc' })
+
+    expect(result.status).toBe(400)
+    expect(result.body.success).toBe(false)
+    expect(result.body.error).toMatch(/stages/)
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled()
+  })
+
+  it('rejects when a required stage is missing (e.g. graph)', async () => {
+    const payload = JSON.parse(makePendingV4())
+    delete payload.stages.graph
+    mockPrisma.chapter.findUnique.mockResolvedValue(makeChapter(JSON.stringify(payload)))
+
+    const result = await callHandler(routes, 'POST', ROUTE, undefined, { chapterId: 'abc' })
+
+    expect(result.status).toBe(400)
+    expect(result.body.success).toBe(false)
+    expect(result.body.error).toMatch(/graph/)
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled()
+  })
+
   it('writes memory from memoryExtract (raw) + memoryOptimize (global) when all 5 stages success', async () => {
     mockPrisma.chapter.findUnique.mockResolvedValue(makeChapter(makePendingV4()))
 

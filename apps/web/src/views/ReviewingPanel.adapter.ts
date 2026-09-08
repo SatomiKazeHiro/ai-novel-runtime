@@ -24,6 +24,7 @@ export interface LocalMemoryRow {
   tags: string[]            // 'main-plot' | 'side-plot'
   importance: number
   fromChapterNumber: number
+  participants?: string     // 参与者姓名，逗号分隔；有则填、无留空
 }
 
 export interface LocalCharacterState {
@@ -215,7 +216,8 @@ export function fromV4(pending: V4PendingArchiveData | null | undefined): LocalD
   const toMemory = (event: any, tags: string[]): LocalMemoryRow => ({
     content: event?.description ?? '', tags,
     importance: typeof event?.importance === 'number' ? event.importance : 5,
-    fromChapterNumber: chapterNumber
+    fromChapterNumber: chapterNumber,
+    participants: typeof event?.participants === 'string' ? event.participants : undefined
   })
   const stringifyJson = (value: unknown): string => {
     if (typeof value === 'string') return value
@@ -252,9 +254,9 @@ export function toV4(local: LocalData, original: V4PendingArchiveData): V4Pendin
   const stages: V4PendingArchiveData['stages'] = JSON.parse(JSON.stringify(original?.stages ?? {}))
   const memories = local.memories
   const mainEvents = memories.memories.filter((memory) => memory.tags?.includes('main-plot'))
-    .map((memory) => ({ description: memory.content, importance: memory.importance }))
+    .map((memory) => ({ description: memory.content, importance: memory.importance, participants: memory.participants }))
   const sideEvents = memories.memories.filter((memory) => !memory.tags?.includes('main-plot'))
-    .map((memory) => ({ description: memory.content, importance: memory.importance }))
+    .map((memory) => ({ description: memory.content, importance: memory.importance, participants: memory.participants }))
   if (!stages.memoryExtract) stages.memoryExtract = { status: 'success' }
   stages.memoryExtract.result = {
     ...(stages.memoryExtract.result ?? {}), summary: local.summary, mainEvents, sideEvents,
