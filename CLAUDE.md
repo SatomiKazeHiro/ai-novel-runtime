@@ -37,9 +37,6 @@ pnpm typecheck
 # Build everything
 pnpm build
 
-# Lint (root script; not all packages define their own lint script)
-pnpm lint
-
 # Tests
 pnpm test                 # run all tests via vitest
 pnpm --filter server test # run server tests / vitest directly
@@ -253,5 +250,5 @@ Import each Naive UI component explicitly. Table action columns are rendered wit
 - 写实现代码前，对项目已有测试覆盖的路径调 `test-driven-development`；server 与 web 均已有
   Vitest 测试（`apps/server/src/__tests__/`、`apps/web/src/**/__tests__/`），改动相关路径时先跑对应测试。
 - 完成任务、准备声称"完成"前，必须先调 `verification-before-completion`，跑过 `pnpm typecheck`
-  与 `pnpm lint` 再下结论。
+  再下结论。（全仓暂无 ESLint 配置，`pnpm lint` 已于 2026-08 移除；引入 lint 体系后再恢复。）
 - 用户可以直接说"这次跳过 brainstorming / 跳过 TDD"——这条规则是兜底，不是镣铐。
