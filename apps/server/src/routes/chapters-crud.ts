@@ -6,7 +6,7 @@ import {
   DevelopRequestSchema
 } from '@novel-runtime/shared'
 import { parseBody, getOrThrowChapter, getLastChapter } from './_helpers.js'
-import { derivePlotArcStatus } from '../services/plot-arc-status.js'
+import { derivePlotArcStatus, RECENT_END_WINDOW } from '../services/plot-arc-status.js'
 
 /**
  * CRUD 流:list / one / create / update / delete / develop(side story)。
@@ -204,6 +204,7 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
           const status = derivePlotArcStatus({
             closedBy: arc.closedBy,
             latestPoint: latest ? { chapterNumber: latest.chapterNumber, isEnd: latest.isEnd } : null,
+            recentIsEnd: arc.progressPoints.slice(0, RECENT_END_WINDOW).some((p: any) => p.isEnd),
             firstChapterNumber: arc.firstChapterNumber,
             currentChapter: chapter.number
           })

@@ -1,5 +1,5 @@
 import type { PlotArcWriteRow } from './plot-consolidator.js'
-import { derivePlotArcStatus } from './plot-arc-status.js'
+import { derivePlotArcStatus, RECENT_END_WINDOW } from './plot-arc-status.js'
 
 /**
  * 在事务中提交剧情弧线写入（推进点落库 + 关闭落库 + 状态推导）。
@@ -50,6 +50,7 @@ export async function commitPlotArcWrites(
     const status = derivePlotArcStatus({
       closedBy: arc.closedBy,
       latestPoint: latest ? { chapterNumber: latest.chapterNumber, isEnd: latest.isEnd } : null,
+      recentIsEnd: arc.progressPoints.slice(0, RECENT_END_WINDOW).some((p: any) => p.isEnd),
       firstChapterNumber: arc.firstChapterNumber,
       currentChapter: chapterNumber
     })
