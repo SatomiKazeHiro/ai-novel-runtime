@@ -6,6 +6,8 @@ import { runCharacterStage } from '../services/stages/character-stage.js'
 import { runMemoryStage } from '../services/stages/memory-stage.js'
 import { runPlotArcStage } from '../services/stages/plot-arc-stage.js'
 import { runGraphExtractStage } from '../services/stages/graph-extract-stage.js'
+import { buildCumulativeGraph } from '../services/cumulative-graph.js'
+import type { GraphSnapshot } from '../services/graph-snapshot.js'
 
 /**
  * v3 archive 端点 — 3 端点:
@@ -19,7 +21,8 @@ import { runGraphExtractStage } from '../services/stages/graph-extract-stage.js'
  *   - prepare-archive 调 4 stage 并行 (Promise.all), 各自结果写入
  *     pendingArchiveData.stages[name]。单 stage 失败不影响其他 stage。
  *   - archive 验证 pendingArchiveData.version === 3 + ∀ stage.status === 'success'。
- *     事务内 commit (本 commit 不含 cumulativeGraph build, 在 Commit 4 加)。
+ *     在 status='archived' update 之前调用 buildCumulativeGraph,
+ *     把 JSON.stringify 后的 cumulativeGraph 一并写入 Chapter 行 (Task 4.2 接入)。
  */
 export async function chapterArchiveRoutes(app: FastifyInstance) {
   app.post('/api/chapters/:chapterId/prepare-archive', async (request, reply) => {
@@ -249,10 +252,47 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       })
     }
 
+    // v3 build cumulativeGraph(在事务前;AI 调用不能在事务里)
+    const chapterGraphForArchive = chapter.chapterGraph
+      ? safeJsonParse<GraphSnapshot | null>(chapter.chapterGraph, null)
+      : null
+
+    // 查 prev cumulativeGraph
+    let prevCumulative: GraphSnapshot | null = null
+    if (chapter.parentChapterId) {
+      const parent = await prisma.chapter.findUnique({
+        where: { id: chapter.parentChapterId },
+        select: { cumulativeGraph: true }
+      })
+      if (parent?.cumulativeGraph) prevCumulative = safeJsonParse<GraphSnapshot | null>(parent.cumulativeGraph, null)
+    }
+    if (!prevCumulative) {
+      const prev = await prisma.chapter.findFirst({
+        where: { storyId: chapter.storyId, parentChapterId: null, number: chapter.number - 1, id: { not: chapterId } },
+        select: { cumulativeGraph: true }
+      })
+      if (prev?.cumulativeGraph) prevCumulative = safeJsonParse<GraphSnapshot | null>(prev.cumulativeGraph, null)
+    }
+
+    let cumulativeGraph: GraphSnapshot
+    try {
+      const result = await buildCumulativeGraph(app, {
+        storyId: chapter.storyId, chapterId, chapterNumber: chapter.number,
+        chapterGraph: chapterGraphForArchive, prevCumulativeGraph: prevCumulative
+      })
+      cumulativeGraph = result.cumulativeGraph
+    } catch (err: any) {
+      app.log.error(`[Archive] Cumulative graph build failed: ${err.message}`)
+      return reply.status(500).send({
+        success: false,
+        error: `归档失败：全局图谱构建失败（${err.message}）。请重试。`
+      })
+    }
+
     // 直接翻 status (无锁; UI 防双击)
     await prisma.chapter.update({
       where: { id: chapterId },
-      data: { status: 'archived', pendingArchiveData: null }
+      data: { status: 'archived', pendingArchiveData: null, cumulativeGraph: JSON.stringify(cumulativeGraph) }
     })
 
     return { success: true, data: { cumulativeGraph: null, optimizedCount: 0 } }

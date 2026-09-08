@@ -14,11 +14,15 @@ vi.mock('../../services/stages/plot-arc-stage.js', () => ({
 vi.mock('../../services/stages/graph-extract-stage.js', () => ({
   runGraphExtractStage: vi.fn()
 }))
+vi.mock('../../services/cumulative-graph.js', () => ({
+  buildCumulativeGraph: vi.fn()
+}))
 
 import { runCharacterStage } from '../../services/stages/character-stage.js'
 import { runMemoryStage } from '../../services/stages/memory-stage.js'
 import { runPlotArcStage } from '../../services/stages/plot-arc-stage.js'
 import { runGraphExtractStage } from '../../services/stages/graph-extract-stage.js'
+import { buildCumulativeGraph } from '../../services/cumulative-graph.js'
 
 const ts = '2026-07-25T00:00:00.000Z'
 
@@ -208,6 +212,7 @@ describe('archive route — v3 gate stub (no $transaction, no 409 lock)', () => 
     mockPrisma = {
       chapter: {
         findUnique: vi.fn(),
+        findFirst: vi.fn().mockResolvedValue(null),
         update: vi.fn(),
         updateMany: vi.fn()
       }
@@ -269,9 +274,14 @@ describe('archive route — v3 gate stub (no $transaction, no 409 lock)', () => 
         },
         meta: { extractedAt: ts, chapterNumber: 1 }
       }),
+      chapterGraph: null,
       story: { id: 's1' }
     })
     mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'archived' })
+    ;(buildCumulativeGraph as any).mockResolvedValue({
+      cumulativeGraph: { nodes: [], edges: [], timestamp: ts },
+      aiCalled: false
+    })
 
     const result = await callHandler(
       routes,
