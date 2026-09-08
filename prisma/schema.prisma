@@ -240,7 +240,7 @@ model WorkerTask {
   storyId     String?  // 旧字段，兼容保留，后续废弃
   type        String   @default("custom") // system | custom
   name        String   @default("")  // Task 名称，方便管理
-  workerType  String   // generation | scoring | memory | graph | timeline | rewrite
+  workerType  String   // generation | memory | graph | rewrite
   taskPrompt  String   // Task Layer 内容
   enabled     Boolean  @default(true)
   createdAt   DateTime @default(now())
@@ -254,7 +254,7 @@ model WorkerTask {
 model StoryWorkerBinding {
   id           String   @id @default(uuid())
   storyId      String
-  workerType   String   // generation | scoring | memory | graph | timeline | rewrite
+  workerType   String   // generation | memory | graph | rewrite
   workerTaskId String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

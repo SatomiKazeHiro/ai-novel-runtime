@@ -25,7 +25,6 @@
     "@novel-runtime/knowledge-graph": "workspace:*",
     "@novel-runtime/memory-engine": "workspace:*",
     "@novel-runtime/prompt-runtime": "workspace:*",
-    "@novel-runtime/scoring-engine": "workspace:*",
     "@novel-runtime/shared": "workspace:*",
     "bullmq": "^5.76.8",
     "dotenv": "^16.4.0",

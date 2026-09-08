@@ -113,8 +113,8 @@ describe('WorkerTaskYamlSchema', () => {
   it('applies default enabled=true', () => {
     const result = WorkerTaskYamlSchema.safeParse({
       name: 'x',
-      workerType: 'scoring',
-      taskPrompt: 'do scoring'
+      workerType: 'memory',
+      taskPrompt: 'extract memory'
     })
     expect(result.success).toBe(true)
     if (result.success) expect(result.data.enabled).toBe(true)
