@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createMockApp, callHandler, createMockPrisma } from '../setup.js'
 
-// 注意: 本文件中的测试不要使用全局 beforeEach, 各自维护隔离的 setup。
+// 全局 setup.ts 在每个 test 前 vi.resetAllMocks(), 各 describe 再自建 mockPrisma 保证隔离。
 
 vi.mock('../../services/stages/cumulative-graph-build-service.js', () => ({
   buildCumulativeGraphWithTimestamp: vi.fn()

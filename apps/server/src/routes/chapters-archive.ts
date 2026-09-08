@@ -457,6 +457,13 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     const chapter = await getOrThrowChapter(prisma, chapterId, reply)
     if (chapter === null) return
 
+    if (chapter.status !== 'draft' && chapter.status !== 'reviewing') {
+      return reply.status(400).send({
+        success: false,
+        error: `章节当前状态为 ${chapter.status},不允许保存累计图谱`,
+      })
+    }
+
     if (chapter.cumulativeGraphGeneratedAt == null) {
       return reply.status(400).send({
         success: false,
