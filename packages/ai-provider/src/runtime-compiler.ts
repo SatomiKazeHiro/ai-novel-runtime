@@ -14,7 +14,7 @@ export interface SharedRuntimeBase {
 }
 
 export interface WorkerTask {
-  workerType: 'generation' | 'scoring' | 'memory' | 'graph' | 'timeline' | 'rewrite' | 'memory_organize'
+  workerType: 'generation' | 'scoring' | 'memory' | 'graph' | 'rewrite' | 'memory_organize'
   taskPrompt: string
 }
 

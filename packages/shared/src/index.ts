@@ -218,7 +218,6 @@ export const DEFAULT_PIPELINE_BUDGET = {
   character: 12000,
   scene: 12000,
   memory: 8000,
-  timeline: 4000,
   plotArc: 3000,
   output: 16000
 } as const
@@ -234,7 +233,6 @@ export type BudgetConfig = {
   character: number
   scene: number
   memory: number
-  timeline: number
   plotArc: number
   output: number
 }
@@ -257,7 +255,6 @@ export function scaleBudget(contextLength: number): BudgetConfig {
     character: Math.floor(DEFAULT_PIPELINE_BUDGET.character * ratio),
     scene: Math.floor(DEFAULT_PIPELINE_BUDGET.scene * ratio),
     memory: Math.floor(DEFAULT_PIPELINE_BUDGET.memory * ratio),
-    timeline: Math.floor(DEFAULT_PIPELINE_BUDGET.timeline * ratio),
     plotArc: Math.floor(DEFAULT_PIPELINE_BUDGET.plotArc * ratio),
     output: Math.floor(DEFAULT_PIPELINE_BUDGET.output * ratio)
   }
@@ -265,8 +262,6 @@ export function scaleBudget(contextLength: number): BudgetConfig {
 
 export * from './archive.js'
 export * from './chapter-prompt.js'
-export * from './timeline.js'
-export * from './timeline-encoding.js'
 export * from './chapter.js'
 export * from './develop.js'
 export * from './prepare-archive.js'

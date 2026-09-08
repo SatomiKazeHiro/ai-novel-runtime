@@ -19,7 +19,6 @@ export interface PromptLayers {
   character?: string
   scene?: string
   memory?: string
-  timeline?: string
   plotArc?: string
   output?: string
 }
@@ -35,7 +34,6 @@ export interface BudgetConfig {
   character: number
   scene: number
   memory: number
-  timeline: number
   plotArc: number
   output: number
 }
@@ -81,7 +79,6 @@ export class PromptAssembler {
       { key: 'character', label: 'Character', budget: this.budget.character },
       { key: 'scene', label: 'Scene', budget: this.budget.scene },
       { key: 'memory', label: 'Memory', budget: this.budget.memory },
-      { key: 'timeline', label: 'Timeline', budget: this.budget.timeline },
       { key: 'plotArc', label: 'PlotArc', budget: this.budget.plotArc },
       { key: 'output', label: 'Output', budget: this.budget.output }
     ]

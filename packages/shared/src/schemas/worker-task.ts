@@ -22,7 +22,6 @@ export const WORKER_TYPES = [
   'scoring',
   'memory',
   'graph',
-  'timeline',
   'rewrite',
   'memory_organize'
 ] as const
