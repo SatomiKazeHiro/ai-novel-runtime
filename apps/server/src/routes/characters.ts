@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify'
+﻿import type { FastifyInstance } from 'fastify'
 import { fetchCharacterDisplay } from '../services/character-display.js'
 
 export async function characterRoutes(app: FastifyInstance) {
@@ -16,6 +16,21 @@ export async function characterRoutes(app: FastifyInstance) {
     return { success: true, data }
   })
 
+
+  // GET /api/stories/:storyId/characters/:charId/snapshot — v4 单角色快照(给编辑弹窗切换章节用,避免拉全部角色)
+  app.get('/api/stories/:storyId/characters/:charId/snapshot', async (request, reply) => {
+    const { storyId, charId } = request.params as any
+    const chapterParam = (request.query as any).chapter
+    const viewChapterNumber = chapterParam && chapterParam !== 'null' ? Number(chapterParam) : null
+    if (viewChapterNumber !== null && Number.isNaN(viewChapterNumber)) {
+      return reply.status(400).send({ success: false, error: 'invalid chapter number' })
+    }
+    const data = await fetchCharacterDisplay(app.prisma, storyId, viewChapterNumber, charId)
+    if (data.length === 0) {
+      return reply.status(404).send({ success: false, error: 'Character not found' })
+    }
+    return { success: true, data: data[0] }
+  })
   // GET /api/stories/:id/characters
   app.get('/api/stories/:storyId/characters', async (request, reply) => {
     const { storyId } = request.params as any
@@ -44,8 +59,8 @@ export async function characterRoutes(app: FastifyInstance) {
         identity: JSON.stringify(body.identity || []),
         appearance: JSON.stringify(body.appearance || []),
         temperament: JSON.stringify(body.temperament || []),
-        relationships: body.relationships !== undefined ? JSON.stringify(body.relationships) : null,
-        status: body.status !== undefined ? JSON.stringify(body.status) : null
+        relationships: body.relationships !== undefined ? JSON.stringify(body.relationships) : '{}',
+        status: body.status !== undefined ? JSON.stringify(body.status) : '{}'
       }
     })
 
@@ -56,13 +71,6 @@ export async function characterRoutes(app: FastifyInstance) {
   app.put('/api/characters/:charId', async (request, reply) => {
     const { charId } = request.params as any
     const body = request.body as any
-    if (body.status !== undefined || body.relationships !== undefined) {
-      const snapshot = await app.prisma.characterBranchState.findFirst({ where: { characterId: charId } })
-      if (snapshot) {
-        return reply.status(400).send({ success: false, error: 'Character base relationships/status cannot be changed after snapshots exist' })
-      }
-    }
-
     const data: any = { name: body.name }
     if (body.protagonist !== undefined) data.protagonist = body.protagonist
     if (body.personality !== undefined) data.personality = JSON.stringify(body.personality)

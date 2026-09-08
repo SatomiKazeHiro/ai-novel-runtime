@@ -74,8 +74,8 @@
           <!-- 基础属性: 扁平 dot + text 列表 -->
           <div class="char-card__section">
             <span class="char-card__label">基础属性</span>
-            <div v-if="hasAnyBaseAttr(char)" class="char-card__fields">
-              <div v-for="group in groupedBaseAttrs(char)" :key="group.key" class="char-card__field-row">
+            <div v-if="char.baseAttrs.has" class="char-card__fields">
+              <div v-for="group in char.baseAttrs.groups" :key="group.key" class="char-card__field-row">
                 <span class="char-card__field-label">{{ group.label }}</span>
                 <span class="char-card__field-value">{{ group.values.join(' · ') }}</span>
               </div>
@@ -168,17 +168,15 @@
         <n-form-item label="说话风格">
           <DynamicTags v-model="form.speechStyle" />
         </n-form-item>
-        <template v-if="!isEdit || !editingHasSnapshot">
-          <n-form-item label="基础关系"><n-input v-model:value="form.relationshipsText" type="textarea" /></n-form-item>
-          <n-form-item label="Base status"><n-input v-model:value="form.statusText" type="textarea" /></n-form-item>
-        </template>
-        <n-alert v-if="!isEdit || !editingHasSnapshot" type="info" :show-icon="true" style="margin-top: 8px">
-          {{ isEdit ? '当前角色尚无章节快照。这里修改的是基础关系和基础状态，会作为后续生成时的 fallback。' : '基础关系和基础状态会作为角色初始设定保存。后续章节归档产生的关系、状态和衣着将以章节快照记录，不会覆盖这里的基础设定。' }}
+        <n-form-item label="基础关系"><n-input v-model:value="form.relationshipsText" type="textarea" placeholder="e.g. {&quot;Alice&quot;: &quot;friend&quot;}" /></n-form-item>
+        <n-form-item label="Base status"><n-input v-model:value="form.statusText" type="textarea" placeholder="e.g. {&quot;rank&quot;: &quot;level 1&quot;}" /></n-form-item>
+        <n-alert type="info" :show-icon="true" style="margin-top: 8px">
+          AI 优先参考章节快照；无章节快照时，使用此处的基础设定。
         </n-alert>
       </n-form>
         <aside v-if="editingHasSnapshot && editingCharacter" class="character-edit-snapshot">
           <span class="character-edit-snapshot__hint">章节快照由归档分析生成，仅供查看，暂不支持手动编辑。</span>
-          <n-select v-model:value="snapshotChapter" :options="snapshotChapterOptions" size="small" placeholder="Select snapshot chapter" />
+          <n-select v-model:value="snapshotChapter" :options="chapterOptions" size="small" placeholder="Select snapshot chapter" />
           <span class="char-card__label">最新章节快照</span>
           <div class="character-edit-snapshot__row"><strong>关系</strong><span>{{ formatObject(snapshotCharacter?.relationships?.value) || '未提取' }}</span></div>
           <div class="character-edit-snapshot__row"><strong>状态</strong><span>{{ formatObject(snapshotCharacter?.status?.value) || '未提取' }}</span></div>
@@ -201,26 +199,40 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NSpace, NButton, NModal, NForm, NFormItem, NInput, NCheckbox,
-  NSelect, NAlert, NSpin, NEmpty, useDialog
+  NSelect, NAlert, NSpin, NEmpty, useDialog, useMessage
 } from 'naive-ui'
 import { charactersApi, type CharacterDisplayRow } from '../api/characters'
+/**
+ * CharacterRowWithAttrs = 后端 CharacterDisplayRow + 视图层 enrich 的 baseAttrs。
+ *
+ * baseAttrs 不是后端字段,仅用于列表卡片渲染;
+ *   副作用:
+ *   - 不参与 PUT 请求: characters.ts PUT 显式挑字段,
+ *     handleSubmit 构造 data 时未读 baseAttrs
+ *   - 不参与删除: charactersApi.remove 只取 row.id
+ *   - 不参与编辑弹窗: editingCharacter / snapshotCharacter 是 CharacterDisplayRow 类型,
+ *     不挂 baseAttrs, 弹窗代码也不读它
+ *   - 不下传到详情 API: 详情端点不接收此字段
+ */
+type CharacterRowWithAttrs = CharacterDisplayRow & { baseAttrs: { has: boolean; groups: BaseAttrGroup[] } }
 import { chaptersApi } from '../api/chapters'
 import DynamicTags from '../components/DynamicTags.vue'
 
 const route = useRoute()
 const dialog = useDialog()
-const characters = ref<CharacterDisplayRow[]>([])
+
+const message = useMessage()
 const loading = ref(false)
 const showModal = ref(false)
 const isEdit = ref(false)
 const editId = ref('')
-const editingHasSnapshot = ref(false)
+const editingHasSnapshot = computed(() => { const c = editingCharacter.value; return !!(c?.relationships || c?.status || c?.costume) })
 const editingCharacter = ref<CharacterDisplayRow | null>(null)
 const snapshotCharacter = ref<CharacterDisplayRow | null>(null)
 const snapshotChapter = ref<number | null>(null)
-const snapshotChapterOptions = computed(() => chapterOptions.value)
 const viewChapter = ref<number | null>(null)
 const chapterOptions = ref<Array<{ label: string; value: number }>>([])
+const characters = ref<CharacterRowWithAttrs[]>([])
 
 const form = ref({
   slug: '',
@@ -247,21 +259,26 @@ const archiveViewTitle = computed(() => {
 
 /** 基础属性分组: 按类型聚合,每类一行 */
 type BaseAttrGroup = { key: string; label: string; values: string[] }
-function groupedBaseAttrs(c: CharacterDisplayRow): BaseAttrGroup[] {
+/**
+ * 单次遍历收集角色基础属性的渲染数据,返回 { has, groups } 一次性喂给模板。
+ *
+ * 设计动机: 列表卡片渲染需要 (a) 判断是否有基础属性 (b) 列出各组;
+ *   原代码 hasAnyBaseAttr + groupedBaseAttrs 两个遍历一份数据;
+ *   合并后, 调用方在 loadCharacters 中 enrich 一次(见 char.baseAttrs), 模板零开销读取。
+ *
+ * 副作用: 见 CharacterRowWithAttrs 类型注释; 此函数本身无副作用,纯函数。
+ */
+function collectBaseAttrs(c: CharacterDisplayRow): { has: boolean; groups: BaseAttrGroup[] } {
   const groups: BaseAttrGroup[] = []
   const push = (key: string, label: string, arr: string[] | undefined) => {
-    if (!Array.isArray(arr) || arr.length === 0) return
-    groups.push({ key, label, values: arr })
+    if (Array.isArray(arr) && arr.length > 0) groups.push({ key, label, values: arr })
   }
   push('identity', '身份', c.identity)
   push('appearance', '外貌', c.appearance)
   push('temperament', '气质', c.temperament)
   push('personality', '性格', c.personality)
   push('speechStyle', '说话', c.speechStyle)
-  return groups
-}
-function hasAnyBaseAttr(c: CharacterDisplayRow): boolean {
-  return groupedBaseAttrs(c).length > 0
+  return { has: groups.length > 0, groups }
 }
 
 /** 格式化 Record<string, any> → "k:v, k:v" */
@@ -283,7 +300,9 @@ async function loadCharacters() {
   loading.value = true
   try {
     const res = await charactersApi.display(route.params.storyId as string, viewChapter.value)
-    characters.value = res.data.data ?? []
+    // 视图层 enrich: 给每行附加 baseAttrs,模板里直接读,避免每次渲染重新调用 collectBaseAttrs
+    // (字段作用与副作用详见 CharacterRowWithAttrs 类型注释)
+    characters.value = (res.data.data ?? []).map((c: CharacterDisplayRow): CharacterRowWithAttrs => ({ ...c, baseAttrs: collectBaseAttrs(c) }))
   } finally {
     loading.value = false
   }
@@ -314,7 +333,6 @@ function resetForm() {
 function openCreate() {
   isEdit.value = false
   editId.value = ''
-  editingHasSnapshot.value = false
   editingCharacter.value = null
   snapshotCharacter.value = null
   snapshotChapter.value = null
@@ -325,7 +343,6 @@ function openCreate() {
 function openEdit(row: CharacterDisplayRow) {
   isEdit.value = true
   editId.value = row.id
-  editingHasSnapshot.value = Boolean(row.relationships || row.status || row.costume)
   editingCharacter.value = row
   snapshotCharacter.value = row
   snapshotChapter.value = row.relationships?.sourceChapterNumber ?? row.status?.sourceChapterNumber ?? row.costume?.sourceChapterNumber ?? null
@@ -355,15 +372,13 @@ async function handleSubmit() {
     personality: form.value.personality,
     speechStyle: form.value.speechStyle
   }
-  if (!isEdit.value || !editingHasSnapshot.value) {
-    try {
-      data.relationships = JSON.parse(form.value.relationshipsText || '{}')
-      data.status = JSON.parse(form.value.statusText || '{}')
-    } catch {
-      return
-    }
+  try {
+    data.relationships = JSON.parse(form.value.relationshipsText || '{}')
+    data.status = JSON.parse(form.value.statusText || '{}')
+  } catch (err: any) {
+    message.error(`基础关系 / Base status 不是合法 JSON: ${err.message || err}`)
+    return
   }
-
   if (isEdit.value && editId.value) {
     await charactersApi.update(editId.value, data)
   } else {
@@ -399,8 +414,8 @@ watch(viewChapter, () => {
 
 watch(snapshotChapter, async (chapter) => {
   if (!editingHasSnapshot.value || !editingCharacter.value || chapter === null || !route.params.storyId) return
-  const res = await charactersApi.display(route.params.storyId as string, chapter)
-  snapshotCharacter.value = (res.data.data ?? []).find((row: CharacterDisplayRow) => row.id === editingCharacter.value?.id) ?? null
+  const res = await charactersApi.getSnapshot(route.params.storyId as string, editingCharacter.value.id, chapter)
+  snapshotCharacter.value = res.data.data ?? null
 })
 
 watch(() => route.params.storyId, () => {

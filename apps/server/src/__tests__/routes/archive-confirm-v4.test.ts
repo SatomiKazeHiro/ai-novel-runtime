@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createMockApp, callHandler } from '../setup.js'
 
 // v4 拆分: archive confirm 路由严格校验 PendingArchiveDataV4 + 5 stage,
@@ -326,8 +326,8 @@ describe('archive confirm v4 — character resolve + commit', () => {
       data: expect.objectContaining({
         slug: 'shenmi_ren',
         name: '神秘人',
-        relationships: null,
-        status: null
+        relationships: '{}',
+        status: '{}'
       })
     })
     expect(mockPrisma.tx.characterBranchState.create).toHaveBeenCalledTimes(1)

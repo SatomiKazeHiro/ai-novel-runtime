@@ -1,4 +1,4 @@
-import { safeJsonParse } from '@novel-runtime/shared'
+﻿import { safeJsonParse } from '@novel-runtime/shared'
 
 export interface FieldDisplay<T> {
   value: T
@@ -47,9 +47,12 @@ interface BranchStateRow {
 export async function fetchCharacterDisplay(
   prisma: PrismaLike,
   storyId: string,
-  viewChapterNumber: number | null
+  viewChapterNumber: number | null,
+  charId?: string
 ): Promise<CharacterDisplayRow[]> {
-  const characters = await prisma.character.findMany({ where: { storyId } })
+  const where: any = { storyId }
+  if (charId) where.id = charId
+  const characters = await prisma.character.findMany({ where })
   if (characters.length === 0) return []
 
   const branchStates = await prisma.characterBranchState.findMany({
@@ -65,55 +68,29 @@ export async function fetchCharacterDisplay(
 
   return characters.map((c: any): CharacterDisplayRow => {
     const states = byChar.get(c.id) || []
+    // 默认模式(传 null)取每字段最新有数据的 snapshot;指定章节模式只取该章。
+    // 单条 states 数组按 fromChapterNumber desc 排好序,第一个匹配的即所求。
+    const matches = (bs: BranchStateRow) =>
+      viewChapterNumber === null ? bs.fromChapterNumber !== null : bs.fromChapterNumber === viewChapterNumber
 
-    const pickJson = (
-      fieldName: 'relationships' | 'status',
-      baseValue: string | null
-    ): FieldDisplay<Record<string, any>> | null => {
-      if (viewChapterNumber === null) {
-        // 默认模式: 最新有数据的 snapshot(从 desc 顺序遍历)
-        for (const bs of states) {
-          if (bs.fromChapterNumber === null) continue
-          const raw = bs[fieldName]
-          if (raw === null || raw === undefined || raw === '') continue
-          const parsed = safeJsonParse<Record<string, any> | null>(raw, null)
-          if (parsed !== null && parsed !== undefined) {
-            return { value: parsed, sourceChapterNumber: bs.fromChapterNumber }
-          }
-        }
-        // Snapshot fields stay null when no archive snapshot exists; base fields are returned separately.
-        return null
-      }
-      // 指定 chapter 模式: 只看该章
+    const pickJson = (fieldName: 'relationships' | 'status'): FieldDisplay<Record<string, any>> | null => {
       for (const bs of states) {
-        if (bs.fromChapterNumber !== viewChapterNumber) continue
+        if (!matches(bs)) continue
         const raw = bs[fieldName]
-        if (raw === null || raw === undefined || raw === '') return null
+        if (raw === null || raw === undefined || raw === '') continue
         const parsed = safeJsonParse<Record<string, any> | null>(raw, null)
-        if (parsed !== null && parsed !== undefined) {
-          return { value: parsed, sourceChapterNumber: bs.fromChapterNumber }
-        }
-        return null
+        if (parsed === null || parsed === undefined) continue
+        return { value: parsed, sourceChapterNumber: bs.fromChapterNumber }
       }
       return null
     }
 
     const pickText = (): FieldDisplay<string> | null => {
-      if (viewChapterNumber === null) {
-        for (const bs of states) {
-          if (bs.fromChapterNumber === null) continue
-          if (bs.costume && bs.costume.trim()) {
-            return { value: bs.costume, sourceChapterNumber: bs.fromChapterNumber }
-          }
-        }
-        return null
-      }
       for (const bs of states) {
-        if (bs.fromChapterNumber !== viewChapterNumber) continue
+        if (!matches(bs)) continue
         if (bs.costume && bs.costume.trim()) {
           return { value: bs.costume, sourceChapterNumber: bs.fromChapterNumber }
         }
-        return null
       }
       return null
     }
@@ -128,8 +105,8 @@ export async function fetchCharacterDisplay(
       temperament: safeJsonParse(c.temperament, []),
       personality: safeJsonParse(c.personality, []),
       speechStyle: safeJsonParse(c.speechStyle, []),
-      relationships: pickJson('relationships', c.relationships),
-      status: pickJson('status', c.status),
+      relationships: pickJson('relationships'),
+      status: pickJson('status'),
       baseRelationships: safeJsonParse<Record<string, any> | null>(c.relationships, null),
       baseStatus: safeJsonParse<Record<string, any> | null>(c.status, null),
       costume: pickText()

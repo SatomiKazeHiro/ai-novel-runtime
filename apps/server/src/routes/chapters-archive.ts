@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify'
+﻿import type { FastifyInstance } from 'fastify'
 import { randomBytes } from 'crypto'
 import { PrepareArchiveRequestSchema, safeJsonParse } from '@novel-runtime/shared'
 import type { PendingArchiveDataV4, PendingStageState, RetryStageName } from '@novel-runtime/shared'
@@ -704,57 +704,37 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     // 构造每条 Memory 行的写入数据(后端按 layer 规则打 tag, 备注: '未来探讨是否可以优化' — 是否让 raw 也由 AI 给 tag?)
     type MemoryRowData = Parameters<typeof prisma.memory.create>[0]['data']
     const chapterRows: MemoryRowData[] = []
-    for (const e of mainEvents) {
-      if (!e?.description) continue
+    // 5 段同构 row (layer=chapter),共一个 push helper;extraTag 控制 main-plot 标记,缺省 5
+    const pushChapterRow = (content: string, importance: number, extraTags: string[] = []) => {
       chapterRows.push({
         storyId: chapter.storyId,
         chapterId,
         fromChapterNumber,
         layer: 'chapter',
-        content: e.description,
-        tags: JSON.stringify(['auto-extracted', 'main-plot']),
-        importance: typeof e.importance === 'number' ? e.importance : 5
+        content,
+        tags: JSON.stringify(['auto-extracted', ...extraTags]),
+        importance
       })
+    }
+    for (const e of mainEvents) {
+      if (!e?.description) continue
+      pushChapterRow(e.description, typeof e.importance === 'number' ? e.importance : 5, ['main-plot'])
     }
     for (const e of sideEvents) {
       if (!e?.description) continue
-      chapterRows.push({
-        storyId: chapter.storyId,
-        chapterId,
-        fromChapterNumber,
-        layer: 'chapter',
-        content: e.description,
-        tags: JSON.stringify(['auto-extracted']),
-        importance: typeof e.importance === 'number' ? e.importance : 5
-      })
+      pushChapterRow(e.description, typeof e.importance === 'number' ? e.importance : 5)
     }
-    for (const e of emotions) {
-      if (typeof e !== 'string' || !e) continue
-      chapterRows.push({
-        storyId: chapter.storyId, chapterId, fromChapterNumber, layer: 'chapter',
-        content: e, tags: JSON.stringify(['auto-extracted']), importance: 5
-      })
-    }
-    for (const e of foreshadowing) {
-      if (typeof e !== 'string' || !e) continue
-      chapterRows.push({
-        storyId: chapter.storyId, chapterId, fromChapterNumber, layer: 'chapter',
-        content: e, tags: JSON.stringify(['auto-extracted']), importance: 5
-      })
-    }
-    for (const e of relationshipChanges) {
-      if (typeof e !== 'string' || !e) continue
-      chapterRows.push({
-        storyId: chapter.storyId, chapterId, fromChapterNumber, layer: 'chapter',
-        content: e, tags: JSON.stringify(['auto-extracted']), importance: 5
-      })
-    }
+    const pushStringRow = (s: string) => pushChapterRow(s, 5)
+    for (const e of emotions) if (typeof e === 'string' && e) pushStringRow(e)
+    for (const e of foreshadowing) if (typeof e === 'string' && e) pushStringRow(e)
+    for (const e of relationshipChanges) if (typeof e === 'string' && e) pushStringRow(e)
     const sceneRows: MemoryRowData[] = scenes.filter(s => s?.location).map(s => ({
       storyId: chapter.storyId, chapterId, fromChapterNumber, layer: 'scene',
       content: `${s.location} | ${s.event || ''}`,
       tags: JSON.stringify(['auto-extracted', 'scene-memory']),
       importance: typeof s.importance === 'number' ? s.importance : 5
     }))
+
     const globalRows: MemoryRowData[] = optimized.filter(m => m?.content).map(m => ({
       storyId: chapter.storyId, chapterId, fromChapterNumber, layer: 'global',
       content: m.content,
@@ -798,7 +778,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       await commitPlotArcWrites(tx, chapter.number, plotArcs)
       // 接通 v3 CharacterBranchState 写库 (修 P0 遗留): character-stage 输出 → CharacterBranchState 表
       // isNew=true 时 commitCharacterBranchStateWrites 内部自动 tx.character.create 建 Character 行
-      await commitCharacterBranchStateWrites(tx, chapter.storyId, chapter.number, resolvedCharacterStates, app.log)
+      await commitCharacterBranchStateWrites(tx, chapter.storyId, chapter.number, resolvedCharacterStates)
       await tx.chapter.update({
         where: { id: chapterId },
         data: {

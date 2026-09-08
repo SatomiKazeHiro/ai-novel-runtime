@@ -1,4 +1,4 @@
-import { api } from '../utils/api'
+﻿import { api } from '../utils/api'
 
 export interface CharacterCreate {
   slug: string
@@ -53,5 +53,9 @@ export const charactersApi = {
   update: (charId: string, data: CharacterUpdate) => api.put(`/api/characters/${charId}`, data),
   remove: (charId: string) => api.delete(`/api/characters/${charId}`),
   display: (storyId: string, chapter: number | null) =>
-    api.get(`/api/stories/${storyId}/characters/display`, { params: { chapter } })
+    api.get(`/api/stories/${storyId}/characters/display`, { params: { chapter } }),
+
+  /** 单角色单章节快照:编辑弹窗切章节时用,只回传一个角色,避免拉全部角色 */
+  getSnapshot: (storyId: string, charId: string, chapter: number | null) =>
+    api.get(`/api/stories/${storyId}/characters/${charId}/snapshot`, { params: { chapter } })
 }

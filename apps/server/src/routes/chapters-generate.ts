@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify'
+﻿import type { FastifyInstance } from 'fastify'
 import { generateQueue } from '../queue/index.js'
 import { getActivePlotArcs } from '../services/plot-extractor.js'
 import { PromptPipeline } from '@novel-runtime/prompt-runtime'
@@ -20,7 +20,7 @@ import { parseBody, getLastChapter, getOrThrowChapter } from './_helpers.js'
 /**
  * Generate 流：prompt preview / 多候选 generate / 选 candidate。
  *
- * 内部 helper：getCharactersWithLatestState（仅 preview + generate 用，保留在文件内闭包）。
+ * 内部 helper：getCharactersWithLatestState（仅 preview + generate 用，export 单测也用）。
  *
  * 路由路径：
  *   POST /api/chapters/:chapterId/preview   — 仅返回 compiled prompt,不调 AI
@@ -33,7 +33,7 @@ import { parseBody, getLastChapter, getOrThrowChapter } from './_helpers.js'
 /**
  * fallback 链: snapshot (CharacterBranchState) > Character base 字段 > '{}'
  * 让新建但未归档的角色也能在 prompt 注入基础关系/状态。
- * export 是为了支持单测;内部 preview + generate 仍走闭包版(避免路由文件重复声明)。
+ * export 是为了支持单测。
  */
 export async function getCharactersWithLatestState(
   prisma: any,
@@ -54,23 +54,6 @@ export async function getCharactersWithLatestState(
 }
 
 export async function chapterGenerateRoutes(app: FastifyInstance) {
-  // 辅助函数：获取角色的最新状态（历史表模式）。preview + generate 共用。
-  async function getCharactersWithLatestState(prisma: any, storyId: string) {
-    const characters = await prisma.character.findMany({ where: { storyId } })
-    return Promise.all(characters.map(async (c: any) => {
-      const latestState = await prisma.characterBranchState.findFirst({
-        where: { characterId: c.id },
-        orderBy: { fromChapterNumber: 'desc' }
-      })
-      // fallback 链: latestState snapshot > Character base 字段 > '{}'
-    // 让"新建后还没归档"的角色也能在 prompt 里注入 base 关系/状态
-    return {
-      ...c,
-      status: latestState?.status ?? c.status ?? '{}',
-      relationships: latestState?.relationships ?? c.relationships ?? '{}'
-    }
-    }))
-  }
 
   // POST /api/chapters/:chapterId/preview
   app.post('/api/chapters/:chapterId/preview', async (request, reply) => {

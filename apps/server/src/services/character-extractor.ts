@@ -83,10 +83,8 @@ export async function commitCharacterBranchStateWrites(
   tx: any,
   storyId: string,
   chapterNumber: number,
-  writes: CharacterStateRow[],
-  log?: { info: (msg: string) => void; warn: (msg: string) => void }
+  writes: CharacterStateRow[]
 ): Promise<void> {
-  const safeLog = log ?? { info: () => {}, warn: () => {} }
   for (const w of writes) {
     let characterId = w.characterId
     if (w.isNew || !characterId) {
@@ -102,8 +100,8 @@ export async function commitCharacterBranchStateWrites(
           identity: '[]',
           appearance: '[]',
           temperament: '[]',
-          relationships: null,
-          status: null
+          relationships: '{}',
+          status: '{}'
         }
       })
       characterId = newChar.id
