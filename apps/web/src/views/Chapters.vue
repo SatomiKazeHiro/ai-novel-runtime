@@ -279,6 +279,21 @@ async function handleReprepareArchive() {
     // prepare-archive 端点(后端允许从 reviewing 重试),成功后
     // pendingArchiveData 被新 payload 填上,ReviewingPanel 自动渲染。
     if (repreparingArchive.value) return;
+    // 仲裁 #3：后端 prepare-archive 重试会清空当前 pendingArchiveData
+    // （用户对记忆/图谱/弧线的修订会被丢弃）。先弹窗告知，避免误操作。
+    const ok = await new Promise<boolean>((resolve) => {
+        dialog.warning({
+            title: "重新准备归档",
+            content:
+                "重新准备归档会清空当前归档审查面板中的所有修改（记忆、图谱、剧情弧线等），并基于章节当前正文重新让 AI 提取。\n\n确认继续？",
+            positiveText: "确认重新提取",
+            negativeText: "取消",
+            onPositiveClick: () => resolve(true),
+            onNegativeClick: () => resolve(false),
+            onClose: () => resolve(false),
+        });
+    });
+    if (!ok) return;
     repreparingArchive.value = true;
     try {
         await editor.prepareArchive();
