@@ -323,3 +323,60 @@ export const PendingArchiveDataV3Schema = z.object({
 }).passthrough()
 
 export type PendingArchiveDataV3Z = z.infer<typeof PendingArchiveDataV3Schema>
+
+// =================================================================
+// v4 shape (2026-07-31 引入)
+// 把 v3 的 memory stage 拆为 memoryExtract + memoryOptimize 两个独立 stage:
+//   - memoryExtract: 仅做 raw 提取 (mainEvents/sideEvents/...)
+//   - memoryOptimize: 仅做跨章融合 (memories[] layer='global')
+// 两者解耦后,raw 抽取失败 optimizer 不白跑,optimizer 失败 raw 抽取不浪费。
+// v3 数据直接拒绝 (archive confirm version !== 4 报 400)。
+// =================================================================
+
+export const RetryStageNameSchema = z.enum([
+  'character',
+  'memoryExtract',
+  'memoryOptimize',
+  'plotArc',
+  'graph'
+])
+export type RetryStageName = z.infer<typeof RetryStageNameSchema>
+
+export interface PendingArchiveDataV4 {
+  version: 4
+  stages: {
+    character: PendingStageState
+    memoryExtract: PendingStageState
+    memoryOptimize: PendingStageState
+    plotArc: PendingStageState
+    graph: PendingStageState
+  }
+  // 累计图谱数据 (AI 生成 + 用户编辑) 在 reviewing 期间只活在 pendingArchiveData 这两个字段,
+  // Chapter.cumulativeGraph / cumulativeGraphGeneratedAt 列始终为 null,
+  // archive confirm 时从这俩字段拷到列。知识图谱页面只查 archived, 读列即可。
+  cumulativeGraph?: PendingGraphSnapshot
+  cumulativeGraphGeneratedAt?: string
+  meta: {
+    extractedAt: string
+    chapterNumber: number
+  }
+}
+
+export const PendingArchiveDataV4Schema = z.object({
+  version: z.literal(4),
+  stages: z.object({
+    character: PendingStageStateSchema,
+    memoryExtract: PendingStageStateSchema,
+    memoryOptimize: PendingStageStateSchema,
+    plotArc: PendingStageStateSchema,
+    graph: PendingStageStateSchema
+  }),
+  cumulativeGraph: PendingGraphSnapshotSchema.optional(),
+  cumulativeGraphGeneratedAt: z.string().optional(),
+  meta: z.object({
+    extractedAt: z.string(),
+    chapterNumber: z.number()
+  })
+}).passthrough()
+
+export type PendingArchiveDataV4Z = z.infer<typeof PendingArchiveDataV4Schema>
