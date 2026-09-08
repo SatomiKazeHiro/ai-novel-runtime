@@ -74,12 +74,11 @@
           <!-- 基础属性: 扁平 dot + text 列表 -->
           <div class="char-card__section">
             <span class="char-card__label">基础属性</span>
-            <div v-if="hasAnyBaseAttr(char)" class="char-card__attrs">
-              <span v-for="item in baseAttrs(char)" :key="item.key + '-' + item.value" class="char-card__attr" :data-kind="item.key">
-                <span class="char-card__attr-dot" aria-hidden="true"></span>
-                <span class="char-card__attr-key">{{ item.label }}</span>
-                <span class="char-card__attr-value">{{ item.value }}</span>
-              </span>
+            <div v-if="hasAnyBaseAttr(char)" class="char-card__fields">
+              <div v-for="group in groupedBaseAttrs(char)" :key="group.key" class="char-card__field-row">
+                <span class="char-card__field-label">{{ group.label }}</span>
+                <span class="char-card__field-value">{{ group.values.join(' · ') }}</span>
+              </div>
             </div>
             <span v-else class="char-card__empty">未填写</span>
           </div>
@@ -87,47 +86,52 @@
           <!-- 章节快照: 横排 list -->
           <div class="char-card__section">
             <span class="char-card__label">章节快照</span>
-            <div class="char-card__snapshot-list">
-              <div class="char-card__snapshot-row">
-                <span class="char-card__snapshot-label">关系</span>
-                <div class="char-card__snapshot-content">
-                  <span v-if="char.relationships?.value && Object.keys(char.relationships.value).length > 0" class="char-card__snapshot-value">
+            <div class="char-card__fields">
+              <div class="char-card__field-row">
+                <span class="char-card__field-label">关系</span>
+                <div class="char-card__field-content">
+                  <span v-if="char.relationships?.value && Object.keys(char.relationships.value).length > 0" class="char-card__field-value">
                     {{ formatObject(char.relationships?.value) }}
                   </span>
                   <span v-else class="char-card__empty">未提及</span>
-                  <span v-if="char.relationships?.sourceChapterNumber !== null && char.relationships?.sourceChapterNumber !== undefined" class="char-card__source is-snapshot">
-                    来源 · 第 {{ char.relationships.sourceChapterNumber }} 章
-                  </span>
-                  <span v-else-if="char.relationships?.value && Object.keys(char.relationships.value).length > 0" class="char-card__source is-base">
-                    来源 · 基础
-                  </span>
+                  <span
+                    v-if="char.relationships?.sourceChapterNumber !== null && char.relationships?.sourceChapterNumber !== undefined"
+                    class="char-card__source is-snapshot"
+                  >第 {{ char.relationships.sourceChapterNumber }} 章</span>
+                  <span
+                    v-else-if="char.relationships?.value && Object.keys(char.relationships.value).length > 0"
+                    class="char-card__source is-base"
+                  >基础</span>
                 </div>
               </div>
-              <div class="char-card__snapshot-row">
-                <span class="char-card__snapshot-label">状态</span>
-                <div class="char-card__snapshot-content">
-                  <span v-if="char.status?.value && Object.keys(char.status.value).length > 0" class="char-card__snapshot-value">
+              <div class="char-card__field-row">
+                <span class="char-card__field-label">状态</span>
+                <div class="char-card__field-content">
+                  <span v-if="char.status?.value && Object.keys(char.status.value).length > 0" class="char-card__field-value">
                     {{ formatObject(char.status?.value) }}
                   </span>
                   <span v-else class="char-card__empty">未提及</span>
-                  <span v-if="char.status?.sourceChapterNumber !== null && char.status?.sourceChapterNumber !== undefined" class="char-card__source is-snapshot">
-                    来源 · 第 {{ char.status.sourceChapterNumber }} 章
-                  </span>
-                  <span v-else-if="char.status?.value && Object.keys(char.status.value).length > 0" class="char-card__source is-base">
-                    来源 · 基础
-                  </span>
+                  <span
+                    v-if="char.status?.sourceChapterNumber !== null && char.status?.sourceChapterNumber !== undefined"
+                    class="char-card__source is-snapshot"
+                  >第 {{ char.status.sourceChapterNumber }} 章</span>
+                  <span
+                    v-else-if="char.status?.value && Object.keys(char.status.value).length > 0"
+                    class="char-card__source is-base"
+                  >基础</span>
                 </div>
               </div>
-              <div class="char-card__snapshot-row">
-                <span class="char-card__snapshot-label">衣着</span>
-                <div class="char-card__snapshot-content">
-                  <span v-if="char.costume?.value" class="char-card__snapshot-value">
+              <div class="char-card__field-row">
+                <span class="char-card__field-label">衣着</span>
+                <div class="char-card__field-content">
+                  <span v-if="char.costume?.value" class="char-card__field-value">
                     {{ char.costume.value }}
                   </span>
                   <span v-else class="char-card__empty">未描写</span>
-                  <span v-if="char.costume?.sourceChapterNumber !== null && char.costume?.sourceChapterNumber !== undefined" class="char-card__source is-snapshot">
-                    来源 · 第 {{ char.costume.sourceChapterNumber }} 章
-                  </span>
+                  <span
+                    v-if="char.costume?.sourceChapterNumber !== null && char.costume?.sourceChapterNumber !== undefined"
+                    class="char-card__source is-snapshot"
+                  >第 {{ char.costume.sourceChapterNumber }} 章</span>
                 </div>
               </div>
             </div>
@@ -220,23 +224,23 @@ const archiveViewTitle = computed(() => {
   return `第 ${viewChapter.value} 章 · 统一视图`
 })
 
-/** 基础属性分组: 把 5 个数组扁平化成 [{key,label,value}] */
-type BaseAttr = { key: string; label: string; value: string }
-function baseAttrs(c: CharacterDisplayRow): BaseAttr[] {
-  const out: BaseAttr[] = []
+/** 基础属性分组: 按类型聚合,每类一行 */
+type BaseAttrGroup = { key: string; label: string; values: string[] }
+function groupedBaseAttrs(c: CharacterDisplayRow): BaseAttrGroup[] {
+  const groups: BaseAttrGroup[] = []
   const push = (key: string, label: string, arr: string[] | undefined) => {
-    if (!Array.isArray(arr)) return
-    arr.forEach((v) => out.push({ key, label, value: v }))
+    if (!Array.isArray(arr) || arr.length === 0) return
+    groups.push({ key, label, values: arr })
   }
   push('identity', '身份', c.identity)
   push('appearance', '外貌', c.appearance)
   push('temperament', '气质', c.temperament)
   push('personality', '性格', c.personality)
   push('speechStyle', '说话', c.speechStyle)
-  return out
+  return groups
 }
 function hasAnyBaseAttr(c: CharacterDisplayRow): boolean {
-  return baseAttrs(c).length > 0
+  return groupedBaseAttrs(c).length > 0
 }
 
 /** 格式化 Record<string, any> → "k:v, k:v" */
@@ -523,83 +527,59 @@ onMounted(() => {
   letter-spacing: 0.3px;
 }
 
-/* === 基础属性: 扁平 dot + text 列表 === */
-.char-card__attrs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-}
-.char-card__attr {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 5px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-primary);
-}
-.char-card__attr-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--color-mid-gray);
-  flex: 0 0 auto;
-  transform: translateY(-2px);
-  opacity: 0.5;
-}
-
-.char-card__attr-key {
-  color: var(--color-mid-gray);
-  font-size: 12px;
-}
-.char-card__attr-value {
-  color: var(--text-primary);
-  font-weight: var(--weight-regular);
-}
-
-/* === 章节快照 === */
-.char-card__snapshot-list {
+/* === 统一字段列表: 基础属性 + 章节快照 共用 === */
+.char-card__fields {
   display: flex;
   flex-direction: column;
 }
-.char-card__snapshot-row {
+.char-card__field-row {
   display: flex;
   gap: 14px;
-  align-items: flex-start;
-  padding: 8px 0;
+  align-items: baseline;
+  padding: 7px 0;
   border-bottom: 1px dashed var(--border-default);
 }
-.char-card__snapshot-row:first-child { padding-top: 0; }
-.char-card__snapshot-row:last-child {
+.char-card__field-row:first-child { padding-top: 0; }
+.char-card__field-row:last-child {
   border-bottom: none;
   padding-bottom: 0;
 }
-.char-card__snapshot-label {
+.char-card__field-label {
   flex: 0 0 44px;
   font-size: 11px;
-  letter-spacing: 0.8px;
   color: var(--color-mid-gray);
-  font-weight: var(--weight-regular);
-  padding-top: 3px;
+  letter-spacing: 0.3px;
 }
-.char-card__snapshot-content {
+.char-card__field-value {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  word-break: break-word;
+  color: var(--text-primary);
+}
+.char-card__field-content {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-.char-card__snapshot-value {
-  font-size: 13px;
-  line-height: 1.55;
-  word-break: break-word;
-  color: var(--text-primary);
-}
 .char-card__source {
+  display: inline-block;
   font-size: 10px;
-  letter-spacing: 0.8px;
-  color: var(--color-muted-ash);
-  font-weight: var(--weight-medium);
+  letter-spacing: 0.6px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: var(--weight-regular);
+  align-self: flex-start;
 }
-.char-card__source.is-snapshot,
-.char-card__source.is-base { color: var(--color-muted-ash); font-weight: var(--weight-regular); }
+.char-card__source.is-snapshot {
+  color: var(--color-info, #4a5a7a);
+  background: rgba(74, 90, 122, 0.08);
+}
+.char-card__source.is-base {
+  color: var(--color-positive, #5a7a4f);
+  background: rgba(90, 122, 79, 0.08);
+}
 </style>
