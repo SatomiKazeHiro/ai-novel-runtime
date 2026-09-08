@@ -16,8 +16,6 @@
         v-model="selectedChapterId"
         :options="chapterOptions"
         placeholder="选择章节"
-        @prev="onChapterNav"
-        @next="onChapterNav"
       />
 
       <div class="graph-toolbar__divider" aria-hidden="true" />
@@ -130,11 +128,6 @@ function clearFocus() {
   cytoscape.clearFocus()
 }
 
-async function selectChapter(chapterId: string) {
-  selectedChapterId.value = chapterId
-  await loadChapterGraph(chapterId)
-}
-
 async function init() {
   const storyId = (route.params.storyId as string) || ''
   if (!storyId) return
@@ -143,28 +136,26 @@ async function init() {
   // useGraphData.loadChapters 已过滤非 archived 并按 number 升序排序,
   // 所以最后一个就是 number 最大的 archived 章节。
   const latest = chapters.value[chapters.value.length - 1]
-  await selectChapter(latest.id)
+  selectedChapterId.value = latest.id  // watch 触发 fetch + rebuild
 }
 
-// bug 1 修复 (2026-07-29):
-// - selectedChapterId / viewMode 变化触发 watch
-// - displayData (computed) 依赖 currentSnapshot / currentDelta, init() 拉完数据时
-//   currentSnapshot 变 → displayData 变 → 再触发一次 watch2 调 rebuild(真实数据)
-//   (避免 selectChapter 同步赋值早于 loadChapterGraph 完成, 首次 rebuild(null) 早退后再不触发)
-// - route.storyId 同理
-// 关键修复 (T3): 单 watch 收敛后, init 时序: selectChapter → rebuild(null 早退) →
-// loadChapterGraph 完成 → displayData 变 → rebuild(realData)
+// 切换章节 → fetch 新数据 + 清焦点 (旧章节的 focus 元素在新章节可能不存在)
+watch(selectedChapterId, async (newId, oldId) => {
+  if (!newId || newId === oldId) return
+  await loadChapterGraph(newId)
+  clearFocus()
+})
+
+// viewMode / displayData / 路由变化 → rebuild cytoscape
+// displayData 依赖 currentSnapshot / currentDelta, loadChapterGraph 完成时
+// currentSnapshot 变 → displayData 变 → 触发此 watch 调 rebuild(真实数据)
 watch(
-  [selectedChapterId, viewMode, displayData, () => route.params.storyId],
+  [viewMode, displayData, () => route.params.storyId],
   async () => {
     await nextTick()
     cytoscape.rebuild(displayData.value)
   }
 )
-
-function onChapterNav() {
-  // viewMode 切换 / focusedId 清理由 watch 统一处理
-}
 
 onMounted(() => {
   init()
