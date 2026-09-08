@@ -34,7 +34,6 @@
         :graph-delta="editor.graphDelta"
         :pending-archive-data="editor.pendingArchiveData"
         :saving-content="editor.savingContent"
-        :is-readonly="isReadonly"
         :archiving="archiving"
         :repreparing-archive="repreparingArchive"
         :prompt="prompt"
@@ -55,7 +54,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, onMounted, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useDebounceFn } from "@vueuse/core";
 import { useDialog, useMessage } from "naive-ui";
@@ -83,7 +82,6 @@ const debouncedSaveConfig = useDebounceFn(editor.saveConfig, 500);
 const archiving = ref(false);
 // 重新准备归档的 loading 状态(reviewing → reviewing 重试路径)
 const repreparingArchive = ref(false);
-const isReadonly = computed(() => editor.currentChapter?.status === "archived");
 const dialog = useDialog();
 const message = useMessage();
 // 引用 ChapterEditor,用于 confirm 流程触发 ReviewingPanel.startConfirm / stopConfirm

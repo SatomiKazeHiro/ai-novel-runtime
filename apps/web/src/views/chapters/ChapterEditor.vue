@@ -13,6 +13,7 @@
                 v-model:value="editTitle"
                 style="width: 320px; font-size: 16px; font-weight: 600"
                 placeholder="章节标题"
+                :readonly="!canEdit"
             />
             <n-tag
                 v-if="chapter?.isSideStory"
@@ -25,7 +26,7 @@
                 :type="statusTagType(chapter?.status)"
                 >{{ getChapterStatus(chapter?.status).label }}</n-tag
             >
-            <n-tag v-if="isReadonly" size="small" type="info">只读</n-tag>
+            <n-tag v-if="!canEdit" size="small" type="info">只读</n-tag>
         </n-space>
 
         <!-- ========== Step 1: 配置区 ========== -->
@@ -42,7 +43,7 @@
                             :options="profileOptions"
                             style="width: 280px"
                             placeholder="选择写作人格"
-                            :disabled="isReadonly"
+                            :disabled="!canEdit"
                         />
                     </n-form-item>
                 </n-grid-item>
@@ -58,7 +59,7 @@
                             style="width: 280px"
                             placeholder="选择运行模型"
                             clearable
-                            :disabled="isReadonly"
+                            :disabled="!canEdit"
                         />
                     </n-form-item>
                 </n-grid-item>
@@ -133,7 +134,7 @@
                         type="textarea"
                         :rows="12"
                         placeholder="输入章节大纲..."
-                        :readonly="isReadonly"
+                        :readonly="!canEdit"
                     />
                 </n-form-item>
                 <n-text
@@ -153,7 +154,7 @@
                                     editForm.sceneLocation
                                 "
                                 placeholder="场景地点，如：青云宗藏书阁地下三层"
-                                :readonly="isReadonly"
+                                :readonly="!canEdit"
                         /></n-form-item>
                     </n-grid-item>
                     <n-grid-item>
@@ -161,7 +162,7 @@
                             ><n-input
                                 v-model:value="editForm.sceneMood"
                                 placeholder="氛围，如：紧张、压抑、随时可能被发现"
-                                :readonly="isReadonly"
+                                :readonly="!canEdit"
                         /></n-form-item>
                     </n-grid-item>
                     <n-grid-item>
@@ -169,7 +170,7 @@
                             ><n-input
                                 v-model:value="editForm.sceneGoal"
                                 placeholder="目标，如：找到上古残卷并不被守卫察觉"
-                                :readonly="isReadonly"
+                                :readonly="!canEdit"
                         /></n-form-item>
                     </n-grid-item>
                 </n-grid>
@@ -187,7 +188,7 @@
                 </n-text>
             </n-form>
 
-            <template v-if="!isReadonly">
+            <template v-if="canEdit">
                 <n-divider />
                 <n-button
                     type="primary"
@@ -200,7 +201,7 @@
 
         <!-- ========== Step 2: Prompt (嵌入 ChapterPreview) ========== -->
         <ChapterPreview
-            v-if="!isReadonly"
+            v-if="!isArchived"
             :prompt="prompt"
             @generate-prompt="emit('generate-prompt')"
         />
@@ -208,7 +209,7 @@
         <!-- ========== Step 3: 正文编辑 (外壳 + 嵌入 DraftList) ========== -->
         <n-card
             title="Step 3：正文编辑"
-            v-if="!isReadonly"
+            v-if="!isArchived"
             style="margin-bottom: 24px"
         >
             <n-grid :cols="2" :x-gap="16" style="min-height: 480px">
@@ -231,10 +232,11 @@
                         type="textarea"
                         :rows="22"
                         placeholder="在这里粘贴或编辑章节正文..."
+                        :readonly="!canEdit"
                     />
                     <n-space align="center" justify="space-between" style="margin-top: 12px">
                         <n-space>
-                            <n-button v-if="chapter?.status !== 'archived'" type="primary" size="small" @click="emit('save-content')" :loading="savingContent" :disabled="savingContent">保存正文</n-button>
+                            <n-button v-if="canEdit" type="primary" size="small" @click="emit('save-content')" :loading="savingContent" :disabled="savingContent">保存正文</n-button>
                             <n-button v-if="chapter?.status === 'draft'" size="small" @click="emit('prepare-archive')" :loading="archiving">准备归档</n-button>
                         </n-space>
                         <n-text depth="3" style="font-size: 13px">
@@ -279,7 +281,7 @@
 
         <!-- ========== Step 3 只读:正文展示 ========== -->
         <n-card
-            v-if="isReadonly"
+            v-if="isArchived"
             title="Step 3：正文"
             style="margin-bottom: 24px"
         >
@@ -355,7 +357,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, computed } from "vue";
 import {
     NSpace,
     NButton,
@@ -403,7 +405,6 @@ const props = defineProps<{
     graphDelta: any;
     pendingArchiveData: any;
     savingContent: boolean;
-    isReadonly: boolean;
     archiving: boolean;
     repreparingArchive: boolean;
     prompt: any;
@@ -456,6 +457,13 @@ function stopConfirm() {
 }
 
 defineExpose({ startConfirm, stopConfirm });
+
+// v2 细粒度 readonly:
+// canEdit: 后端 chapters-crud 允许修改字段 = status==='draft'
+//   (reviewing 状态只能改 pendingArchiveData, 不通过本表单走, 所以也 readonly)
+// isArchived: 整张卡片是否折叠 (draft / reviewing 展开, archived 折叠)
+const canEdit = computed(() => props.chapter?.status === "draft");
+const isArchived = computed(() => props.chapter?.status === "archived");
 
 // 章节 status → n-tag type 映射 (v2 3 态: draft / reviewing / archived)
 function statusTagType(status?: string) {
