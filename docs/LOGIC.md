@@ -140,7 +140,7 @@ draft ──┬─→ reviewing ─→ archived
 
 **候选与章节状态正交**：
 
-候选生成（`POST /generate`）与选择（`POST /select`）**不再修改 `Chapter.status`**。它们只读写 `Draft.status`（候选层 6 值：`pending` / `generating` / `completed` / `failed` / `selected` / `rejected`）。`select` 只把选中 draft 置 `selected`、同章其余置 `rejected`，并按 `overrideContent`（默认 true）可选覆盖 `Chapter.content`。
+候选生成（`POST /generate`）与选择（`POST /select`）**不再修改 `Chapter.status`**。它们只读写 `Draft.status`（候选层 5 值：`pending` / `generating` / `completed` / `failed` / `rejected`）。`select` 路由只把同章其他 draft 置 `rejected`，并把选中 draft 的 `content` 写入 `Chapter.content`。v2: 不再有 `selected` 状态 —— "哪个候选被采纳" 只通过 `Chapter.content` 与 `Draft.content` 的匹配判断，DB 不再标记。
 
 **archived 章节的 generate**：
 

@@ -280,15 +280,15 @@
 | `score` | String? | 评分结果（JSON） |
 | `params` | String | JSON：temperature、model、耗时等生成参数 |
 | `errorMessage` | String? | 生成失败时的错误信息 |
-| `status` | String | `generating` / `candidate` / `completed` / `selected` / `rejected` / `failed` |
+| `status` | String | `generating` / `completed` / `failed` / `rejected` |
 | `createdAt` | DateTime | |
 | `updatedAt` | DateTime | 自动更新 |
 
 **状态流转**：
 - `generating` → `completed`（AI 生成成功）
 - `generating` → `failed`（AI 生成失败）
-- `candidate` / `completed` → `selected`（用户采用）
-- `candidate` / `completed` → `rejected`（其他候选被采用时自动标记）
+- `completed` / `generating` → `rejected`（其他候选被采用时自动标记）
+- v2: 不再有 `selected` —— 哪个候选被采纳只通过 `Chapter.content` 是否匹配判断，DB 不再标记
 
 ---
 

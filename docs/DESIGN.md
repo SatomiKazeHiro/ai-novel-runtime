@@ -410,7 +410,7 @@ Max-width 1200px centered container, light theme throughout except one dark deve
 **What**:
 - `ChapterStatus` 收口到 3 值：`draft` / `reviewing` / `archived`
 - 候选生成与章节状态正交：worker 不再 `updateMany` chapter.status
-- `select` 路由不再翻 chapter.status；改用 `Draft.status='selected'` 标记 + 可选覆盖 `chapter.content`（新增 `overrideContent` 参数，默认 true）
+- `select` 路由不再翻 chapter.status；同章其余 draft 置 `rejected`，选中 draft 的 content 写入 `chapter.content`（v2 删除 `Draft.status='selected'` 标记与 `overrideContent` 标志）
 - 失败的 prepare-archive 统一回退到 `draft`
 - archived 章节不可再生成新候选（UI 层隐藏按钮，路由层兜底 400）
 
