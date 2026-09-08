@@ -134,18 +134,23 @@ Drafts are generated **serially** inside `generate-processor.ts` to reduce insta
 
 ### Memory Model
 
-Memories are stored in a single `Memory` table with a `layer` column:
+Memories are stored in a single `Memory` table，含 `layer`（enum）+ `category`（enum，语义分类）+ `participants`（参与者）列：
 
-- `global` — cross-chapter state, written by `memory-optimizer` after every archive (optimizer 在 prepare-archive 阶段跑,覆盖 `stages.memoryOptimize.result.memories`;tags=`['auto-extracted','event'|'state']`)
-- `chapter` — raw extraction from a single chapter, written by archive confirm 直接从 memoryExtract 原 mainEvents / sideEvents / emotions / foreshadowing / relationshipChanges 转表(tags=`['auto-extracted']`,mainEvents 多带 `'main-plot'`)
-- `scene` — key locations (`scenes[]` 字段),archive confirm 转表,importance 7-10(tags=`['auto-extracted','scene-memory']`,**不进 prompt 注入,仅 Memory.vue UI 显示**)
-- `temporary` — ephemeral context,API 手动 CRUD;当前业务未使用
+- **layer**（`MemoryLayer` enum）: `global` / `chapter` / `scene` / `temporary`
+- **category**（`MemoryCategory` enum）: `relationship_change`（关系变化）/ `foreshadowing`（伏笔）/ `emotional_change`（情绪变化）/ `event_memory`（事件）/ `state`（状态快照，global 专用）
+
+- `global` — 跨章状态,optimizer 融合(originUid 累加版本)。category=`state`(状态快照) 或 `event_memory`(事件)
+- `chapter` — 单章 raw 提取,archive confirm 转表。mainEvents/sideEvents→`event_memory`、emotions→`emotional_change`、foreshadowing→`foreshadowing`、relationshipChanges→`relationship_change`(mainEvents 多带 `main-plot` tag)
+- `scene` — 关键地点(`scenes[]` 字段),archive confirm 转表,category=`event_memory`,importance 7-10(**不进 prompt 注入,仅 Memory.vue UI 显示**)
+- `temporary` — 用户手动创建,绑定章节(可未归档),**只当前章生成时注入、不跨章**(TODO: 章节工作台 prompt 可视化)
+
+`participants` — 参与者姓名(逗号分隔,纯文本不关联角色表),AI 抽取时对 mainEvents/sideEvents/scenes 输出,有参与者填、无留空。
 
 archive confirm **commit-only 不调 AI**,在 `prisma.$transaction` 内一次写完三层。`Chapter.summary` 写 `Chapter.summary` 列,**不进 Memory 表**(理由:`memory-engine.searchRelevant` 不读 summary 字段)。
 
-Prompt assembly retrieves relevant memories via semantic similarity (`memory-engine`) and Jaccard deduplication. `searchRelevant` (`packages/memory-engine/src/index.ts:103`) 读 `layer IN ('global', 'chapter')`,按相似度排序、按 content 文本相似度 > 0.82 去重。**v3 memory system 拍板**:`searchRelevant` 加 originUid 分组取最新版本逻辑(**仅 layer='global'**),避免同 UID 多版本同时塞 prompt 导致 AI 矛盾描述。layer='chapter' 不参与 UID 分组(章节内 raw 提取独立)。
+Prompt assembly retrieves relevant memories via semantic similarity (`memory-engine`) and Jaccard deduplication. `searchRelevant` (`packages/memory-engine/src/index.ts`) 读 `layer IN ('global', 'chapter')`,按相似度排序、按 content 文本相似度 > 0.82 去重。**v3 memory system 拍板**:`searchRelevant` 加 originUid 分组取最新版本逻辑(**仅 layer='global'**),避免同 UID 多版本同时塞 prompt 导致 AI 矛盾描述。layer='chapter' 不参与 UID 分组(章节内 raw 提取独立)。
 
-optimizer 每章归档对同 UID 产生新行 layer='global'(**累加**,不是 update by UID)。删除章节(`chapters-crud.ts:179-194`)只 delete where `fromChapterNumber=N`,前 N-1 章同 UID 版本保留 → searchRelevant 取最新版本自然实现"删章节回退"语义,无需特殊代码。
+optimizer 每章归档对同 UID 产生新行 layer='global'(**累加**,不是 update by UID)。删除章节(`chapters-crud.ts`)只 delete where `fromChapterNumber=N`,前 N-1 章同 UID 版本保留 → searchRelevant 取最新版本自然实现"删章节回退"语义,无需特殊代码。
 
 ### Knowledge Graph
 
