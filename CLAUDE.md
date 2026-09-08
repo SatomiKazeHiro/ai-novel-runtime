@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `apps/server` — Fastify + Prisma + BullMQ backend
 - `apps/web` — Vue 3 + Vite + Pinia + Naive UI frontend
-- `packages/*` — Shared engines: AI provider, prompt runtime, memory engine, knowledge graph, scoring
+- `packages/*` — Shared engines: AI provider, prompt runtime, memory engine, knowledge graph
 
 ## CodeGraph
 
@@ -80,11 +80,10 @@ draft ──┬─→ preparing-archive ─→ reviewing ─→ archived
 
 1. User creates a chapter (`draft`).
 2. User clicks **Generate**: backend enqueues a job creating N `Draft` candidates. Candidates run independently of chapter status — the chapter stays in `draft` while drafts progress through `Draft.status` (`generating` → `completed`/`failed`).
-3. User may **Score** a candidate; AI scores across 7 dimensions, with a rule-based fallback.
-4. User **Selects** one candidate: its content is copied into `Chapter.content`; its siblings are marked `Draft.status='rejected'`. **Chapter status stays unchanged** — selection is a Draft-layer concept. v2: the adopted draft is NOT marked `Draft.status='selected'`; "which draft is adopted" is only known by matching `Chapter.content` against `Draft.content`.
-5. User clicks **Prepare Archive**: the backend runs 4 independent extraction stages in parallel (`character` / `memoryExtract` / `plotArc` / `graph`) then `memoryOptimize` serially, parks the payload in `Chapter.pendingArchiveData` (TEXT, JSON, `version: 4`) and sets status to `reviewing`. No DB writes to derived tables or the three graph columns. Single-stage failure is recorded per-stage in the payload, not a rollback.
-6. The `ReviewingPanel` lets the user edit memories, character states, the chapter graph, the cumulative graph, and plot arcs. Edits are written back to `Chapter.pendingArchiveData` via `chaptersApi.update({ pendingArchiveData })`. **Cancel = `POST /prepare-archive/cancel`, reverts status to `draft` and clears `pendingArchiveData`.**
-7. User clicks **Confirm Archive**: the `archive` endpoint validates all stages succeeded and the cumulative graph was generated, then inside a `prisma.$transaction` writes the three memory layers, plot arcs, character branch states (auto-creating `Character` rows for `isNew`), the chapter summary, the graph columns, and flips status to `archived` (clearing `pendingArchiveData`).
+3. User **Selects** one candidate: its content is copied into `Chapter.content`; its siblings are marked `Draft.status='rejected'`. **Chapter status stays unchanged** — selection is a Draft-layer concept. v2: the adopted draft is NOT marked `Draft.status='selected'`; "which draft is adopted" is only known by matching `Chapter.content` against `Draft.content`.
+4. User clicks **Prepare Archive**: the backend runs 4 independent extraction stages in parallel (`character` / `memoryExtract` / `plotArc` / `graph`) then `memoryOptimize` serially, parks the payload in `Chapter.pendingArchiveData` (TEXT, JSON, `version: 4`) and sets status to `reviewing`. No DB writes to derived tables or the three graph columns. Single-stage failure is recorded per-stage in the payload, not a rollback.
+5. The `ReviewingPanel` lets the user edit memories, character states, the chapter graph, the cumulative graph, and plot arcs. Edits are written back to `Chapter.pendingArchiveData` via `chaptersApi.update({ pendingArchiveData })`. **Cancel = `POST /prepare-archive/cancel`, reverts status to `draft` and clears `pendingArchiveData`.**
+6. User clicks **Confirm Archive**: the `archive` endpoint validates all stages succeeded and the cumulative graph was generated, then inside a `prisma.$transaction` writes the three memory layers, plot arcs, character branch states (auto-creating `Character` rows for `isNew`), the chapter summary, the graph columns, and flips status to `archived` (clearing `pendingArchiveData`).
 
 Only `archived` chapters feed forward into the next chapter's prompt.
 
@@ -128,7 +127,7 @@ Archiving is the most complex flow. It is implemented in `apps/server/src/routes
 
 ### Queue System
 
-The backend uses BullMQ when `REDIS_URL` is available, otherwise it falls back to an in-memory `MemoryQueue`. Only the `generateQueue` currently has a registered worker (`generate-processor.ts`). `scoreQueue` and `memoryQueue` exist but are placeholders.
+The backend uses BullMQ when `REDIS_URL` is available, otherwise it falls back to an in-memory `MemoryQueue`. Only the `generateQueue` currently has a registered worker (`generate-processor.ts`).
 
 Drafts are generated **serially** inside `generate-processor.ts` to reduce instantaneous API pressure, even when multiple candidates are requested. As of v2, the worker only reads/writes `Draft.status` (skipping the three user-decided/terminal statuses `rejected`/`completed`/`failed`); it never touches `Chapter.status`.
 
@@ -197,7 +196,7 @@ Both `loadRuntimeBase()` and `loadWorkerTask()` resolve in this order:
 
 ### JSON Fields
 
-Prisma JSON fields (`personality`, `metadata`, `params`, `settings`, `pendingArchiveData`, `chapterGraph`, `cumulativeGraph`, `score`, etc.) are manually `JSON.stringify`/`JSON.parse` in route handlers. The frontend often has to `JSON.parse` them after receiving.
+Prisma JSON fields (`personality`, `metadata`, `params`, `settings`, `pendingArchiveData`, `chapterGraph`, `cumulativeGraph`, etc.) are manually `JSON.stringify`/`JSON.parse` in route handlers. The frontend often has to `JSON.parse` them after receiving.
 
 ### Response Shape
 
@@ -241,7 +240,7 @@ Import each Naive UI component explicitly. Table action columns are rendered wit
 - `Process.md` — narrative walkthrough of the chapter lifecycle and data flow
 - `README.md` — project intro, setup, and deployment notes
 - `docs/DESIGN.md` — design-level rationale and decisions
-- `docs/LOGIC.md` — domain logic notes (scoring rules, etc.)
+- `docs/LOGIC.md` — domain logic notes
 - `docs/ISSUES.md` — P0/P1 issue tracker with file:line citations and resolution commits
 - `docs/sql-reference.md` — SQL reference
 - `docs/superpowers/plans/` — implementation plans produced via superpowers:writing-plans
