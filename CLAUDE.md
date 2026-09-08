@@ -162,6 +162,8 @@ v3: graph data lives entirely on the `Chapter` row as JSON columns (the `GraphNo
 
 During `reviewing` these three columns stay `null`; the working copies live in `pendingArchiveData`. Only `archive` confirm writes them. `GraphView.vue` reads the columns of `archived` chapters via `cumulativeGraphApi` and visualizes with Cytoscape.
 
+抽取上下文增强（2026-08-15）: `graph-extract-stage` 抽取本章图谱时,不再只传「光 key」,而是从 `prev.cumulativeGraph` 额外提取 edges,按「正文出现的 character」组织成「人名(key): 关系-关联实体」的紧凑上下文喂给 AI,并加「增量抽取」约束(本章只抽新增实体/关系,延续前面就少输出/空)。目的是从源头复用已有 key、避免同实体不同 key 的重复(如姜禾佩剑 jianghe_peijian/jianghe_sword 分裂)。
+
 ### Character Snapshot Editing
 
 已归档的角色快照（`CharacterBranchState`，每角色每归档章一行）可在角色页编辑弹窗的右侧快照面板中手动编辑（`PUT /api/stories/:storyId/characters/:charId/snapshot/:chapterNumber`，`updateMany` 幂等更新，无行则 404）。手动修改由用户负责（UI 有 warning 提醒），编辑结果直接作为后续章节生成时的角色参考（`getCharactersWithLatestState` 无缓存）；删除章节时该章快照连同修改一并删除。详见 `docs/superpowers/specs/2026-08-13-character-snapshot-editing-design.md`。
