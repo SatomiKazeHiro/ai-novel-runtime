@@ -80,6 +80,30 @@ describe('generate route — v2 concurrency: no chapter lock', () => {
     expect(mockPrisma.draft.create.mock.calls.length).toBeGreaterThanOrEqual(2)
   })
 
+  it('rejects generate on non-latest mainline chapter (aligned with preview)', async () => {
+    mockPrisma.chapter.findUnique.mockResolvedValue({
+      id: 'c2',
+      storyId: 's1',
+      status: 'draft',
+      content: 'x'.repeat(100),
+      outline: 'outline',
+      title: 'Title',
+      number: 2,
+      isSideStory: false,
+      story: { id: 's1', title: 'Story', description: '' }
+    })
+    // getLastChapter 返回主线第 3 章（不是当前 c2）→ 触发「只能在最新章节生成」
+    mockPrisma.chapter.findFirst.mockResolvedValue({ id: 'c3', number: 3 })
+
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/generate',
+      {}, { chapterId: 'c2' }
+    )
+
+    expect(result.status).toBe(400)
+    expect(result.body.error).toContain('只能在最新章节')
+  })
+
   it('does not write to chapter.status during generation', async () => {
     // v2 invariant: generate route 仅写 chapter.compiledPrompt, 不翻 status。
     // 即便并发多次请求, chapter.status 字段也不应在被改。

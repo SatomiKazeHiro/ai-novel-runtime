@@ -164,6 +164,17 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
       })
     }
 
+    // 与 preview 对齐：主线只能在最新章节上生成（番外豁免，可从任意已归档父章节发展）
+    if (!chapter.isSideStory) {
+      const lastChapter = await getLastChapter(prisma, chapter.storyId)
+      if (lastChapter && lastChapter.id !== chapterId) {
+        return reply.status(400).send({
+          success: false,
+          error: '只能在最新章节上生成候选'
+        })
+      }
+    }
+
     // 无锁: 候选生成与章节状态正交; worker 用 Draft.status 判断是否跳过
     // 双击并发会产生 2 批 draft — Draft 表的 (id_chapterId) 唯一索引允许同 chapter 多 draft,
     // 用户最终看到候选数翻倍,无脏状态。

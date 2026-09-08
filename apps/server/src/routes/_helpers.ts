@@ -51,12 +51,14 @@ export async function getOrThrowChapter(
 }
 
 /**
- * 故事下 number 最大的章节(主+番外)。
- * 跨 3 子 route 文件复用:chapters-crud.ts (DELETE + develop) / chapters-generate.ts (preview)。
+ * 主线 number 最大的章节（排除番外）。
+ * 番外是小数序号、挂在任意已归档章节下，不该参与「主线最新章」判断，
+ * 否则番外小数（如 5.5）会压过主线整数（如 5），误判主线最新章。
+ * 跨 2 子 route 文件复用:chapters-crud.ts (DELETE 末尾判断) / chapters-generate.ts (preview + generate)。
  */
 export async function getLastChapter(prisma: any, storyId: string): Promise<any | null> {
   return prisma.chapter.findFirst({
-    where: { storyId },
+    where: { storyId, isSideStory: false },
     orderBy: { number: 'desc' }
   })
 }
