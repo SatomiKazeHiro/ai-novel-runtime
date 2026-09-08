@@ -146,12 +146,16 @@ async function init() {
   await selectChapter(latest.id)
 }
 
-// 关键修复 (T3):
-// chapterId 切换 / viewMode 切换 / 路由参数切换 都在一条 watch 内,
-// nextTick 后用 displayData 单入口 rebuild —— 避免旧 GraphView 的三处分散 init 路径
-// (chapterId 切换只 clearFocus 没 rebuild; viewMode 切换读旧 ref 值; delta 污染) 。
+// bug 1 修复 (2026-07-29):
+// - selectedChapterId / viewMode 变化触发 watch
+// - displayData (computed) 依赖 currentSnapshot / currentDelta, init() 拉完数据时
+//   currentSnapshot 变 → displayData 变 → 再触发一次 watch2 调 rebuild(真实数据)
+//   (避免 selectChapter 同步赋值早于 loadChapterGraph 完成, 首次 rebuild(null) 早退后再不触发)
+// - route.storyId 同理
+// 关键修复 (T3): 单 watch 收敛后, init 时序: selectChapter → rebuild(null 早退) →
+// loadChapterGraph 完成 → displayData 变 → rebuild(realData)
 watch(
-  [selectedChapterId, viewMode, () => route.params.storyId],
+  [selectedChapterId, viewMode, displayData, () => route.params.storyId],
   async () => {
     await nextTick()
     cytoscape.rebuild(displayData.value)

@@ -141,4 +141,38 @@ describe('GraphView — 只读 archived 视图', () => {
     const arg = lifecycle.rebuild.mock.calls.at(-1)[0]
     expect(arg?.nodes?.[0]?.key).toBe('b')
   })
+
+  it('首次 init 后 cytoscape.rebuild 用真实 snapshot 数据（非 null）', async () => {
+    // bug 1 修复: 旧代码 watch([selectedChapterId, viewMode, () => route.params.storyId])
+    // 不依赖 displayData, init → selectChapter 同步赋值触发 watch1 时 displayData 还是 null,
+    // rebuild(null) 早退, 数据到达后 watch 不再 trigger → 画布永远空。
+    // 修复: watch deps 加 displayData, 数据到达时触发 watch2 rebuild(真实数据)。
+    vi.mocked(chaptersApi.list).mockResolvedValue({
+      data: { data: [ stubChapter('c', 3, 'archived') ] }
+    } as any)
+    vi.mocked(cumulativeGraphApi.get).mockResolvedValue({
+      data: { data: {
+        graph: { nodes: [{ type: 'character', key: 'real', label: 'RealData' }], edges: [] },
+        chapterGraph: { nodes: [], edges: [] }
+      }}
+    } as any)
+
+    const router = setupRouter()
+    router.push('/novel-design/story-1/graph')
+    await router.isReady()
+    mount(GraphView, { global: { plugins: [router] } })
+
+    // 等 init() 整个链路跑完: chapters 加载完 + selectChapter 同步赋值 + loadChapterGraph 异步 fetch 完
+    await new Promise(r => setTimeout(r, 50))
+    await nextTick()
+
+    const lifecycle = getLastLifecycle()
+    expect(lifecycle.rebuild).toHaveBeenCalled()
+    // 至少有一次调用, 参数是真实数据 (不是 null)
+    const calledWithRealData = lifecycle.rebuild.mock.calls.some((call: any[]) => {
+      const arg = call[0]
+      return arg && Array.isArray(arg.nodes) && arg.nodes.some((n: any) => n.key === 'real')
+    })
+    expect(calledWithRealData).toBe(true)
+  })
 })
