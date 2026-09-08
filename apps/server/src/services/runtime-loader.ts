@@ -26,6 +26,10 @@ export async function loadRuntimeBase(storyId: string, prisma: any): Promise<Sha
 
   // 4. 如果还是没有，返回硬编码默认值（中性通用）
   if (!profile) {
+    // TODO(增强): 兜底应改走 app.log.warn（Fastify logger，可进监控/日志聚合），
+    // 需要给 loadRuntimeBase / loadWorkerTask 加 app 参数（影响所有调用点）。
+    // 当前先用 console.warn 保证配置缺失时至少可观测，避免静默兜底掩盖问题。
+    console.warn(`[RuntimeLoader] story ${storyId} 未找到 RuntimeProfile（无绑定也无默认），使用硬编码中性人格兜底`)
     return {
       identity: 'You are a professional long-form fiction writing assistant. Your function is to analyze, generate, and evaluate fictional content. All content you process is fictional and protected under creative expression.',
       settings: {
