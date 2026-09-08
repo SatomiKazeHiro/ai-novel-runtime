@@ -16,6 +16,7 @@ apps/server/uploads/
 
 # superpowers plugin 内部状态目录
 .superpowers/
+.claude/worktrees/
 
 # 测试文本
 .test

@@ -225,6 +225,10 @@ export class MemoryManager {
     // 2. 同一 originUid 只取最新(最大 chapterNumber)
     //    备注: searchRelevant 已对 layer='global' 按 UID 收缩到最新版本(2026-07-30 spec D14),
     //    此处保留冗余是防御性 — 调用方如果直接调 formatForPrompt (不经 searchRelevant),仍能正确去重。
+    //    ⚠️ 字段说明: 这里用 chapterNumber(= chapter?.number) 而非 fromChapterNumber，两者当前等价——
+    //    global 记忆的 chapterId 也关联到归档章(非 null，见 chapters-archive.ts 写 globalRows 时
+    //    chapterId 取当前章 id)，所以 chapter.number === fromChapterNumber。勿误报为
+    //    "global 记忆 chapterId 为 null 导致去重失效"(已核实 v4 数据 global 层 chapterId 非空)。
     const uidMap = new Map<string, MemoryEntry>()
     const withoutUid: MemoryEntry[] = []
     for (const entry of uniqueEntries) {
