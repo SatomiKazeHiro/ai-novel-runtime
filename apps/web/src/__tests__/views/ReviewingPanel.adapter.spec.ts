@@ -112,4 +112,95 @@ describe('ReviewingPanel.adapter v3 ↔ v2', () => {
     expect(round.stages.memory?.result?.mainEvents[0].description).toBe('主角觉醒并突破')
     expect(round.stages.memory?.result?.mainEvents[0].importance).toBe(9)
   })
+
+  it('fromV3: v3 character-states with object status/relationships → LocalData with JSON strings (no Vue prop warnings)', () => {
+    // 这是真实 v3 character-stage 的输出形态:status / relationships 是 JSON object,
+    // 不是字符串。v2 ReviewingPanel 用 n-input 当 textarea 编辑,必须先 stringify。
+    const objectV3: V3PendingArchiveData = {
+      version: 3,
+      stages: {
+        character: {
+          status: 'success',
+          result: {
+            characterStates: [
+              {
+                characterId: 'c1',
+                name: '许青',
+                key: 'xuqing',
+                status: {
+                  location: '家中客厅',
+                  physical_state: '疲惫、震惊但已冷静',
+                  mental_state: '接受了姜禾来自唐朝的现实',
+                  possessions: '手机、钥匙'
+                },
+                relationships: {
+                  姜禾: '收留者与被收留者,态度审慎'
+                },
+                isNew: false
+              }
+            ]
+          }
+        },
+        memory: { status: 'success', result: { mainEvents: [], sideEvents: [], summary: '' } },
+        plotArc: { status: 'success', result: { plotArcs: [] } },
+        graph: { status: 'success', result: { chapterGraph: { nodes: [], edges: [] } } }
+      },
+      meta: { chapterNumber: 1 }
+    }
+
+    const local = fromV3(objectV3)
+    expect(local.memories.characterStates).toHaveLength(1)
+    expect(typeof local.memories.characterStates[0].status).toBe('string')
+    expect(typeof local.memories.characterStates[0].relationships).toBe('string')
+    // 字符串必须是合法 JSON,能 parse 回原对象
+    const parsedStatus = JSON.parse(local.memories.characterStates[0].status)
+    expect(parsedStatus.location).toBe('家中客厅')
+    expect(parsedStatus.possessions).toBe('手机、钥匙')
+    const parsedRel = JSON.parse(local.memories.characterStates[0].relationships)
+    expect(parsedRel['姜禾']).toBe('收留者与被收留者,态度审慎')
+  })
+
+  it('toV3: LocalData with JSON-string status/relationships → object in v3', () => {
+    const local = fromV3(sampleV3)
+    // 用户编辑了 status 字符串(模拟 v2 n-input 改写)
+    local.memories.characterStates[0].status = '{"location":"灵华宗新址","rank":"内门弟子"}'
+    local.memories.characterStates[0].relationships = '{"李四":"好友","王五":"对头"}'
+    const round = toV3(local, sampleV3)
+    const out = round.stages.character?.result?.characterStates[0]
+    expect(typeof out?.status).toBe('object')
+    expect(out?.status).toEqual({ location: '灵华宗新址', rank: '内门弟子' })
+    expect(out?.relationships).toEqual({ 李四: '好友', 王五: '对头' })
+  })
+
+  it('toV3: malformed JSON string in status falls back to empty object (does not throw)', () => {
+    const local = fromV3(sampleV3)
+    local.memories.characterStates[0].status = '{ not valid json'
+    expect(() => toV3(local, sampleV3)).not.toThrow()
+    const out = toV3(local, sampleV3).stages.character?.result?.characterStates[0]
+    expect(out?.status).toEqual({})
+  })
+
+  it('fromV3: empty / null status → empty string (no [object Object] in textarea)', () => {
+    const v3: V3PendingArchiveData = {
+      version: 3,
+      stages: {
+        character: {
+          status: 'success',
+          result: {
+            characterStates: [
+              { characterId: null, name: '无名', key: 'wuming',
+                status: null, relationships: undefined, isNew: true }
+            ]
+          }
+        },
+        memory: { status: 'success', result: {} },
+        plotArc: { status: 'success', result: {} },
+        graph: { status: 'success', result: {} }
+      },
+      meta: {}
+    }
+    const local = fromV3(v3)
+    expect(local.memories.characterStates[0].status).toBe('')
+    expect(local.memories.characterStates[0].relationships).toBe('')
+  })
 })

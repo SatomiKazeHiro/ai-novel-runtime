@@ -66,6 +66,26 @@ export function fromV3(pending: V3PendingArchiveData | null | undefined): LocalD
     fromChapterNumber: chNum
   })
 
+  /**
+   * v3 character-stage 返回的 status / relationships 是 JSON object;
+   * v2 ReviewingPanel 用 n-input 当文本编辑,需要 JSON 字符串。
+   * 这里安全 stringify,失败回退到空串(避免 Vue warn)。
+   */
+  const stringifyJson = (v: unknown): string => {
+    if (typeof v === 'string') return v
+    if (v === null || v === undefined) return ''
+    try { return JSON.stringify(v, null, 2) } catch { return '' }
+  }
+
+  const characterStates: LocalCharacterState[] = (Array.isArray(chr.characterStates) ? chr.characterStates : []).map((s: any) => ({
+    characterId: s?.characterId ?? null,
+    name: s?.name ?? '',
+    key: s?.key ?? '',
+    status: stringifyJson(s?.status),
+    relationships: stringifyJson(s?.relationships),
+    isNew: !!s?.isNew
+  }))
+
   return {
     summary: typeof mem.summary === 'string' ? mem.summary : '',
     memories: {
@@ -73,7 +93,7 @@ export function fromV3(pending: V3PendingArchiveData | null | undefined): LocalD
         ...(Array.isArray(mem.mainEvents) ? mem.mainEvents : []).map((e: any) => toMemory(e, ['main-plot'])),
         ...(Array.isArray(mem.sideEvents) ? mem.sideEvents : []).map((e: any) => toMemory(e, ['side-plot']))
       ],
-      characterStates: Array.isArray(chr.characterStates) ? chr.characterStates : [],
+      characterStates,
       emotions: Array.isArray(mem.emotions) ? mem.emotions : [],
       foreshadowing: Array.isArray(mem.foreshadowing) ? mem.foreshadowing : [],
       relationshipChanges: Array.isArray(mem.relationshipChanges) ? mem.relationshipChanges : []
@@ -122,10 +142,23 @@ export function toV3(local: LocalData, original: V3PendingArchiveData): V3Pendin
     relationshipChanges: memories.relationshipChanges
   }
 
-  // character stage
+  // character stage — 把 v2 编辑后的 JSON 字符串解析回 object
   if (!stages.character) stages.character = { status: 'success' }
+  const parseJson = (v: string): any => {
+    if (typeof v !== 'string') return v
+    const trimmed = v.trim()
+    if (!trimmed) return {}
+    try { return JSON.parse(trimmed) } catch { return {} }
+  }
   stages.character.result = {
-    characterStates: memories.characterStates
+    characterStates: memories.characterStates.map((s) => ({
+      characterId: s.characterId,
+      name: s.name,
+      key: s.key,
+      status: parseJson(s.status),
+      relationships: parseJson(s.relationships),
+      isNew: s.isNew
+    }))
   }
 
   // plotArc stage
