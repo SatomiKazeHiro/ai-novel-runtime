@@ -218,6 +218,10 @@ The frontend API layer (`apps/web/src/api/*.ts`) does not unwrap this automatica
 
 Import each Naive UI component explicitly. Table action columns are rendered with Vue's `h()` function, not JSX.
 
+### 样式风格
+
+前端以 inline style 为主（直接写在组件 `style` 属性上），仅 `ChapterBranchTree.vue` 等少数组件用 scoped CSS。颜色/间距统一走 boords design system tokens（`apps/web/src/styles/tokens.ts` + `tokens.css`），light 用 `warmCream #fafaf5`、dark 用 `#141414`；不要在 view 文件里硬编码 hex。
+
 ## Important Files to Know
 
 - `apps/server/src/server.ts` — entry point: env, queue worker, HTTP listener
@@ -236,7 +240,6 @@ Import each Naive UI component explicitly. Table action columns are rendered wit
 
 ## Documentation
 
-- `AGENTS.md` — broader agent guide with route/service tables and tech-stack detail
 - `Process.md` — narrative walkthrough of the chapter lifecycle and data flow
 - `README.md` — project intro, setup, and deployment notes
 - `docs/DESIGN.md` — design-level rationale and decisions

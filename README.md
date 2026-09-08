@@ -21,188 +21,11 @@
 - **章节状态机** — `ChapterStatus` 3 值（`draft` / `reviewing` / `archived`），候选生成（`Draft.status`）与章节状态正交
 - **多候选生成** — 一次生成多个候选版本，支持不同 temperature 采样策略
 - **Prompt Pipeline** — Pipeline 式 Prompt 组装，Token 预算控制，动态裁剪，Stateless Generation
-- **多模型兼容** — `AIProvider` 统一接口；当前 `DeepSeekProvider` 完整实现，`OpenAIProvider` 是 stub（其它 Provider 按同一接口实现即可接入）
-- **知识图谱** — 人物关系图、势力图、事件图、物品图的可视化与管理（全局工作表，Cytoscape）
-- **分层记忆** — Global / Chapter / Scene / Temporary 四层记忆系统，语义检索 + 近似去重 + AI 记忆优化（每章归档后自动融合新旧记忆）
+- **多模型兼容** — `AIProvider` 统一接口；当前 `DeepSeekProvider` 完整实现，`OpenAIProvider` 是 stub
+- **知识图谱** — 人物关系图、势力图、事件图、物品图的可视化与管理（Cytoscape）
+- **分层记忆** — Global / Chapter / Scene / Temporary 四层记忆系统，语义检索 + 近似去重 + AI 记忆优化
 - **剧情弧线追踪** — 追踪主线/支线剧情进展，标注未解悬念
 - **任务队列** — 生成异步化（BullMQ + Redis，开发环境自动回退内存队列）
-
----
-
-## 技术架构
-
-### 前端
-
-| 技术 | 说明 |
-|------|------|
-| Vue 3 | Composition API + `<script setup>` |
-| TypeScript | Strict 模式 |
-| Vite | 构建工具，开发端口 5173，代理 `/api` 到后端 3000 |
-| Pinia | 状态管理 |
-| Vue Router | 路由，双 Layout：SimpleLayout / NovelDesignLayout |
-| Naive UI | 组件库；主题色走 boords design system（light/dark/system 三模式切换） |
-| Axios | HTTP 请求 |
-| Cytoscape | 知识图谱可视化 |
-| @vueuse/core | 组合式工具库（含 `useIntervalFn` 用于轮询生成状态） |
-| es-toolkit | 现代化工具库（lodash 替代） |
-
-### 后端
-
-| 技术 | 说明 |
-|------|------|
-| Node.js | v20+ |
-| TypeScript | Strict 模式，`module: NodeNext` |
-| Fastify | Web 框架 + 插件化路由 + Swagger/OpenAPI |
-| Prisma | ORM + 类型安全 |
-| BullMQ | 任务队列（Redis 可用时使用） |
-| IORedis | Redis 客户端 |
-| graphology | 图引擎 |
-| js-tiktoken | Token 计算（cl100k_base；P1 收口后仅 `packages/ai-provider` 直接装，其它包 transitive 依赖；`packages/{shared,memory-engine,prompt-runtime}` 因结构性原因保留直接装） |
-| zod | 运行时校验（Q9 已接入前后端） |
-
-### 数据库
-
-| 环境 | 数据库 |
-|------|--------|
-| 开发 | SQLite（零配置启动） |
-| 生产 | PostgreSQL（切换仅需改 `.env` + `prisma/schema.prisma`） |
-
----
-
-## 项目结构
-
-```
-novel-runtime/
-├── apps/
-│   ├── server/              # Fastify 后端
-│   │   └── src/
-│   │       ├── server.ts    # 入口：加载环境变量、启动 Worker、监听端口
-│   │       ├── app.ts       # Fastify 应用构建（注册插件、路由、队列处理器）
-│   │       ├── plugins/
-│   │       │   └── prisma.ts
-│   │       ├── routes/      # API 路由（18 个模块；P3 把 chapters.ts 拆为 5 文件）
-│   │       │   ├── health.ts
-│   │       │   ├── stories.ts
-│   │       │   ├── characters.ts
-│   │       │   ├── lore.ts
-│   │       │   ├── chapters-crud.ts         # 章节 CRUD（基础）
-│   │       │   ├── chapters-generate.ts     # preview / generate / select / develop
-│   │       │   ├── chapters-archive.ts      # prepare-archive / archive 确认（含事务）
-│   │       │   ├── chapters-tree.ts         # chapter-tree
-│   │       │   ├── _helpers.ts              # 共享 helper（状态机 / 锁 / 异常）
-│   │       │   ├── drafts.ts
-│   │       │   ├── graph.ts
-│   │       │   ├── memories.ts
-│   │       │   ├── runtime-profile.ts
-│   │       │   ├── worker-task.ts
-│   │       │   ├── ai-provider.ts
-│   │       │   └── prompt-logs.ts
-│   │       └── services/    # 业务处理器（15 个）
-│   │           ├── ai-provider-init.ts      # 启动时从 env 初始化默认 AI Provider
-│   │           ├── runtime-profile-init.ts  # 启动时扫描 seeds/profiles/*.yaml 导入
-│   │           ├── worker-task-init.ts      # 启动时扫描 seeds/worker-tasks/*.yaml 导入
-│   │           ├── runtime-loader.ts        # 加载 RuntimeBase / WorkerTask（Story→默认→fallback）
-│   │           ├── generate-processor.ts    # BullMQ 队列处理器：循环生成 draft
-│   │           ├── ai-call-logger.ts        # **强制** AI 调用包装：自动写 PromptLog
-│   │           ├── graph-snapshot.ts        # 图谱快照数据结构（GraphNodeSnapshot / GraphEdgeSnapshot / GraphSnapshot）
-│   │           ├── cumulative-graph.ts      # 用户触发累计图谱合并（relation 归一 → 程序 codeMerge）
-│   │           ├── memory-optimizer.ts      # 归档阶段 4：全局记忆融合（v3 暂未接入，见 §待办）
-│   │           ├── plot-extractor.ts        # 提取/更新剧情弧线
-│   │           └── stages/                  # v3 归档 4 stage 并行提取
-│   │               ├── character-stage.ts
-│   │               ├── memory-stage.ts
-│   │               ├── plot-arc-stage.ts
-│   │               └── graph-extract-stage.ts
-│   └── web/                 # Vue 3 前端
-│       └── src/
-│           ├── main.ts
-│           ├── App.vue
-│           ├── router/        # Vue Router（双 Layout）
-│           ├── stores/        # Pinia Stores
-│           ├── api/           # API 封装层（按领域划分）
-│           ├── views/         # 页面组件
-│           │   ├── Dashboard.vue
-│           │   ├── Stories.vue
-│           │   ├── Characters.vue
-│           │   ├── LoreBook.vue
-│           │   ├── Chapters.vue
-│           │   ├── ChapterReader.vue          # 章节独立阅读页（d253ac0）
-│           │   ├── Graph.vue                  # view shell（P5 拆为 GraphView + EditableGraph）
-│           │   ├── Memory.vue
-│           │   ├── ReviewingPanel.vue         # reviewing 状态的人工审查页
-│           │   ├── RuntimeProfile.vue
-│           │   ├── WorkerTask.vue
-│           │   ├── StoryWorkerTask.vue
-│           │   ├── ModelManager.vue
-│           │   ├── PromptLogs.vue
-│           │   ├── SimpleLayout.vue
-│           │   ├── NovelDesignLayout.vue
-│           │   └── chapters/                  # P4：Chapters.vue 拆为 4 子组件
-│           │       ├── ChapterToolbar.vue
-│           │       ├── ChapterList.vue
-│           │       ├── ChapterEditor.vue
-│           │       └── ChapterPreview.vue
-│           ├── components/    # 共享组件
-│           │   ├── ChapterBranchTree.vue
-│           │   ├── ChapterStatusBadge.vue
-│           │   ├── DynamicTags.vue
-│           │   ├── NavBar.vue
-│           │   └── graph/                     # P5：Graph 拆分后的 display + editable 组件
-│           │       ├── GraphView.vue
-│           │       ├── EditableGraph.vue
-│           │       ├── ChapterReel.vue
-│           │       └── GraphLegend.vue
-│           ├── composables/   # 组合式函数（editor / draft / tree / prompt + graph 子目录）
-│           │   ├── graph/useCytoscapeLifecycle.ts    # P5 抽出的共享 hook（407 行）
-│           │   ├── useChapterEditor.ts
-│           │   ├── useChapterTree.ts
-│           │   ├── useDraftManager.ts
-│           │   └── usePromptManager.ts
-│           └── utils/
-│               └── api.ts
-├── packages/                  # 共享包（Monorepo；5 个包）
-│   ├── shared/                # 类型、常量、工具函数 + zod schema
-│   ├── ai-provider/           # AI Provider 统一封装 + Runtime Prompt 编译器 + countTokens
-│   ├── prompt-runtime/        # Prompt Pipeline / Token 预算控制（model-aware）
-│   ├── memory-engine/         # 分层记忆管理 + 语义检索 + Jaccard 去重
-│   └── knowledge-graph/       # graphology 图引擎封装
-├── docs/
-│   ├── DESIGN.md              # boords 设计系统参考
-│   ├── ISSUES.md              # P0 + Q 决策 + 工程化决策 + 库选型 + 修复时间线
-│   ├── LOGIC.md               # 15 分钟架构速览
-│   ├── sql-reference.md       # 数据模型 + 关系 + 迁移历史
-│   └── superpowers/           # 设计文档（specs/*）+ 实施计划（plans/ 保留 P1/P5 作模板）
-├── seeds/                     # 注意：在仓库根目录，不在 docs/ 下
-│   ├── profiles/              # RuntimeProfile YAML 预设（启动时自动导入）
-│   └── worker-tasks/          # WorkerTask YAML 预设（启动时自动导入）
-├── prisma/
-│   ├── schema.prisma          # 数据库模型定义
-│   ├── migrations/            # SQL 迁移文件
-│   └── dev.db                 # SQLite 开发数据库
-├── .env                       # 环境变量
-├── package.json               # Root workspace 配置
-├── pnpm-workspace.yaml        # pnpm 工作区声明
-└── README.md                  # 本文档
-```
-
----
-
-## 数据库模型
-
-| 模型 | 说明 |
-|------|------|
-| `Story` | 小说工程 |
-| `Chapter` | 章节（含状态机、场景状态、`isSideStory` 番外标记；图谱存 `chapterGraph`/`cumulativeGraph` JSON 列） |
-| `Character` | 角色卡（静态属性：性格、外貌、说话风格） |
-| `CharacterBranchState` | 角色历史快照（按 `fromChapterNumber` 记录动态状态变化） |
-| `LoreItem` | 世界观条目（境界/地图/功法/势力/物品/规则） |
-| `Memory` | 记忆（global=每章优化后的状态快照/chapter=原始提取/scene/temporary） |
-| `PlotArc` | 剧情弧线（全局） |
-| `Draft` | 候选（含 temperature/maxTokens/compiledPrompt） |
-| `AiProviderConfig` | AI 模型配置（contextLength / maxTokens） |
-| `RuntimeProfile` | 写作人格（Identity + Settings + Behavior + Jailbreak） |
-| `WorkerTask` | Worker 任务层配置 |
-| `PromptLog` | 每次 AI API 调用的完整日志 |
 
 ---
 
@@ -424,15 +247,21 @@ pnpm build
 巨大 Prompt + 无限 Agent
 ```
 
-真正重要的是：
+真正重要的是：状态管理、记忆管理、世界观一致性、长篇稳定性、章节工业化。AI 只是**文本生成器**，Runtime 才是真正核心。
 
-- 状态管理
-- 记忆管理
-- 世界观一致性
-- 长篇稳定性
-- 章节工业化
+### 三者分工
 
-AI 只是**文本生成器**，Runtime 才是真正核心。
+| 角色 | 职责 |
+|------|------|
+| **作者（人类）** | 主导方向（大纲/场景/人格/走向）；策展（从候选中筛选、审查 AI 提取的素材）；质量最终责任人 |
+| **AI** | 批量生成候选（量变）；自动提取记忆/图谱/弧线/角色状态；只提供素材、不做决定 |
+| **Runtime（系统）** | 稳定串联数据流；保证数据不丢、状态不乱、可回滚；调度 AI 调用（队列/重试/预算/日志） |
+
+> **AI 负责量变，作者完成质变；Runtime 让量变稳定、可控、可积累。**
+
+- 不要追求「一键生成完美章节」，而是「一次生成多个候选 + 可审查的素材」
+- 所有 AI 输出都应可被作者查看、选择、修改或丢弃
+- 数据池是长期资产：当前章节的输出要成为下一章节的输入，形成复利
 
 ---
 
