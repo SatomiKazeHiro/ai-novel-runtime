@@ -39,7 +39,7 @@ describe('memory-stage', () => {
     // v3 memory-only mode: AI 返回 { memories: {...} }, 不带 characterStatusChanges / timeline
     const ai = {
       memories: {
-        mainEvents: [{ description: 'd', participants: ['p'], importance: 7 }],
+        mainEvents: [{ description: 'd', importance: 7 }],
         sideEvents: [],
         emotions: ['紧张'],
         foreshadowing: ['伏笔1'],

@@ -19,10 +19,10 @@ const sampleV3: V3PendingArchiveData = {
       status: 'success',
       result: {
         mainEvents: [
-          { description: '主角觉醒', participants: ['张三'], importance: 8 }
+          { description: '主角觉醒', importance: 8 }
         ],
         sideEvents: [
-          { description: '路人走过', participants: [], importance: 5 }
+          { description: '路人走过', importance: 5 }
         ],
         scenes: [{ location: '灵华宗', event: '大殿议事', importance: 7 }],
         summary: '主角觉醒',

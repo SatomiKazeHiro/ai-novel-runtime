@@ -129,14 +129,12 @@ export function toV3(local: LocalData, original: V3PendingArchiveData): V3Pendin
     .filter((m) => m.tags?.includes('main-plot'))
     .map((m) => ({
       description: m.content,
-      participants: [] as string[],
       importance: m.importance
     }))
   const sideEvents = memories.memories
     .filter((m) => !m.tags?.includes('main-plot'))
     .map((m) => ({
       description: m.content,
-      participants: [] as string[],
       importance: m.importance
     }))
 

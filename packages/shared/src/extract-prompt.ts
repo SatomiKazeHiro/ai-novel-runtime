@@ -113,7 +113,6 @@ function buildFullPrompt(input: ExtractPromptInput): string {
 
 每条事件必须包含：
 - description: 简洁描述"有什么人做了什么"
-- participants: 参与该事件的所有角色名单
 - importance: 事件在本章的重要性（4~7）。如果事件有主角参与，请自行+1，最终为5~8。
 
 importance 评分标准：
@@ -131,12 +130,11 @@ importance 评分标准：
 事件格式示例：
 {
   "description": "许青向姜禾解释现代社会的身份制度和法律危险",
-  "participants": ["许青", "姜禾"],
   "importance": 6
 }
 
 提取字段：
-- mainEvents: 主要事件（对象数组，每个对象包含 description / participants / importance）
+- mainEvents: 主要事件（对象数组，每个对象包含 description / importance）
 - sideEvents: 次要事件（对象数组，格式同上）
 - emotions: 主要角色情绪变化（字符串数组）
 - foreshadowing: 新埋下的伏笔（字符串数组）
@@ -211,7 +209,6 @@ function buildSlimPrompt(input: ExtractPromptInput): string {
 
 每条事件必须包含：
 - description: 简洁描述"有什么人做了什么"
-- participants: 参与该事件的所有角色名单
 - importance: 事件在本章的重要性（4~7）。如果事件有主角参与，请自行+1，最终为5~8。
 
 importance 评分标准：
@@ -229,12 +226,11 @@ importance 评分标准：
 事件格式示例：
 {
   "description": "许青向姜禾解释现代社会的身份制度和法律危险",
-  "participants": ["许青", "姜禾"],
   "importance": 6
 }
 
 提取字段：
-- mainEvents: 主要事件（对象数组，每个对象包含 description / participants / importance）
+- mainEvents: 主要事件（对象数组，每个对象包含 description / importance）
 - sideEvents: 次要事件（对象数组，格式同上）
 - emotions: 主要角色情绪变化（字符串数组）
 - foreshadowing: 新埋下的伏笔（字符串数组）
@@ -311,7 +307,6 @@ function buildMemoryOnlyPrompt(input: ExtractPromptInput): string {
 
 每条事件必须包含：
 - description: 简洁描述"有什么人做了什么"
-- participants: 参与该事件的所有角色名单
 - importance: 事件在本章的重要性（4~7）。如果事件有主角参与，请自行+1，最终为5~8。
 
 importance 评分标准：
@@ -329,12 +324,11 @@ importance 评分标准：
 事件格式示例：
 {
   "description": "许青向姜禾解释现代社会的身份制度和法律危险",
-  "participants": ["许青", "姜禾"],
   "importance": 6
 }
 
 提取字段（v3 收缩后，本章只输出这些字段；characterStatusChanges / timelinePosition / timelineEvents 不再要求）：
-- mainEvents: 主要事件（对象数组，每个对象包含 description / participants / importance）
+- mainEvents: 主要事件（对象数组，每个对象包含 description / importance）
 - sideEvents: 次要事件（对象数组，格式同上）
 - emotions: 主要角色情绪变化（字符串数组）
 - foreshadowing: 新埋下的伏笔（字符串数组）

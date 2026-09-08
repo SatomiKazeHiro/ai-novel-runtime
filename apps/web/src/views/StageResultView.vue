@@ -59,12 +59,6 @@
             <span class="sc-imp" :data-imp="ev.importance">{{ ev.importance }}</span>
             <span>{{ ev.description }}</span>
           </div>
-          <div v-if="ev.participants?.length" class="sc-meta">
-            <span class="sc-meta-key">参与者</span>
-            <span class="sc-chip-row">
-              <span v-for="p in ev.participants" :key="p" class="sc-chip">{{ p }}</span>
-            </span>
-          </div>
         </li>
       </ul>
     </section>
@@ -85,12 +79,6 @@
           <div class="sc-line">
             <span class="sc-imp" :data-imp="ev.importance">{{ ev.importance }}</span>
             <span>{{ ev.description }}</span>
-          </div>
-          <div v-if="ev.participants?.length" class="sc-meta">
-            <span class="sc-meta-key">参与者</span>
-            <span class="sc-chip-row">
-              <span v-for="p in ev.participants" :key="p" class="sc-chip">{{ p }}</span>
-            </span>
           </div>
         </li>
       </ul>

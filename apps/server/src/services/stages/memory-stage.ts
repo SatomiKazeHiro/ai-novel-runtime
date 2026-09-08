@@ -26,8 +26,8 @@ export interface MemoryStageInput extends StageContext {
  *   - scenes 数组 → archive confirm 时写 layer='scene'
  */
 export interface MemoryStageResult {
-  mainEvents: Array<{ description: string; participants: string[]; importance: number }>
-  sideEvents: Array<{ description: string; participants: string[]; importance: number }>
+  mainEvents: Array<{ description: string; importance: number }>
+  sideEvents: Array<{ description: string; importance: number }>
   emotions: string[]
   foreshadowing: string[]
   relationshipChanges: string[]

@@ -29,8 +29,8 @@ export interface OptimizedMemory {
 
 /** 喂给 optimizer 的 raw 记忆,来自 memory-stage result 字段(不是 DB)。 */
 export interface MemoryStageRawResult {
-  mainEvents: Array<{ description: string; participants: string[]; importance: number }>
-  sideEvents: Array<{ description: string; participants: string[]; importance: number }>
+  mainEvents: Array<{ description: string; importance: number }>
+  sideEvents: Array<{ description: string; importance: number }>
   emotions: string[]
   foreshadowing: string[]
   relationshipChanges: string[]
