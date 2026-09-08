@@ -57,5 +57,13 @@ export const charactersApi = {
 
   /** 单角色单章节快照:编辑弹窗切章节时用,只回传一个角色,避免拉全部角色 */
   getSnapshot: (storyId: string, charId: string, chapter: number | null) =>
-    api.get(`/api/stories/${storyId}/characters/${charId}/snapshot`, { params: { chapter } })
+    api.get(`/api/stories/${storyId}/characters/${charId}/snapshot`, { params: { chapter } }),
+
+  /** 手动编辑已归档快照（快照纠错入口） */
+  updateSnapshot: (
+    storyId: string,
+    charId: string,
+    chapter: number,
+    data: { status: Record<string, any>; relationships: Record<string, any>; costume: string | null }
+  ) => api.put(`/api/stories/${storyId}/characters/${charId}/snapshot/${chapter}`, data)
 }
