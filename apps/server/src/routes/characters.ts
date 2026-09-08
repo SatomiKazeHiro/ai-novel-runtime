@@ -34,9 +34,9 @@ export async function characterRoutes(app: FastifyInstance) {
   // PUT /api/stories/:storyId/characters/:charId/snapshot/:chapterNumber — v4 快照纠错: 用户手动编辑已归档快照
   app.put('/api/stories/:storyId/characters/:charId/snapshot/:chapterNumber', async (request, reply) => {
     const { storyId, charId, chapterNumber } = request.params as any
-    const body = request.body as any
+    const body = (request.body ?? {}) as any
     const chapterNum = Number(chapterNumber)
-    if (Number.isNaN(chapterNum)) {
+    if (!Number.isFinite(chapterNum)) {
       return reply.status(400).send({ success: false, error: 'invalid chapter number' })
     }
 
@@ -54,7 +54,14 @@ export async function characterRoutes(app: FastifyInstance) {
       return reply.status(400).send({ success: false, error: 'relationships 必须是 JSON 对象' })
     }
     // 与归档语义一致: 空白 costume 视同未描写 → null (character-extractor.ts:112)
-    const costume = typeof body.costume === 'string' && body.costume.trim() ? body.costume : null
+    // spec 声明 costume 为 string | null: 非字符串非 null → 400, 存储 trim 后的值
+    let costume: string | null = null
+    if (body.costume !== undefined && body.costume !== null) {
+      if (typeof body.costume !== 'string') {
+        return reply.status(400).send({ success: false, error: 'costume 必须是字符串或 null' })
+      }
+      costume = body.costume.trim() || null
+    }
 
     const result = await app.prisma.characterBranchState.updateMany({
       where: { characterId: charId, fromChapterNumber: chapterNum },

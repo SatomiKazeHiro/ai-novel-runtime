@@ -25,6 +25,7 @@ describe('PUT /api/stories/:storyId/characters/:charId/snapshot/:chapterNumber',
       relationships: { 林帆: '师徒' },
       costume: '青衫'
     }, { storyId: 's1', charId: 'c1', chapterNumber: '3' })
+    expect(mockPrisma.character.findFirst).toHaveBeenCalledWith({ where: { id: 'c1', storyId: 's1' } })
     expect(mockPrisma.characterBranchState.updateMany).toHaveBeenCalledWith({
       where: { characterId: 'c1', fromChapterNumber: 3 },
       data: { status: '{"realm":"练气"}', relationships: '{"林帆":"师徒"}', costume: '青衫' }
@@ -81,6 +82,7 @@ describe('PUT /api/stories/:storyId/characters/:charId/snapshot/:chapterNumber',
     }, { storyId: 's1', charId: 'c1', chapterNumber: '3' })
     expect(result.status).toBe(400)
     expect(result.body.success).toBe(false)
+    expect(mockPrisma.characterBranchState.updateMany).not.toHaveBeenCalled()
   })
 
   it('relationships 为字符串 → 400', async () => {
@@ -89,6 +91,7 @@ describe('PUT /api/stories/:storyId/characters/:charId/snapshot/:chapterNumber',
     }, { storyId: 's1', charId: 'c1', chapterNumber: '3' })
     expect(result.status).toBe(400)
     expect(result.body.success).toBe(false)
+    expect(mockPrisma.characterBranchState.updateMany).not.toHaveBeenCalled()
   })
 
   it('chapterNumber 非法 → 400', async () => {
@@ -97,5 +100,52 @@ describe('PUT /api/stories/:storyId/characters/:charId/snapshot/:chapterNumber',
     }, { storyId: 's1', charId: 'c1', chapterNumber: 'abc' })
     expect(result.status).toBe(400)
     expect(mockPrisma.characterBranchState.updateMany).not.toHaveBeenCalled()
+  })
+
+  it('chapterNumber 为 Infinity → 400', async () => {
+    const result = await callHandler(routes, 'PUT', ROUTE, {
+      status: {}, relationships: {}, costume: null
+    }, { storyId: 's1', charId: 'c1', chapterNumber: 'Infinity' })
+    expect(result.status).toBe(400)
+    expect(mockPrisma.characterBranchState.updateMany).not.toHaveBeenCalled()
+  })
+
+  it('支线小数章 1.01 → fromChapterNumber 1.01 (Float 支持)', async () => {
+    await callHandler(routes, 'PUT', ROUTE, {
+      status: { realm: '练气' }, relationships: {}, costume: null
+    }, { storyId: 's1', charId: 'c1', chapterNumber: '1.01' })
+    expect(mockPrisma.characterBranchState.updateMany).toHaveBeenCalledWith({
+      where: { characterId: 'c1', fromChapterNumber: 1.01 },
+      data: { status: '{"realm":"练气"}', relationships: '{}', costume: null }
+    })
+  })
+
+  it('无 JSON body (request.body undefined) → 按空对象处理, 不抛 TypeError', async () => {
+    const handler = routes[`PUT ${ROUTE}`]
+    const reply: any = { status: vi.fn().mockReturnThis(), send: vi.fn().mockReturnThis() }
+    await handler({ body: undefined, params: { storyId: 's1', charId: 'c1', chapterNumber: '3' } }, reply)
+    expect(mockPrisma.characterBranchState.updateMany).toHaveBeenCalledWith({
+      where: { characterId: 'c1', fromChapterNumber: 3 },
+      data: { status: '{}', relationships: '{}', costume: null }
+    })
+  })
+
+  it('costume 非字符串非 null → 400', async () => {
+    const result = await callHandler(routes, 'PUT', ROUTE, {
+      status: {}, relationships: {}, costume: 123
+    }, { storyId: 's1', charId: 'c1', chapterNumber: '3' })
+    expect(result.status).toBe(400)
+    expect(result.body.success).toBe(false)
+    expect(mockPrisma.characterBranchState.updateMany).not.toHaveBeenCalled()
+  })
+
+  it('costume 带首尾空白 → 存 trim 后的值', async () => {
+    await callHandler(routes, 'PUT', ROUTE, {
+      status: {}, relationships: {}, costume: '  青衫  '
+    }, { storyId: 's1', charId: 'c1', chapterNumber: '3' })
+    expect(mockPrisma.characterBranchState.updateMany).toHaveBeenCalledWith({
+      where: { characterId: 'c1', fromChapterNumber: 3 },
+      data: { status: '{}', relationships: '{}', costume: '青衫' }
+    })
   })
 })
