@@ -8,6 +8,7 @@ import { runMemoryStage } from '../services/stages/memory-stage.js'
 import { runPlotArcStage } from '../services/stages/plot-arc-stage.js'
 import { runGraphExtractStage } from '../services/stages/graph-extract-stage.js'
 import { commitPlotArcWrites } from '../services/plot-extractor.js'
+import { commitCharacterBranchStateWrites } from '../services/character-extractor.js'
 import { optimizeMemories, type OptimizedMemory } from '../services/memory-optimizer.js'
 import type { GraphSnapshot } from '../services/graph-snapshot.js'
 import { buildCumulativeGraph } from '../services/cumulative-graph.js'
@@ -602,6 +603,9 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     // plot-consolidator 输出 (PendingPlotArcWrite[]) — archive confirm 时落 PlotArc 表
     const plotArcs: any[] = (pending.stages.plotArc as any)?.result?.plotArcs ?? []
 
+    // character-stage 输出 (CharacterStateRow[]) — archive confirm 时落 CharacterBranchState 表
+    const characterStates: any[] = (pending.stages.character as any)?.result?.characterStates ?? []
+
     // 把 'NEW' UID 替换成本章生成的实际 UID
     const newUidHex = (): string => randomBytes(2).toString('hex').toUpperCase()
     const fromChapterNumber = chapter.number
@@ -668,14 +672,17 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       originUid: m.originUid === 'NEW' ? `${fromChapterNumber}#${newUidHex()}` : m.originUid
     }))
 
-    // commit-only: prisma.$transaction 内一次写完三层 + PlotArc + Chapter.summary + Chapter 三列 + 翻 status
-    // 备注: CharacterBranchState 写入另文档讨论,本端点不写
+    // commit-only: prisma.$transaction 内一次写完三层 + PlotArc + CharacterBranchState + Chapter.summary + Chapter 三列 + 翻 status
+    // 备注: CharacterBranchState 已接通 (commitCharacterBranchStateWrites)
     await prisma.$transaction(async (tx) => {
       for (const data of [...chapterRows, ...sceneRows, ...globalRows]) {
         await tx.memory.create({ data })
       }
       // 接通 v3 PlotArc 写库 (修 P0 遗留): consolidator 输出 → PlotArc 表
       await commitPlotArcWrites(tx, chapter.number, plotArcs)
+      // 接通 v3 CharacterBranchState 写库 (修 P0 遗留): character-stage 输出 → CharacterBranchState 表
+      // isNew=true / characterId=null 时 commitCharacterBranchStateWrites 内部静默跳过 + log
+      await commitCharacterBranchStateWrites(tx, chapter.number, characterStates, app.log)
       await tx.chapter.update({
         where: { id: chapterId },
         data: {
