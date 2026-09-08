@@ -177,17 +177,17 @@ describe('dedupEdgesByPair', () => {
 
 describe('buildGraphExtractPrompt', () => {
   it('contains 6 section headers', () => {
-    const prompt = buildGraphExtractPrompt({ content: 'x', characterNames: [], prevCumulativeGraphNodes: [] })
+    const prompt = buildGraphExtractPrompt({ content: 'x', characterNames: [], prevCumulativeGraphNodes: [], prevCumulativeGraphEdges: [] })
     expect(prompt).toContain('【任务】')
     expect(prompt).toContain('【实体与关系定义】')
     expect(prompt).toContain('【提取规则】')
-    expect(prompt).toContain('【已有实体】')
+    expect(prompt).toContain('【已有实体及关系】')
     expect(prompt).toContain('【章节内容】')
     expect(prompt).toContain('【输出格式】')
   })
 
   it('uses short field names in schema example', () => {
-    const prompt = buildGraphExtractPrompt({ content: 'x', characterNames: [], prevCumulativeGraphNodes: [] })
+    const prompt = buildGraphExtractPrompt({ content: 'x', characterNames: [], prevCumulativeGraphNodes: [], prevCumulativeGraphEdges: [] })
     expect(prompt).toContain('"n":')
     expect(prompt).toContain('"ft":')
     expect(prompt).toContain('"fk":')
@@ -203,7 +203,8 @@ describe('buildGraphExtractPrompt', () => {
       prevCumulativeGraphNodes: [
         { type: 'character', key: 'xu_qing', label: '许青' },
         { type: 'character', key: 'unknown', label: '未出现' }
-      ]
+      ],
+      prevCumulativeGraphEdges: []
     })
     expect(prompt).toContain('character:xu_qing')
     expect(prompt).not.toContain('character:unknown')

@@ -9,6 +9,7 @@ import { buildGraphExtractPrompt } from './graph-extract.prompt.js'
 export interface GraphExtractStageInput extends StageContext {
   characterNames: string[]
   prevCumulativeGraphNodes: Array<{ type: string; key: string; label: string }>
+  prevCumulativeGraphEdges: Array<{ fromType: string; fromKey: string; toType: string; toKey: string; relation: string }>
   latestBranchStates: Array<{ characterId: string; name: string; status: string }>
 }
 
@@ -144,7 +145,8 @@ export async function runGraphExtractStage(
     const prompt = buildGraphExtractPrompt({
       content: input.content,
       characterNames: input.characterNames,
-      prevCumulativeGraphNodes: input.prevCumulativeGraphNodes
+      prevCumulativeGraphNodes: input.prevCumulativeGraphNodes,
+      prevCumulativeGraphEdges: input.prevCumulativeGraphEdges
     })
     const compiled = compiler.compile(base, task, prompt)
 

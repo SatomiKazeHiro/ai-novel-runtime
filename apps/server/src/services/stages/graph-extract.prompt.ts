@@ -2,22 +2,46 @@ export interface BuildGraphExtractPromptInput {
   content: string
   characterNames: string[]
   prevCumulativeGraphNodes: Array<{ type: string; key: string; label: string }>
+  prevCumulativeGraphEdges: Array<{ fromType: string; fromKey: string; toType: string; toKey: string; relation: string }>
 }
 
 /**
  * 私有 prompt 模板: 本章实体和关系抽取。
  *
- * keyList 按 chapter content 预过滤（仅 label 出现在正文的实体）,
- * AI 必须复用其 type:key（锚定历史），否则不能引入新 key；
- * character/faction/item 类型节点优先复用 characterNames。
+ * 抽取上下文（v2）：不只传「光 key」，而是按「正文出现的 character」组织
+ * 「人名 + 其关联点（事件/物品）」的紧凑上下文，让 AI 在源头复用已有 key，
+ * 避免同实体不同 key 的重复（如姜禾佩剑 jianghe_peijian / jianghe_sword）。
+ *
+ * 增量抽取：本章图谱只抽「新增」的实体和关系，延续前面就少输出/空。
  */
 export function buildGraphExtractPrompt(input: BuildGraphExtractPromptInput): string {
   const content = input.content || ''
   const matchedNodes = input.prevCumulativeGraphNodes.filter(
     (n) => n.label && content.includes(n.label)
   )
-  const keyList = matchedNodes.length
-    ? matchedNodes.map((n) => `${n.type}:${n.key}`).join(', ')
+
+  // 按「正文出现的 character」组织关系上下文（人名 + 其关联点）
+  const contextLines = matchedNodes
+    .filter(n => n.type === 'character')
+    .map(person => {
+      const personKey = `${person.type}:${person.key}`
+      const related = (input.prevCumulativeGraphEdges ?? []).filter(e => {
+        const f = `${e.fromType}:${e.fromKey}`
+        const t = `${e.toType}:${e.toKey}`
+        return f === personKey || t === personKey
+      })
+      if (related.length === 0) return `${person.label}(${personKey})`
+      const relText = related.map(e => {
+        const other = `${e.fromType}:${e.fromKey}` === personKey
+          ? `${e.toType}:${e.toKey}`
+          : `${e.fromType}:${e.fromKey}`
+        return `${e.relation}-${other}`
+      }).join('、')
+      return `${person.label}(${personKey}): ${relText}`
+    })
+
+  const keyList = contextLines.length
+    ? contextLines.join('\n')
     : '（空，本章可自由起 key）'
 
   return `【任务】
@@ -35,7 +59,9 @@ export function buildGraphExtractPrompt(input: BuildGraphExtractPromptInput): st
 4. 【物品克制】只提取对剧情有实质推动的关键物品（主角佩剑/关键道具/信物），日常用品（餐具/衣物/家电/家具/书籍）不要提取，即便主角日常使用也不算关键物品。
 5. 【事件 label 简短】label 只给图谱节点显示用, 4-8 字概括核心动作, 不堆叠人名; 不要写"许青收留姜禾并安置起居"这类含多动作的复合句, 详细情节放 data.desc。
 
-【已有实体】（不要重复提取，但可补充新属性）：${keyList}
+【已有实体及关系】（复用已有 key，不要重复提取）
+本章图谱只抽取「新增」的实体和关系——新人 / 新物品 / 新事件，或已有人物之间的新关系 / 新进展。如果本章只是延续前面剧情（无新增），少输出甚至输出空。
+${keyList}
 
 【章节内容】
 ${input.content}

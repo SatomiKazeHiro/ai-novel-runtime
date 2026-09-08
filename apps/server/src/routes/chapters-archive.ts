@@ -26,6 +26,20 @@ function extractGraphNodes(
   )
 }
 
+function extractGraphEdges(
+  raw: string | null | undefined
+): Array<{ fromType: string; fromKey: string; toType: string; toKey: string; relation: string }> {
+  const parsed = safeJsonParse<{ edges?: Array<{ fromType?: unknown; fromKey?: unknown; toType?: unknown; toKey?: unknown; relation?: unknown }> } | null>(raw, null)
+  if (!parsed?.edges) return []
+  return parsed.edges.filter((e): e is { fromType: string; fromKey: string; toType: string; toKey: string; relation: string } =>
+    typeof e?.fromType === 'string' &&
+    typeof e?.fromKey === 'string' &&
+    typeof e?.toType === 'string' &&
+    typeof e?.toKey === 'string' &&
+    typeof e?.relation === 'string'
+  )
+}
+
 /**
  * v3 archive 端点 — 5 端点:
  *   POST /api/chapters/:chapterId/prepare-archive                          (启动)
@@ -129,12 +143,14 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
 
     // 查 prev cumulativeGraph 节点 (含 label, 供 stage 按正文预过滤)
     let prevCumulativeGraphNodes: Array<{ type: string; key: string; label: string }> = []
+    let prevCumulativeGraphEdges: Array<{ fromType: string; fromKey: string; toType: string; toKey: string; relation: string }> = []
     if (chapter.parentChapterId) {
       const parent = await prisma.chapter.findUnique({
         where: { id: chapter.parentChapterId },
         select: { cumulativeGraph: true }
       })
       prevCumulativeGraphNodes = extractGraphNodes(parent?.cumulativeGraph)
+      prevCumulativeGraphEdges = extractGraphEdges(parent?.cumulativeGraph)
     }
     if (prevCumulativeGraphNodes.length === 0) {
       // 主线回退: 找前一个 number 的章节
@@ -148,6 +164,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
         select: { cumulativeGraph: true }
       })
       prevCumulativeGraphNodes = extractGraphNodes(prev?.cumulativeGraph)
+      prevCumulativeGraphEdges = extractGraphEdges(prev?.cumulativeGraph)
     }
 
     // memory-stage / memory-optimizer 跨章上下文
@@ -179,7 +196,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       }),
       runGraphExtractStage(app, {
         storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
-        chapterNumber: chapter.number, characterNames, prevCumulativeGraphNodes,
+        chapterNumber: chapter.number, characterNames, prevCumulativeGraphNodes, prevCumulativeGraphEdges,
         latestBranchStates: dedupedBranchStates
       })
     ])
@@ -343,12 +360,14 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     const allExistingArcs = await prisma.plotArc.findMany({ where: { storyId: chapter.storyId } })
 
     let prevCumulativeGraphNodes: Array<{ type: string; key: string; label: string }> = []
+    let prevCumulativeGraphEdges: Array<{ fromType: string; fromKey: string; toType: string; toKey: string; relation: string }> = []
     if (chapter.parentChapterId) {
       const parent = await prisma.chapter.findUnique({
         where: { id: chapter.parentChapterId },
         select: { cumulativeGraph: true }
       })
       prevCumulativeGraphNodes = extractGraphNodes(parent?.cumulativeGraph)
+      prevCumulativeGraphEdges = extractGraphEdges(parent?.cumulativeGraph)
     }
     if (prevCumulativeGraphNodes.length === 0) {
       const prev = await prisma.chapter.findFirst({
@@ -361,6 +380,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
         select: { cumulativeGraph: true }
       })
       prevCumulativeGraphNodes = extractGraphNodes(prev?.cumulativeGraph)
+      prevCumulativeGraphEdges = extractGraphEdges(prev?.cumulativeGraph)
     }
 
     // 单 stage 执行
@@ -462,7 +482,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       } else {
         newStage = await runGraphExtractStage(app, {
           storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
-          chapterNumber: chapter.number, characterNames, prevCumulativeGraphNodes,
+          chapterNumber: chapter.number, characterNames, prevCumulativeGraphNodes, prevCumulativeGraphEdges,
           latestBranchStates: dedupedBranchStates
         })
       }
