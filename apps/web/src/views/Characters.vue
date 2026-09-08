@@ -12,7 +12,7 @@
     </header>
 
     <!-- 章节切换器 (v4: 三字段独立查快照) -->
-    <div class="cap-card" style="margin-bottom: 12px; padding: 12px 16px">
+    <div class="cap-card" style="margin-bottom: 16px; padding: 14px 18px">
       <n-space align="center" :wrap="false">
         <n-text depth="3">查看章节快照:</n-text>
         <n-select
@@ -28,15 +28,117 @@
       </n-space>
     </div>
 
-    <div class="cap-card" style="padding: 0; overflow: hidden">
-      <n-data-table :columns="columns" :data="characters" :loading="loading" :bordered="false" />
-    </div>
+    <n-spin :show="loading">
+      <n-empty
+        v-if="!loading && characters.length === 0"
+        description="暂无角色, 点击右上角新建"
+        style="margin-top: 48px"
+      />
+      <n-grid
+        v-else
+        cols="2 s:1 m:2 l:2 xl:3"
+        x-gap="14"
+        y-gap="14"
+        responsive="screen"
+      >
+        <n-gi v-for="(char, idx) in characters" :key="char.id">
+          <article class="char-card cap-rise" :data-rise="String(Math.min(idx + 1, 7))">
+            <!-- 头部: slug + name + 主角 + 操作 -->
+            <header class="char-card__head">
+              <div class="char-card__id">
+                <span class="char-card__slug">{{ char.slug }}</span>
+                <h3 class="char-card__name">
+                  {{ char.name }}
+                  <span v-if="char.protagonist" class="char-card__protagonist" title="主角">★</span>
+                </h3>
+              </div>
+              <n-space size="small">
+                <n-button size="small" @click="openEdit(char)">编辑</n-button>
+                <n-button size="small" type="error" @click="handleDelete(char.id)">删除</n-button>
+              </n-space>
+            </header>
+
+            <!-- 基础属性 -->
+            <div class="char-card__section">
+              <span class="char-card__label">基础属性</span>
+              <div v-if="hasAnyBaseAttr(char)" class="char-card__tags">
+                <n-tag
+                  v-for="tag in char.identity"
+                  :key="'id-' + tag"
+                  size="small"
+                  type="info"
+                >身份 · {{ tag }}</n-tag>
+                <n-tag
+                  v-for="tag in char.appearance"
+                  :key="'ap-' + tag"
+                  size="small"
+                >外貌 · {{ tag }}</n-tag>
+                <n-tag
+                  v-for="tag in char.temperament"
+                  :key="'te-' + tag"
+                  size="small"
+                  type="warning"
+                >气质 · {{ tag }}</n-tag>
+                <n-tag
+                  v-for="tag in char.personality"
+                  :key="'pe-' + tag"
+                  size="small"
+                  type="success"
+                >性格 · {{ tag }}</n-tag>
+                <n-tag
+                  v-for="tag in char.speechStyle"
+                  :key="'ss-' + tag"
+                  size="small"
+                  type="error"
+                >说话 · {{ tag }}</n-tag>
+              </div>
+              <n-text v-else depth="3" style="font-size: 12px">(未填写)</n-text>
+            </div>
+
+            <!-- 快照三列 -->
+            <div class="char-card__section">
+              <span class="char-card__label">章节快照</span>
+              <div class="char-card__snapshot-grid">
+                <div class="char-card__snapshot">
+                  <span class="char-card__snapshot-label">关系</span>
+                  <div class="char-card__snapshot-value">{{ formatObject(char.relationships?.value) }}</div>
+                  <n-tag size="tiny" :type="sourceTagType(char.relationships?.sourceChapterNumber)">
+                    {{ sourceLabel(char.relationships?.sourceChapterNumber) }}
+                  </n-tag>
+                </div>
+                <div class="char-card__snapshot">
+                  <span class="char-card__snapshot-label">状态</span>
+                  <div class="char-card__snapshot-value">{{ formatObject(char.status?.value) }}</div>
+                  <n-tag size="tiny" :type="sourceTagType(char.status?.sourceChapterNumber)">
+                    {{ sourceLabel(char.status?.sourceChapterNumber) }}
+                  </n-tag>
+                </div>
+                <div class="char-card__snapshot">
+                  <span class="char-card__snapshot-label">衣着</span>
+                  <div class="char-card__snapshot-value">{{ char.costume?.value || '(无)' }}</div>
+                  <n-tag
+                    v-if="char.costume?.sourceChapterNumber !== null && char.costume?.sourceChapterNumber !== undefined"
+                    size="tiny"
+                    type="info"
+                  >来源: 第 {{ char.costume.sourceChapterNumber }} 章</n-tag>
+                  <n-text
+                    v-else
+                    depth="3"
+                    style="font-size: 11px"
+                  >(无快照)</n-text>
+                </div>
+              </div>
+            </div>
+          </article>
+        </n-gi>
+      </n-grid>
+    </n-spin>
 
     <!-- 新建/编辑角色弹窗 (v4: 不再编辑关系/状态,走 PUT append snapshot) -->
     <n-modal v-model:show="showModal" :title="isEdit ? '编辑角色' : '新建角色'" preset="card" style="width: 640px">
       <n-form :model="form" label-placement="left" label-width="80">
         <n-form-item label="标识" required :disabled="isEdit">
-          <n-input v-model:value="form.slug" placeholder="英文标识，如 linfan" :disabled="isEdit" />
+          <n-input v-model:value="form.slug" placeholder="英文标识,如 linfan" :disabled="isEdit" />
         </n-form-item>
         <n-form-item label="姓名" required>
           <n-input v-model:value="form.name" placeholder="角色姓名" />
@@ -75,14 +177,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, h, watch } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NCheckbox,
-  NText, NSelect, NAlert, NTag,
-  type DataTableColumns
+  NSpace, NButton, NModal, NForm, NFormItem, NInput, NCheckbox,
+  NText, NSelect, NAlert, NTag, NSpin, NEmpty, NGrid, NGi
 } from 'naive-ui'
-import { charactersApi, type CharacterDisplayRow, type FieldDisplay } from '../api/characters'
+import { charactersApi, type CharacterDisplayRow } from '../api/characters'
 import { chaptersApi } from '../api/chapters'
 import DynamicTags from '../components/DynamicTags.vue'
 
@@ -104,15 +205,8 @@ const form = ref({
   temperament: [] as string[],
   personality: [] as string[],
   speechStyle: [] as string[]
-  // 关系/状态 不再在此编辑;基础值走 POST,快照由归档流程写入
 })
 
-function formatTags(arr: string[]): string {
-  if (!Array.isArray(arr)) return ''
-  return arr.join(', ')
-}
-
-/** 格式化 Record<string, any> → "k:v, k:v" */
 function formatObject(obj: Record<string, any> | null | undefined): string {
   if (!obj || typeof obj !== 'object') return '(无)'
   const entries = Object.entries(obj)
@@ -123,66 +217,24 @@ function formatObject(obj: Record<string, any> | null | undefined): string {
   }).join(', ')
 }
 
-/** 渲染快照字段:值 + 来源标签 */
-function renderSnapshot(value: string | null, sourceChapter: number | null) {
-  return h('div', null, [
-    h('div', { style: 'word-break: break-word' }, value || '(无)'),
-    sourceChapter !== null
-      ? h(NTag, { size: 'tiny', type: 'info', style: 'margin-top: 4px' },
-          { default: () => `来源: 第 ${sourceChapter} 章` })
-      : h(NTag, { size: 'tiny', style: 'margin-top: 4px' },
-          { default: () => '来源: 基础' })
-  ])
+function hasAnyBaseAttr(c: CharacterDisplayRow): boolean {
+  return (
+    (Array.isArray(c.identity) && c.identity.length > 0) ||
+    (Array.isArray(c.appearance) && c.appearance.length > 0) ||
+    (Array.isArray(c.temperament) && c.temperament.length > 0) ||
+    (Array.isArray(c.personality) && c.personality.length > 0) ||
+    (Array.isArray(c.speechStyle) && c.speechStyle.length > 0)
+  )
 }
 
-function renderField(field: FieldDisplay<string> | null) {
-  return renderSnapshot(field?.value ?? null, field?.sourceChapterNumber ?? null)
+/** 来源标签:number → "第 N 章" info 标签;null → "基础" 默认标签;undefined → "(无)" */
+function sourceLabel(ch: number | null | undefined): string {
+  if (ch === null || ch === undefined) return '(无快照)'
+  return `来源: 第 ${ch} 章`
 }
-
-function renderJsonField(field: FieldDisplay<Record<string, any>> | null) {
-  const formatted = formatObject(field?.value)
-  return renderSnapshot(formatted, field?.sourceChapterNumber ?? null)
+function sourceTagType(ch: number | null | undefined): 'info' | 'default' {
+  return ch === null || ch === undefined ? 'default' : 'info'
 }
-
-const columns: DataTableColumns<CharacterDisplayRow> = [
-  { title: '标识', key: 'slug', width: 90 },
-  { title: '姓名', key: 'name', width: 90 },
-  { title: '主角', key: 'protagonist', width: 50, render: (row) => row.protagonist ? h('span', { style: 'color: var(--color-protagonist)' }, '★') : '' },
-  { title: '身份', key: 'identity', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.identity) },
-  { title: '外貌', key: 'appearance', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.appearance) },
-  { title: '气质', key: 'temperament', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.temperament) },
-  { title: '性格', key: 'personality', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.personality) },
-  { title: '说话风格', key: 'speechStyle', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.speechStyle) },
-  {
-    title: () => h('span', null, ['关系', h(NTag, { size: 'tiny', type: 'info', style: 'margin-left: 4px' }, { default: () => '快照' })]),
-    key: 'relationships', width: 180,
-    render: (row) => renderJsonField(row.relationships)
-  },
-  {
-    title: () => h('span', null, ['状态', h(NTag, { size: 'tiny', type: 'info', style: 'margin-left: 4px' }, { default: () => '快照' })]),
-    key: 'status', width: 180,
-    render: (row) => renderJsonField(row.status)
-  },
-  {
-    title: () => h('span', null, ['衣着', h(NTag, { size: 'tiny', type: 'info', style: 'margin-left: 4px' }, { default: () => '快照' })]),
-    key: 'costume', width: 160,
-    render: (row) => renderField(row.costume)
-  },
-  {
-    title: '操作',
-    key: 'actions',
-    width: 140,
-    fixed: 'right',
-    render(row) {
-      return h(NSpace, null, {
-        default: () => [
-          h(NButton, { size: 'small', onClick: () => openEdit(row) }, { default: () => '编辑' }),
-          h(NButton, { size: 'small', type: 'error', onClick: () => handleDelete(row.id) }, { default: () => '删除' })
-        ]
-      })
-    }
-  }
-]
 
 async function loadCharacters() {
   if (!route.params.storyId) {
@@ -290,3 +342,100 @@ onMounted(() => {
   }
 })
 </script>
+
+<style scoped>
+.char-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  transition: border-color 0.18s ease, transform 0.18s ease;
+}
+.char-card:hover {
+  border-color: var(--color-mid-gray);
+  transform: translateY(-1px);
+}
+.char-card__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.char-card__id {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.char-card__slug {
+  font-size: 11px;
+  color: var(--color-muted-ash);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.char-card__name {
+  font-size: 18px;
+  font-weight: var(--weight-semibold);
+  margin: 0;
+  line-height: 1.2;
+}
+.char-card__protagonist {
+  color: var(--accent, #b8581e);
+  margin-left: 4px;
+}
+.char-card__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.char-card__label {
+  font-size: 11px;
+  color: var(--color-muted-ash);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-weight: var(--weight-semibold);
+}
+.char-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.char-card__snapshot-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.char-card__snapshot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--bg-section);
+  border-radius: 8px;
+  min-height: 80px;
+}
+.char-card__snapshot-label {
+  font-size: 11px;
+  color: var(--color-muted-ash);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-weight: var(--weight-semibold);
+}
+.char-card__snapshot-value {
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+  color: var(--text-primary);
+  flex: 1;
+}
+@media (max-width: 900px) {
+  .char-card__snapshot-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
