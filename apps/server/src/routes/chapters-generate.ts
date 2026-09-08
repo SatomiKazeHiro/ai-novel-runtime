@@ -30,6 +30,29 @@ import { parseBody, getLastChapter, getOrThrowChapter } from './_helpers.js'
  * 注意：preview + generate 的 chapter 查询保留 inline `findUnique + include:{story:true} + 404`,
  * 因为它们要读 `chapter.story`。只有 select 用 `getOrThrowChapter`(无需 story)。
  */
+/**
+ * fallback 链: snapshot (CharacterBranchState) > Character base 字段 > '{}'
+ * 让新建但未归档的角色也能在 prompt 注入基础关系/状态。
+ * export 是为了支持单测;内部 preview + generate 仍走闭包版(避免路由文件重复声明)。
+ */
+export async function getCharactersWithLatestState(
+  prisma: any,
+  storyId: string
+): Promise<Array<{ status: string; relationships: string; [k: string]: any }>> {
+  const characters = await prisma.character.findMany({ where: { storyId } })
+  return Promise.all(characters.map(async (c: any) => {
+    const latestState = await prisma.characterBranchState.findFirst({
+      where: { characterId: c.id },
+      orderBy: { fromChapterNumber: 'desc' }
+    })
+    return {
+      ...c,
+      status: latestState?.status ?? c.status ?? '{}',
+      relationships: latestState?.relationships ?? c.relationships ?? '{}'
+    }
+  }))
+}
+
 export async function chapterGenerateRoutes(app: FastifyInstance) {
   // 辅助函数：获取角色的最新状态（历史表模式）。preview + generate 共用。
   async function getCharactersWithLatestState(prisma: any, storyId: string) {
@@ -39,7 +62,13 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
         where: { characterId: c.id },
         orderBy: { fromChapterNumber: 'desc' }
       })
-      return { ...c, status: latestState?.status || '{}', relationships: latestState?.relationships || '{}' }
+      // fallback 链: latestState snapshot > Character base 字段 > '{}'
+    // 让"新建后还没归档"的角色也能在 prompt 里注入 base 关系/状态
+    return {
+      ...c,
+      status: latestState?.status ?? c.status ?? '{}',
+      relationships: latestState?.relationships ?? c.relationships ?? '{}'
+    }
     }))
   }
 
