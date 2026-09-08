@@ -391,7 +391,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import {
   NCard, NSpace, NTabs, NTabPane, NCollapse, NCollapseItem,
   NInput, NInputNumber, NButton, NEmpty, NGrid, NGi, NText,
@@ -431,15 +431,8 @@ watch(() => props.pending, (next) => {
   localData.value = fromV3(next)
 })
 
-// 自动防抖保存: localData 变化 800ms 后 emit save
-let saveTimer: ReturnType<typeof setTimeout> | null = null
-watch(localData, () => {
-  if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    emit('save', toV3(localData.value, props.pending))
-  }, 800)
-}, { deep: true })
-onUnmounted(() => { if (saveTimer) clearTimeout(saveTimer) })
+// 取消自动保存: 所有改动必须手动点 "保存调整" 持久化
+// (原 watch + 800ms 防抖已被删,自动保存让手动按钮失去意义)
 
 // === tab header 状态圆点 ===
 function stageStatus(name: StageName): string {
