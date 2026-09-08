@@ -39,7 +39,7 @@ const jobs = [
 ]
 
 // Sanity check: require that packages have been built at least once.
-const missingDist = ['ai-provider', 'knowledge-graph', 'memory-engine', 'prompt-runtime', 'scoring-engine', 'shared']
+const missingDist = ['ai-provider', 'knowledge-graph', 'memory-engine', 'prompt-runtime', 'shared']
   .filter((p) => !existsSync(resolve(ROOT, 'packages', p, 'dist')))
 if (missingDist.length > 0) {
   console.error(`[dev] missing packages/*/dist for: ${missingDist.join(', ')}`)

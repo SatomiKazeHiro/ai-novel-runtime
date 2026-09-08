@@ -20,7 +20,7 @@
 | `updatedAt` | DateTime | 自动更新 |
 
 **关系**：
-- 1:N `Chapter`、`Character`、`LoreItem`、`Memory`、`TimelineEvent`、`Draft`、`Score`、`PlotArc`、`AiProviderConfig`、`WorkerTask`
+- 1:N `Chapter`、`Character`、`LoreItem`、`Memory`、`TimelineEvent`、`Draft`、`PlotArc`、`AiProviderConfig`、`WorkerTask`
 - N:1 `RuntimeProfile`（通过 `runtimeProfileId` 绑定，可选）
 
 ---
@@ -59,7 +59,7 @@
 - N:1 `Chapter`（`parentChapter`，自关联）
 - 1:N `Chapter`（`childChapters`，自关联）
 - N:1 `RuntimeProfile`
-- 1:N `Draft`、`Memory`、`Score`
+- 1:N `Draft`、`Memory`
 
 **归档行为（v3）**：
 - `prepare-archive` 阶段：4 个 stage（character/memory/plot-arc/graph-extract）并行 AI 提取 → 结果写入 `pendingArchiveData`（version=3）→ 状态变 `reviewing`。Chapter 三个图谱列全程不读写
@@ -334,36 +334,12 @@
 
 ---
 
-## 5. 其他模型
-
-### `Score` — 评分记录
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | String PK | |
-| `storyId` | String FK → Story | |
-| `chapterId` | String FK → Chapter | |
-| `draftId` | String? | 可选 |
-| `styleSimilarity` | Float? | 文风接近度（对比近 2-3 章 archived 内容） |
-| `outlineAdherence` | Float? | 大纲符合度 |
-| `sceneMatch` | Float? | 场景符合度（地点/氛围/目标匹配） |
-| `profileConsistency` | Float? | 写作人格一致性 |
-| `proseQuality` | Float? | 文笔质量 |
-| `emotionalTension` | Float? | 情感张力 |
-| `pacing` | Float? | 节奏把控 |
-| `totalScore` | Float? | 总分（7 维度均值） |
-| `comment` | String? | AI 评语（50字以内） |
-| `details` | String | JSON：原始 AI 结果 + 规则评分兜底 |
-
----
-
-## 6. 关系总览
+## 5. 关系总览
 
 ```
 Story
 ├── Chapter (1:N) ──→ Draft (1:N)
 │                     Memory (1:N, chapterId 可选)
-│                     Score (1:N)
 ├── Character (1:N) ──→ CharacterBranchState (1:N)
 ├── LoreItem (1:N)
 ├── Memory (1:N, global 层 chapterId 为 null)
@@ -372,13 +348,12 @@ Story
 ├── AiProviderConfig (1:N, storyId 可选)
 ├── WorkerTask (1:N, storyId 可选)
 ├── RuntimeProfile (N:1, storyId 可选)
-├── Score (1:N)
 └── PromptLog (1:N)
 ```
 
 ---
 
-## 7. 迁移历史
+## 6. 迁移历史
 
 > 与 `prisma/migrations/` 目录一一对应。
 

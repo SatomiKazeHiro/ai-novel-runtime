@@ -164,13 +164,12 @@ novel-runtime/
 │           │   └── usePromptManager.ts
 │           └── utils/
 │               └── api.ts
-├── packages/                  # 共享包（Monorepo；6 个包）
+├── packages/                  # 共享包（Monorepo；5 个包）
 │   ├── shared/                # 类型、常量、工具函数 + zod schema
 │   ├── ai-provider/           # AI Provider 统一封装 + Runtime Prompt 编译器 + countTokens
 │   ├── prompt-runtime/        # Prompt Pipeline / Token 预算控制（model-aware）
 │   ├── memory-engine/         # 分层记忆管理 + 语义检索 + Jaccard 去重
-│   ├── knowledge-graph/       # graphology 图引擎封装
-│   └── scoring-engine/        # 规则评分引擎
+│   └── knowledge-graph/       # graphology 图引擎封装
 ├── docs/
 │   ├── DESIGN.md              # boords 设计系统参考
 │   ├── ISSUES.md              # P0 + Q 决策 + 工程化决策 + 库选型 + 修复时间线
@@ -204,8 +203,7 @@ novel-runtime/
 | `Memory` | 记忆（global=每章优化后的状态快照/chapter=原始提取/scene/temporary） |
 | `TimelineEvent` | 时间线事件（按 `fromChapterNumber` 标记生命周期） |
 | `PlotArc` | 剧情弧线（全局） |
-| `Draft` | 候选（含 temperature/maxTokens/compiledPrompt/score） |
-| `Score` | 评分记录（7 维度） |
+| `Draft` | 候选（含 temperature/maxTokens/compiledPrompt） |
 | `AiProviderConfig` | AI 模型配置（contextLength / maxTokens） |
 | `RuntimeProfile` | 写作人格（Identity + Settings + Behavior + Jailbreak） |
 | `WorkerTask` | Worker 任务层配置 |
@@ -418,10 +416,6 @@ pnpm build
 ### 添加新的 AI Provider
 
 在 `packages/ai-provider/src/index.ts` 中实现 `AIProvider` 接口，然后在 `createProvider` 函数中注册。
-
-### 添加新的评分维度
-
-在 `packages/scoring-engine/src/index.ts` 中扩展 `ScoreResult` 接口。评分 Prompt 的修改在后端 `apps/server/src/routes/scores.ts`。
 
 ### 添加新的预设写作人格
 

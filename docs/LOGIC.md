@@ -134,7 +134,6 @@ v4 拆 `memoryExtract` + `memoryOptimize` 为 2 独立 stage, 任一失败可独
 | `@novel-runtime/prompt-runtime` | 9 层 Pipeline 组装 + 预算控制 | `PromptPipeline` / `BudgetConfig` |
 | `@novel-runtime/memory-engine` | 语义检索 + 记忆格式化 | `MemoryManager.searchRelevant` / `formatForPrompt` |
 | `@novel-runtime/knowledge-graph` | graphology 内存图封装 | `GraphService` |
-| `@novel-runtime/scoring-engine` | 7 维度规则评分 | `scoringEngine`（AI 评分在服务端实现） |
 
 ---
 

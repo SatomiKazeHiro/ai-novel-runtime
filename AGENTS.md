@@ -82,7 +82,7 @@
 | 开发 | SQLite（零配置启动，`file:./dev.db`） |
 | 生产 | PostgreSQL（切换仅需改 `.env` + `prisma/schema.prisma` 的 `provider`） |
 
-主要模型：`Story`、`Chapter`、`Draft`、`Character`、`CharacterBranchState`、`LoreItem`、`Memory`、`TimelineEvent`、`PlotArc`、`RuntimeProfile`、`WorkerTask`、`AiProviderConfig`、`PromptLog`、`Score`。（`GraphNode`/`GraphEdge` 已在 v3 删除，图谱数据存 `Chapter.chapterGraph`/`cumulativeGraph` JSON 列。）
+主要模型：`Story`、`Chapter`、`Draft`、`Character`、`CharacterBranchState`、`LoreItem`、`Memory`、`TimelineEvent`、`PlotArc`、`RuntimeProfile`、`WorkerTask`、`AiProviderConfig`、`PromptLog`。（`GraphNode`/`GraphEdge` 已在 v3 删除，图谱数据存 `Chapter.chapterGraph`/`cumulativeGraph` JSON 列。）
 
 ### 2.4 共享包
 
@@ -93,7 +93,6 @@
 | `@novel-runtime/prompt-runtime` | `packages/prompt-runtime` | Prompt 组装管道 + Token 预算管理 |
 | `@novel-runtime/memory-engine` | `packages/memory-engine` | 记忆提取、语义搜索、Prompt 格式化 |
 | `@novel-runtime/knowledge-graph` | `packages/knowledge-graph` | 内存图服务（graphology 封装） |
-| `@novel-runtime/scoring-engine` | `packages/scoring-engine` | 规则评分引擎（AI 评分在服务端实现） |
 
 所有包的 `tsconfig.json` 统一：`target: ES2022`、`module: NodeNext`、`strict: true`、生成 `.d.ts` + sourceMap。
 
@@ -178,8 +177,7 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 │   ├── ai-provider/     # LLM Provider 抽象 + Runtime Prompt 编译器
 │   ├── prompt-runtime/  # Prompt 组装管道 + Token 预算
 │   ├── memory-engine/   # 记忆提取、语义搜索、格式化
-│   ├── knowledge-graph/ # 内存图服务
-│   ├── scoring-engine/  # 规则评分引擎
+│   └── knowledge-graph/ # 内存图服务
 ├── prisma/
 │   ├── schema.prisma    # Prisma 数据模型（16 个模型）
 │   ├── migrations/      # 迁移文件（按时间顺序命名）
@@ -238,7 +236,6 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 | 队列 | 任务名 | 状态 |
 |------|--------|------|
 | `generateQueue` | `generate-chapter` | ✅ 已注册并运行 |
-| `scoreQueue` | `score-draft` | ⚠️ 已定义但未注册处理器 |
 | `memoryQueue` | `update-memory` | ⚠️ 已定义但未注册处理器 |
 
 ### 4.5 前端双 Layout 路由
