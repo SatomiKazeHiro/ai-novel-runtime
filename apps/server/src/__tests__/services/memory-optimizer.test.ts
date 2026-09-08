@@ -112,4 +112,32 @@ describe('optimizeMemories — empty AI response', () => {
     // 不应该调 callAIWithLog
     expect(callAIWithLog).not.toHaveBeenCalled()
   })
+
+  it('throws diagnostic error when AI returns non-JSON content (thinking trace pollution)', async () => {
+    // 反馈规则 `feedback_no_silent_errors`: 短 reasoning_content (<4KB) 走
+    // 兜底返回给 optimizer。如果内容是非 JSON 散文 (典型 thinking 模式污染
+    // 或 prompt 漂移), parse 失败时必须输出诊断信息让用户区分:
+    //   - "AI 返回空内容" (provider 层 extractContent 已 throw, raw_ai=null)
+    //   - "AI 返回内容无法解析为 JSON" (raw_ai 有内容但没 JSON, 本测试场景)
+    // 之前抛统一 "AI 返回空内容" 错, 用户分不清。
+    const thinkingTrace = '这只是一段思考过程散文, 没有 JSON 块'
+    ;(callAIWithLog as any).mockResolvedValueOnce(thinkingTrace)
+
+    const app = mockApp()
+    let caught: Error | null = null
+    try {
+      await optimizeMemories(app, 's1', 'c1', baseRaw)
+    } catch (err: any) {
+      caught = err
+    }
+
+    expect(caught).not.toBeNull()
+    // 错误信息必须明确说 "无法解析为 JSON" 区分 "AI 返回空内容"
+    expect(caught!.message).toMatch(/AI 返回内容无法解析为 JSON/)
+    expect(caught!.message).toContain('see server.log')
+    // 必须包含 raw_ai 长度, 帮助用户判断是否触发了长度阈值
+    expect(caught!.message).toMatch(/length=\d+/)
+    // 必须包含实际长度数字 (本测试是 thinkingTrace 的字符数)
+    expect(caught!.message).toContain(`length=${thinkingTrace.length}`)
+  })
 })

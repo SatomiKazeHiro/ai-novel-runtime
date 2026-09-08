@@ -150,7 +150,24 @@ ${rawText}
     throw new Error('[MemoryOptimizer] AI 返回空内容, 无法做记忆融合')
   }
 
-  const result: { memories: OptimizedMemory[] } = JSON.parse(cleanJsonBlock(raw_ai))
+  // 反馈规则 `feedback_no_silent_errors`: parse 失败时输出详细诊断,
+  // 让用户区分 "AI 返回空" (provider 层 extractContent 已 throw) vs
+  // "AI 返回了非 JSON 内容" (典型 thinking 模式污染, raw_ai 有内容但没 JSON)。
+  // 之前抛统一 "AI 返回空内容" 错, 用户分不清。PromptLog 的 responseContent
+  // 已保留完整 raw_ai, server.log 输出前 200 字符 + 长度是即时诊断。
+  let result: { memories: OptimizedMemory[] }
+  try {
+    result = JSON.parse(cleanJsonBlock(raw_ai))
+  } catch (parseErr: any) {
+    app.log.error(
+      `[MemoryOptimizer] JSON parse failed: ${parseErr.message}. ` +
+      `raw_ai length=${raw_ai.length}, first 200 chars: ${raw_ai.slice(0, 200)}`
+    )
+    throw new Error(
+      `[MemoryOptimizer] AI 返回内容无法解析为 JSON: ${parseErr.message} ` +
+      `(length=${raw_ai.length}, see server.log for first 200 chars)`
+    )
+  }
   const memories = (result.memories || []).filter(m => m && typeof m.content === 'string')
 
   // 校验 originUid: 继承的必须在 globalMap, 否则视为 NEW
