@@ -68,8 +68,6 @@ describe('chapters select route — chapterId isolation', () => {
       id: 'draft_1', chapterId: 'chapterA', content: 'hello'
     })
     mockPrisma.draft.updateMany.mockResolvedValue({ count: 2 })
-    mockPrisma.draft.update.mockResolvedValue({ id: 'draft_1', status: 'selected' })
-    // v2: chapter.status 不再被 select 翻成 'selected'
     mockPrisma.chapter.update.mockResolvedValue({ id: 'chapterA', status: 'draft' })
 
     const result = await callHandler(

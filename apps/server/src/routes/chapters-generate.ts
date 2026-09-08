@@ -288,8 +288,8 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
 
     await prisma.$transaction(async (tx) => {
       await tx.draft.updateMany({ where: { chapterId }, data: { status: 'rejected' } })
-      await tx.draft.update({ where: { id: body.draftId }, data: { status: 'selected' } })
-      // v2: 仅写 content，不翻 chapter.status
+      // 2026-07-24: 不再 set Draft.status='selected' —— chapter.content 才是"哪个候选被采用"的唯一真相源。
+      // 没有 'selected' draft 标记,UI 也就不再展示 ✓ 已选徽章。
       await tx.chapter.update({
         where: { id: chapterId },
         data: { content: draft.content || undefined }

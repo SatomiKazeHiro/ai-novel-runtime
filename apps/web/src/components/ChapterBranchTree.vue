@@ -39,7 +39,6 @@
         v-for="(node, index) in flatList"
         :key="node.id"
         class="list-row cap-rise"
-        :class="{ active: selectedId === node.id }"
         :data-status="node.status"
         :data-mainline="node.branchRootId === null ? 'true' : 'false'"
         :style="{
@@ -49,7 +48,6 @@
           '--row-color': getRowColor(node),
           '--row-spine': getSpineColor(node)
         }"
-        @click="$emit('select', node)"
       >
         <!-- 左侧编号徽章 -->
         <div class="row-id">
@@ -161,11 +159,9 @@ interface FlatNode extends TreeNode {
 
 const props = defineProps<{
   treeData: TreeNode[]
-  selectedId?: string
 }>()
 
 defineEmits<{
-  (e: 'select', node: TreeNode): void
   (e: 'develop', node: TreeNode): void
   (e: 'edit', node: TreeNode): void
   (e: 'view', node: TreeNode): void

@@ -43,8 +43,6 @@
             </div>
             <ChapterBranchTree
                 :tree-data="treeData"
-                :selected-id="selectedId"
-                @select="(node: any) => emit('select', node)"
                 @develop="(node: any) => emit('develop', node)"
                 @edit="(node: any) => emit('edit', node)"
                 @view="(node: any) => emit('view', node)"
@@ -172,7 +170,6 @@ import ChapterBranchTree from "../../components/ChapterBranchTree.vue";
 const props = defineProps<{
     treeData: any[];
     loading: boolean;
-    selectedId: string;
     showCreateModal: boolean;
     createForm: { title: string; outline: string; isSideStory: boolean };
     showDevelopModal: boolean;
@@ -181,7 +178,6 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-    (e: "select", node: any): void;
     (e: "develop", node: any): void;
     (e: "edit", node: any): void;
     (e: "view", node: any): void;

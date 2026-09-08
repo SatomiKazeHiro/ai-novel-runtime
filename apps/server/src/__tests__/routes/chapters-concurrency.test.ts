@@ -149,7 +149,6 @@ describe('select route — v2 orthogonal to chapter status (3-value enum)', () =
       id: 'd_new', chapterId: 'c1', content: 'new content'
     })
     mockPrisma.draft.updateMany.mockResolvedValue({ count: 1 })
-    mockPrisma.draft.update.mockResolvedValue({ id: 'd_new', status: 'selected' })
     mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'draft' })
 
     const result = await callHandler(
@@ -169,7 +168,6 @@ describe('select route — v2 orthogonal to chapter status (3-value enum)', () =
       id: 'd_new', chapterId: 'c1', content: 'new content'
     })
     mockPrisma.draft.updateMany.mockResolvedValue({ count: 1 })
-    mockPrisma.draft.update.mockResolvedValue({ id: 'd_new', status: 'selected' })
     mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'reviewing' })
 
     const result = await callHandler(
@@ -203,7 +201,6 @@ describe('select route — v2 orthogonal to chapter status (3-value enum)', () =
       id: 'd_new', chapterId: 'c1', content: 'new content'
     })
     mockPrisma.draft.updateMany.mockResolvedValue({ count: 1 })
-    mockPrisma.draft.update.mockResolvedValue({ id: 'd_new', status: 'selected' })
     mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'draft' })
 
     const result = await callHandler(

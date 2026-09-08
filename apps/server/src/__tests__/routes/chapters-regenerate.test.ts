@@ -59,7 +59,6 @@ describe('select route — v2 no chapter.status lock', () => {
       id: 'd1', chapterId: 'c1', content: 'text'
     })
     mockPrisma.draft.updateMany.mockResolvedValue({ count: 1 })
-    mockPrisma.draft.update.mockResolvedValue({ id: 'd1', status: 'selected' })
     mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'draft' })
 
     const result = await callHandler(
@@ -83,7 +82,6 @@ describe('select route — v2 no chapter.status lock', () => {
       id: 'd1', chapterId: 'c1', content: 'text'
     })
     mockPrisma.draft.updateMany.mockResolvedValue({ count: 1 })
-    mockPrisma.draft.update.mockResolvedValue({ id: 'd1', status: 'selected' })
     mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'draft' })
 
     await callHandler(

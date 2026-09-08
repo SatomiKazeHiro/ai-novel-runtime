@@ -234,7 +234,7 @@ model Draft {
   compiledPrompt  String?  // JSON: { systemMessage, userMessage }
   params          String   @default("{}") // JSON: { temperature, maxTokens, model, runtimeProfileId, callType, durationMs }
   score           String?  // JSON: 评分结果
-  status          String   @default("generating") // generating, completed, failed, selected, rejected
+  status          String   @default("generating") // generating, completed, failed, rejected (v2: 不再有 'selected'——采纳哪个 draft 只看 Chapter.content 是否匹配)
   errorMessage    String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @default(now()) @updatedAt

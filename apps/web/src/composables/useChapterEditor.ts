@@ -10,7 +10,6 @@ export function useChapterEditor(storyId: () => string | undefined) {
 
   const editMode = ref(false)
   const currentChapter = ref<any>(null)
-  const selectedChapterId = ref('')
   const editTitle = ref('')
   const selectedProfileId = ref<string | null>(null)
   const profileOptions = ref<any[]>([])
@@ -44,7 +43,6 @@ export function useChapterEditor(storyId: () => string | undefined) {
 
   async function openEdit(row: any) {
     currentChapter.value = row
-    selectedChapterId.value = row.id
     editTitle.value = row.title || ''
     selectedProfileId.value = row.runtimeProfileId || null
     selectedModelId.value = row.aiProviderConfigId || null
@@ -84,7 +82,6 @@ export function useChapterEditor(storyId: () => string | undefined) {
   function backToTree() {
     editMode.value = false
     currentChapter.value = null
-    selectedChapterId.value = ''
     plotArcs.value = []
     graphDelta.value = null
     pendingArchiveData.value = null
@@ -214,7 +211,6 @@ export function useChapterEditor(storyId: () => string | undefined) {
   return reactive({
     editMode,
     currentChapter,
-    selectedChapterId,
     editTitle,
     selectedProfileId,
     profileOptions,

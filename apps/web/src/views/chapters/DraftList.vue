@@ -31,9 +31,6 @@
         >
             <n-text depth="3" style="font-size: 12px">
                 共 {{ drafts.drafts.length }} 个候选
-                <template v-if="drafts.drafts.some((d: any) => d.status === 'selected')">
-                    ,已选 1 个(右上角带 ✓)
-                </template>
             </n-text>
         </n-space>
 
@@ -47,7 +44,7 @@
                 v-for="draft in drafts.drafts"
                 :key="draft.id"
                 :name="draft.id"
-                :tab="draft.status === 'selected' ? `${draft.version} ✓` : draft.version"
+                :tab="draft.version"
             >
                 <n-tabs type="segment" size="small" style="max-height: 360px">
                     <n-tab-pane name="content" tab="结果">
