@@ -8,7 +8,7 @@ import { runMemoryStage, type MemoryStageResult } from '../services/stages/memor
 import { runPlotArcStage, type PlotArcStageResult } from '../services/stages/plot-arc-stage.js'
 import { runGraphExtractStage, type GraphExtractStageResult } from '../services/stages/graph-extract-stage.js'
 import { commitPlotArcWrites } from '../services/plot-extractor.js'
-import { commitCharacterBranchStateWrites } from '../services/character-extractor.js'
+import { commitCharacterBranchStateWrites, resolveAndCommitCharacterWrites, ConflictError } from '../services/character-extractor.js'
 import { optimizeMemories, type OptimizedMemory } from '../services/memory-optimizer.js'
 import type { GraphSnapshot } from '../services/graph-snapshot.js'
 import { buildCumulativeGraph } from '../services/cumulative-graph.js'
@@ -763,8 +763,33 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       originUid: m.originUid === 'NEW' ? `${fromChapterNumber}#${newUidHex()}` : m.originUid
     }))
 
+    // v4 角色自动建档: transaction 外预查 + slug+name 双校验,冲突时直接 409(不进 transaction)
+    let resolvedCharacterStates = characterStates
+    if (characterStates.length > 0) {
+      const allExisting = await prisma.character.findMany({
+        where: { storyId: chapter.storyId },
+        select: { id: true, slug: true, name: true }
+      })
+      const { effectiveWrites, conflicts } = await resolveAndCommitCharacterWrites(
+        null, // resolve 是纯逻辑,不直接调 tx
+        chapter.storyId,
+        chapter.number,
+        characterStates,
+        allExisting,
+        app.log
+      )
+      if (conflicts.length > 0) {
+        return reply.status(409).send({
+          success: false,
+          error: 'character write conflict',
+          conflicts
+        })
+      }
+      resolvedCharacterStates = effectiveWrites
+    }
+
     // commit-only: prisma.$transaction 内一次写完三层 + PlotArc + CharacterBranchState + Chapter.summary + Chapter 三列 + 翻 status
-    // 备注: CharacterBranchState 已接通 (commitCharacterBranchStateWrites)
+    // 备注: CharacterBranchState 已接通 (commitCharacterBranchStateWrites, isNew=true 自动建 Character 行)
     await prisma.$transaction(async (tx) => {
       for (const data of [...chapterRows, ...sceneRows, ...globalRows]) {
         await tx.memory.create({ data })
@@ -772,8 +797,8 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       // 接通 v3 PlotArc 写库 (修 P0 遗留): consolidator 输出 → PlotArc 表
       await commitPlotArcWrites(tx, chapter.number, plotArcs)
       // 接通 v3 CharacterBranchState 写库 (修 P0 遗留): character-stage 输出 → CharacterBranchState 表
-      // isNew=true / characterId=null 时 commitCharacterBranchStateWrites 内部静默跳过 + log
-      await commitCharacterBranchStateWrites(tx, chapter.storyId, chapter.number, characterStates, app.log)
+      // isNew=true 时 commitCharacterBranchStateWrites 内部自动 tx.character.create 建 Character 行
+      await commitCharacterBranchStateWrites(tx, chapter.storyId, chapter.number, resolvedCharacterStates, app.log)
       await tx.chapter.update({
         where: { id: chapterId },
         data: {

@@ -39,6 +39,11 @@ export async function resolveAndCommitCharacterWrites(
       conflicts.push({ writeIndex: i, reason: 'missing_key', aiWrite: w })
       continue
     }
+    // 短路: ReviewingPanel 已纠正(characterId 非空 + isNew=false),信任前端选的 characterId,跳过 slug 校验
+    if (w.characterId && !w.isNew) {
+      effectiveWrites.push(w)
+      continue
+    }
     const existing = allExistingCharacters.find(c => c.slug === w.key)
     if (existing) {
       if (existing.name === w.name) {

@@ -102,6 +102,7 @@ function makeChapter(pendingArchiveData: string | null) {
 function makePrisma() {
   const tx: any = {
     chapter: { update: vi.fn().mockResolvedValue({}) },
+    character: { create: vi.fn().mockResolvedValue({ id: 'new-char-id' }) },
     memory: { create: vi.fn().mockResolvedValue({ id: 'mem-row' }) },
     characterBranchState: { create: vi.fn().mockResolvedValue({ id: 'cbs-row' }) },
     plotArc: {
@@ -277,5 +278,149 @@ describe('archive confirm v4 — strict 5-stage validation + split data sources'
 
     // 验证 $transaction 被调
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('archive confirm v4 — character resolve + commit', () => {
+  let mockPrisma: any
+  let routes: Record<string, any>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockPrisma = makePrisma()
+    routes = await setupRoutes(mockPrisma)
+  })
+
+  it('新角色进入 → Character 表 +1, CharacterBranchState 表 +1, base 关系/状态为 null', async () => {
+    const basePending1 = JSON.parse(makePendingV4())
+    const pendingWithIsNew = JSON.stringify({
+      ...basePending1,
+      stages: {
+        ...basePending1.stages,
+        character: {
+          status: 'success',
+          result: {
+            characterStates: [
+              {
+                characterId: null,
+                name: '神秘人',
+                key: 'shenmi_ren',
+                status: { realm: '筑基' },
+                relationships: {},
+                costume: '黑袍',
+                isNew: true
+              }
+            ]
+          }
+        }
+      }
+    })
+
+    mockPrisma.chapter.findUnique.mockResolvedValue(makeChapter(pendingWithIsNew))
+
+    const result = await callHandler(routes, 'POST', ROUTE, undefined, { chapterId: 'ch-1' })
+
+    expect(result.body).toMatchObject({ success: true })
+    expect(mockPrisma.tx.character.create).toHaveBeenCalledTimes(1)
+    expect(mockPrisma.tx.character.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        slug: 'shenmi_ren',
+        name: '神秘人',
+        relationships: null,
+        status: null
+      })
+    })
+    expect(mockPrisma.tx.characterBranchState.create).toHaveBeenCalledTimes(1)
+    expect(mockPrisma.tx.characterBranchState.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        characterId: 'new-char-id',
+        fromChapterNumber: 1,
+        costume: '黑袍'
+      })
+    })
+  })
+
+  it('slug+name 冲突 → 返回 409 + payload.conflicts, 章节保持 reviewing', async () => {
+    const basePending2 = JSON.parse(makePendingV4())
+    const pendingWithConflict = JSON.stringify({
+      ...basePending2,
+      stages: {
+        ...basePending2.stages,
+        character: {
+          status: 'success',
+          result: {
+            characterStates: [
+              {
+                characterId: null,
+                name: '林峰',  // AI 返回的 name
+                key: 'linfan', // AI 返回的 key,与已有 slug 撞
+                status: {},
+                relationships: {},
+                isNew: true
+              }
+            ]
+          }
+        }
+      }
+    })
+    // 已有 slug='linfan', name='林凡' 的角色
+    mockPrisma.character.findMany.mockResolvedValue([
+      { id: 'char-linfan', slug: 'linfan', name: '林凡' }
+    ])
+    mockPrisma.chapter.findUnique.mockResolvedValue(makeChapter(pendingWithConflict))
+
+    const result = await callHandler(routes, 'POST', ROUTE, undefined, { chapterId: 'ch-1' })
+
+    expect(result.status).toBe(409)
+    expect(result.body).toMatchObject({
+      success: false,
+      error: 'character write conflict'
+    })
+    expect(result.body.conflicts).toHaveLength(1)
+    expect(result.body.conflicts[0].reason).toBe('slug_name_mismatch')
+    expect(result.body.conflicts[0].existingCharacter.name).toBe('林凡')
+    // 章节未翻 archived
+    expect(mockPrisma.chapter.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'archived' }) })
+    )
+  })
+
+  it('reviewingPanel 已纠正 isNew=true → 命中已有角色, 不新建 Character', async () => {
+    // ReviewingPanel 纠正后:characterId 已指向现有角色, isNew=false
+    const basePending = JSON.parse(makePendingV4())
+    const pendingCorrected = JSON.stringify({
+      ...basePending,
+      stages: {
+        ...basePending.stages,
+        character: {
+          status: 'success',
+          result: {
+            characterStates: [
+              {
+                characterId: 'char-linfan',
+                name: '林凡',
+                key: 'linfan',
+                status: { realm: '筑基' },
+                relationships: {},
+                isNew: false
+              }
+            ]
+          }
+        }
+      }
+    })
+
+    mockPrisma.chapter.findUnique.mockResolvedValue(makeChapter(pendingCorrected))
+
+    const result = await callHandler(routes, 'POST', ROUTE, undefined, { chapterId: 'ch-1' })
+
+    expect(result.body).toMatchObject({ success: true })
+    expect(mockPrisma.tx.character.create).not.toHaveBeenCalled()
+    expect(mockPrisma.tx.characterBranchState.create).toHaveBeenCalledTimes(1)
+    expect(mockPrisma.tx.characterBranchState.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        characterId: 'char-linfan'
+      })
+    })
   })
 })
