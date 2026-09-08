@@ -152,20 +152,6 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       prevCumulativeGraphNodes = extractGraphNodes(parent?.cumulativeGraph)
       prevCumulativeGraphEdges = extractGraphEdges(parent?.cumulativeGraph)
     }
-    if (prevCumulativeGraphNodes.length === 0) {
-      // 主线回退: 找前一个 number 的章节
-      const prev = await prisma.chapter.findFirst({
-        where: {
-          storyId: chapter.storyId,
-          parentChapterId: null,
-          number: chapter.number - 1,
-          id: { not: chapterId }
-        },
-        select: { cumulativeGraph: true }
-      })
-      prevCumulativeGraphNodes = extractGraphNodes(prev?.cumulativeGraph)
-      prevCumulativeGraphEdges = extractGraphEdges(prev?.cumulativeGraph)
-    }
 
     // memory-stage / memory-optimizer 跨章上下文
     //   - protagonistNames: 主角名单,影响 mainEvents 评分粒度
@@ -376,19 +362,6 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       })
       prevCumulativeGraphNodes = extractGraphNodes(parent?.cumulativeGraph)
       prevCumulativeGraphEdges = extractGraphEdges(parent?.cumulativeGraph)
-    }
-    if (prevCumulativeGraphNodes.length === 0) {
-      const prev = await prisma.chapter.findFirst({
-        where: {
-          storyId: chapter.storyId,
-          parentChapterId: null,
-          number: chapter.number - 1,
-          id: { not: chapterId }
-        },
-        select: { cumulativeGraph: true }
-      })
-      prevCumulativeGraphNodes = extractGraphNodes(prev?.cumulativeGraph)
-      prevCumulativeGraphEdges = extractGraphEdges(prev?.cumulativeGraph)
     }
 
     // 单 stage 执行
