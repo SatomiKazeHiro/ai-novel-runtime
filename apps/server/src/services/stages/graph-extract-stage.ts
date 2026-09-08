@@ -35,14 +35,21 @@ export async function runGraphExtractStage(
 【任务】基于章节内容，抽取本章涉及的实体节点和关系边。只看本章正文，不要混入历史上下文。
 
 【约束】
-1. type 必须是 character / faction / event / item 之一，其他值（如 weapon/prop/realm/object）一律收敛为 item
+1. type 必须是以下 4 类之一，其他一律丢弃或收敛：
+   - character（角色，有名字或代词指代）
+   - faction（组织/门派/阵营）
+   - event（本章发生的可命名事件）
+   - item（关键物品/法器/秘笈，**只保留对剧情有直接作用的**）
+   非上述类型（如 weapon / prop / realm / object / location）一律收敛为 item；若属于一次性场景描写则直接丢弃。
 2. character/faction/item 类型节点：
    - 若在【已有 graph key 列表】中，复用对应 type:key
    - 若对应【已有角色名】，type=character，key 用角色英文拼音小写下划线
    - 否则 key 用拼音小写下划线
 3. event 类型节点 key 用英文小写下划线
-4. importance >= 6 才提取（过滤路人/环境）
-5. relation 简洁（2-6 字），如 隶属 / 对抗 / 师徒 / 配偶 / 兄弟
+4. importance >= 8 才提取（过滤路人/环境/场景/物品）；任何只出现一次且无具体关系链的实体跳过
+5. relation 必须从以下词表选，不允许自由发挥：
+   隶属 / 对抗 / 师徒 / 配偶 / 兄弟 / 朋友 / 敌对 / 亲属 / 师门 / 同门 / 敌师 / 盟友
+6. 同名实体必须复用已有 graph key，不允许另起 key
 
 【已有 graph key 列表（必须复用）】
 ${keyList}
@@ -78,7 +85,15 @@ ${charList}
     const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : []
     const edges = Array.isArray(parsed.edges) ? parsed.edges : []
 
-    const filtered = nodes.filter((n: any) => (n.importance ?? 0) >= 6)
+    const ALLOWED_TYPES = new Set(['character', 'faction', 'event', 'item'])
+    const normalized = nodes.map((n: any) => {
+      const t = (n.type || '').toLowerCase()
+      if (ALLOWED_TYPES.has(t)) return { ...n, type: t }
+      // 非白名单 → 收敛为 item
+      return { ...n, type: 'item' }
+    })
+
+    const filtered = normalized.filter((n: any) => (n.importance ?? 0) >= 8)
 
     const chapterGraph: GraphSnapshot = {
       nodes: filtered.map((n: any) => ({
