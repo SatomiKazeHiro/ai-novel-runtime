@@ -184,7 +184,7 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
           where: { storyId: chapter.storyId, fromChapterNumber: chapter.number }
         })
         const { count: bsCount } = await prisma.characterBranchState.deleteMany({
-          where: { fromChapterNumber: chapter.number }
+          where: { storyId: chapter.storyId, fromChapterNumber: chapter.number }
         })
         // 剧情弧线级联：firstChapterNumber 相等 → 整条删（级联推进点）；否则删该章的推进点
         const { count: arcCount } = await prisma.plotArc.deleteMany({

@@ -26,6 +26,7 @@ describe('commitCharacterBranchStateWrites', () => {
     expect(tx.character.create).toHaveBeenCalledTimes(2)
     expect(tx.characterBranchState.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
+        storyId: 'story-1',
         characterId: 'char-1',
         fromChapterNumber: 1,
         status: '{"rank":"练气"}',

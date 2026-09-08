@@ -22,6 +22,7 @@ model Story {
   // 关联
   chapters    Chapter[]
   characters  Character[]
+  branchStates CharacterBranchState[]
   loreItems   LoreItem[]
   memories    Memory[]
   drafts      Draft[]
@@ -120,6 +121,7 @@ model Character {
 // 角色分支状态（按章节归档历史保存，删除章节时可回退）
 model CharacterBranchState {
   id                String   @id @default(uuid())
+  storyId           String
   characterId       String
   fromChapterNumber Float?   // 来源章节序号，null 表示初始状态
   status            String   @default("{}") // JSON object: realm, location, etc.
@@ -129,9 +131,11 @@ model CharacterBranchState {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
+  story             Story     @relation(fields: [storyId], references: [id], onDelete: Cascade)
   character         Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
 
   @@index([characterId, fromChapterNumber])
+  @@index([storyId, fromChapterNumber])
 }
 
 // 世界观条目 (LoreBook)

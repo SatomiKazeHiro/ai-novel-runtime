@@ -127,6 +127,7 @@ export async function commitCharacterBranchStateWrites(
     const costumeValue = w.costume && w.costume.trim() ? w.costume : null
     await tx.characterBranchState.create({
       data: {
+        storyId,
         characterId,
         fromChapterNumber: chapterNumber,
         status: statusValue,
