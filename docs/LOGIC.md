@@ -495,15 +495,13 @@ V4-Flash 是 reasoning 模型（`deepseek-v4-flash` / `deepseek/deepseek-v3.2` v
 - **情况 B**: 200 + 非空非 JSON body → 抛 "non-JSON response",带 body 切片方便识别 CDN 截断
 - **情况 C**: 200 + body.error 对象 → 抛 "API error: <msg>"
 
-### `REASONING_MAX_LENGTH_FOR_FALLBACK = 4096` 经验阈值（设计债）
+### ~~`REASONING_MAX_LENGTH_FOR_FALLBACK = 4096` 经验阈值（设计债）~~ [已清理 2026-08-02]
 
-`packages/ai-provider/src/index.ts:122` `OpenAICompatibleProvider.REASONING_MAX_LENGTH_FOR_FALLBACK = 4096`：
+`extractContent` 不再 fallback `reasoning_content`：content 为空就 throw "empty content"。thinking 三态配置已在请求端接管问题根源（`auto` 对 DeepSeek 默认关 upstream reasoning, 兜底路径基本不进）。
 
-- **现状**：`extractContent` 在 `content` 空时 fallback `reasoning_content`;`reasoning_content.length > 4096` 抛"reasoning_content too long, 疑似纯思考"诊断
-- **问题**：4KB 是"短 = 答案 / 长 = 思考"的经验判断,不是原则限制
-- **用户决策（2026-08-01）**：A 方案 — 永远 throw, 删 fallback。thinking 三态配置已接管问题根源（请求端关,上游基本不产 `reasoning_content`,兜底路径触发频率接近 0）
-- **待执行**：单独 commit 删 `REASONING_MAX_LENGTH_FOR_FALLBACK` 常量 + 兜底逻辑 + 2 个相关测试
-- **详细**：见 `docs/ISSUES.md` [设计债] 节
+**清理内容**：删 `REASONING_MAX_LENGTH_FOR_FALLBACK` 常量 + `extractContent` reasoning_content 处理分支 + 2 个相关测试(`falls back to short reasoning_content` + `does NOT fall back to reasoning_content when too long`), 新增 1 个测试 `throws empty content when content is empty even if reasoning_content has data (no fallback)`。
+
+**详细**：见 `docs/ISSUES.md` [设计债] 节（已加 RESOLVED 标记）。
 
 ### CharacterBranchState 类型契约（v3+ bug fix）
 
@@ -513,4 +511,4 @@ V4-Flash 是 reasoning 模型（`deepseek-v4-flash` / `deepseek/deepseek-v3.2` v
 
 ---
 
-*本文档对应代码版本：commit `2a2fd1b`（branch `v2/state-machine` 2026-07-31），含 v4 归档流水线 + thinking 三态 + CharacterBranchState 写库 + 4KB 阈值设计债。生成工具：见 `docs/superpowers/specs/2026-06-16-codebase-analysis-design.md`。*
+*本文档对应代码版本：commit `<TBD>`（branch `v2/state-machine` 2026-08-02），含 v4 归档流水线 + thinking 三态 + CharacterBranchState 写库 + 4KB 阈值清理。生成工具：见 `docs/superpowers/specs/2026-06-16-codebase-analysis-design.md`。*

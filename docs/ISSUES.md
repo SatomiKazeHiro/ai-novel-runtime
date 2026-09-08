@@ -319,18 +319,17 @@ SPEC 修正说明:Q9(zod 接入)在 spec「背景」节中误标 OPEN,实施时�
 
 > 不是 bug,但留有"未来要解决"的设计缺陷。**与 [Bug fix 备忘] 的区别**:这些是"先临时能跑,知道有更好方案",已记录但未立即执行。
 
-### `REASONING_MAX_LENGTH_FOR_FALLBACK = 4096` 是经验阈值,非原则限制
-- **File:line:** `packages/ai-provider/src/index.ts:122`(`OpenAICompatibleProvider.REASONING_MAX_LENGTH_FOR_FALLBACK = 4096`)+ `extractContent()` line 130-148
-- **现状:** `extractContent` 在 `content` 字段空时 fallback `reasoning_content`;若 `reasoning_content.length > 4096` 则抛错(< 4KB 视为"答案"静默返回, > 4KB 视为"思考"抛错)。
-- **问题:** 4KB 是"短 reasoning_content 是答案, 长 reasoning_content 是思考过程"的经验判断,不是原则限制。本质是**用魔法数替用户决定"什么时候算 answer / 什么时候算 thinking"**。两类失败模式都被这个数字掩盖:
+### ~~`REASONING_MAX_LENGTH_FOR_FALLBACK = 4096` 是经验阈值,非原则限制~~ [已清理 2026-08-02]
+- **File:line:** `packages/ai-provider/src/index.ts:122`(原 `OpenAICompatibleProvider.REASONING_MAX_LENGTH_FOR_FALLBACK = 4096`)+ `extractContent()` 原 line 130-148
+- **历史问题:** 4KB 是"短 reasoning_content 是答案, 长 reasoning_content 是思考过程"的经验判断,不是原则限制。本质是**用魔法数替用户决定"什么时候算 answer / 什么时候算 thinking"**。两类失败模式都被这个数字掩盖:
   1. AI 真实答案 < 4KB 但实际是"碎片式"思考的某段切片,被错认成答案给上层 `JSON.parse(cleanJsonBlock(...))` → 失败污染诊断
   2. AI 真实答案 > 4KB 但确实是答案,被错认成 thinking 抛错 → 用户在 UI 看到"reasoning_content too long"但实际是上游问题
-- **用户决策(2026-08-01):** **A 方案 — 永远 throw, 删 fallback**。理由:
+- **清理方案 (A 方案,2026-08-02 落地):** 永远 throw, 删 fallback。理由:
   1. thinking 三态配置(`packages/ai-provider/src/index.ts:57` `shouldDisableThinking`)已经接管问题根源: `auto` 模式对 DeepSeek 模型默认关 thinking, 真正需要兜底的窗口极小
   2. 保留 short reasoning 兜底**反而是陷阱**:悄悄把"thinking 模式未给答案"埋了, 用户在 UI 看到奇怪的 JSON parse 错或生成空内容
   3. 错误显式更友好 — 用户归档时看到"thinking 模式可能开了"立刻知道去 ModelManager 关, 不会以为是网络问题瞎 retry
-- **待执行:** 单独 commit 删 `REASONING_MAX_LENGTH_FOR_FALLBACK` 常量 + `extractContent` reasoning_content 兜底 + 2 个相关测试(`falls back to short reasoning_content` + `does NOT fall back to reasoning_content when too long`)。当前 commit `5eb4efc` 是临时方案,本节是后续清理的契约。
-- **优先级:** 中。thinking 三态配置已落, 当前 fallback 实际触发频率低; 但每多一个"用经验数替用户决定"的代码就是债, 应尽早清。
+- **修改内容:** 删 `REASONING_MAX_LENGTH_FOR_FALLBACK` 常量 + `extractContent` reasoning_content 兜底分支 + 2 个相关测试(`falls back to short reasoning_content` + `does NOT fall back to reasoning_content when too long`), 新增 1 个测试 `throws empty content when content is empty even if reasoning_content has data (no fallback)`。
+- **Status:** [RESOLVED 2026-08-02 — 本会话 4KB 清理 commit]
 
 ---
 

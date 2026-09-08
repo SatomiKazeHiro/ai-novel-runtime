@@ -193,37 +193,10 @@ describe('OpenAICompatibleProvider — non-JSON response diagnostics', () => {
     )).rejects.toThrow(/deepseek API error \(503\): Service Unavailable/)
   })
 
-  it('falls back to reasoning_content when content is empty (DeepSeek V4-Flash thinking mode)', async () => {
-    // DeepSeek V4-Flash 等 reasoning 模型把 JSON 输出放进 reasoning_content
-    // 字段, content 留空。provider 必须读 reasoning_content 兜底, 否则
-    // chapters-archive memory-optimizer / memory-stage 会一直抛
-    // "API returned empty content" 把 stage 标 failed, 章节永远无法归档。
-    // 用户场景: 87be28a9 ch2 prepare-archive, memory-optimizer 触发该 bug。
-    mockFetch(200, 'application/json', JSON.stringify({
-      choices: [{
-        message: {
-          content: '',
-          reasoning_content: '{"memories":[{"content":"测试记忆","originUid":"NEW","importance":5,"type":"event"}]}'
-        },
-        finish_reason: 'stop'
-      }],
-      model: 'deepseek-v4-flash'
-    }))
-
-    const provider = new OpenAICompatibleProvider({
-      name: 'deepseek', apiKey: 'sk-test', model: 'deepseek-v4-flash'
-    })
-
-    const content = await provider.generateWithRuntime(
-      { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
-      {}
-    )
-    expect(content).toBe('{"memories":[{"content":"测试记忆","originUid":"NEW","importance":5,"type":"event"}]}')
-  })
-
   it('prefers content over reasoning_content when both are present', async () => {
-    // 兜底逻辑必须优先用 content (普通模型), reasoning_content 只在 content
-    // 为空时才用。不能反过来。
+    // reasoning_content 不再 fallback (4KB 阈值清理), content 优先; 但
+    // reasoning_content 仍可能被上游填, extractContent 只读 content 字段,
+    // 不应该被 reasoning_content 污染。
     mockFetch(200, 'application/json', JSON.stringify({
       choices: [{
         message: {
@@ -245,9 +218,34 @@ describe('OpenAICompatibleProvider — non-JSON response diagnostics', () => {
     expect(content).toBe('正常 content 输出')
   })
 
+  it('throws empty content when content is empty even if reasoning_content has data (no fallback)', async () => {
+    // 4KB 阈值清理后: reasoning_content 不再 fallback, content 为空就抛
+    // "empty content" 错。thinking 三态配置已在请求端尽量阻止上游产生
+    // reasoning_content; 这里不再做兜底, 让上层拿到明确错误 (而不是
+    // 把"纯思考过程"误当作答案回退)。
+    mockFetch(200, 'application/json', JSON.stringify({
+      choices: [{
+        message: {
+          content: '',
+          reasoning_content: '{"memories":[{"content":"测试记忆","originUid":"NEW","importance":5,"type":"event"}]}'
+        },
+        finish_reason: 'stop'
+      }],
+      model: 'deepseek-v4-flash'
+    }))
+
+    const provider = new OpenAICompatibleProvider({
+      name: 'deepseek', apiKey: 'sk-test', model: 'deepseek-v4-flash'
+    })
+
+    await expect(provider.generateWithRuntime(
+      { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
+      {}
+    )).rejects.toThrow(/empty content.*finish_reason=stop/)
+  })
+
   it('still throws empty-content error when both content and reasoning_content are empty', async () => {
     // 回归测试: 两个字段都为空时, 仍然要抛诊断错误 (上游真正故障)。
-    // 不能因为加了 fallback 就吞掉所有 empty-content 情况。
     mockFetch(200, 'application/json', JSON.stringify({
       choices: [{
         message: { content: '', reasoning_content: '' },
@@ -263,71 +261,5 @@ describe('OpenAICompatibleProvider — non-JSON response diagnostics', () => {
       { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
       {}
     )).rejects.toThrow(/empty content.*finish_reason=stop/)
-  })
-
-  it('does NOT fall back to reasoning_content when too long (likely thinking trace, not answer)', async () => {
-    // DeepSeek V4-Flash thinking 模式常见: reasoning_content 写满 8KB+ 的
-    // 思考过程散文, 末尾没有 JSON 答案 (maxTokens=4096 不够"思考+答案")。
-    // 之前的兜底逻辑会整段回退 15KB 思考文本, 让 memory-optimizer 的
-    // `JSON.parse(cleanJsonBlock(...))` 抛错, 错误诊断被污染 (看起来像
-    // "AI 返回了非法 JSON", 实际是 "AI 没给答案, 给了一大段思考")。
-    //
-    // 修复后: reasoning_content 长度 > 4KB 视为 "纯思考过程", 直接抛
-    // empty content 错, 错误信息明确告诉用户 "likely pure thinking trace"。
-    const longThinkingTrace = 'I need to think carefully about this task. '.repeat(200) // ~9000 chars
-    mockFetch(200, 'application/json', JSON.stringify({
-      choices: [{
-        message: { content: '', reasoning_content: longThinkingTrace },
-        finish_reason: 'stop'
-      }],
-      model: 'deepseek-v4-flash'
-    }))
-
-    const provider = new OpenAICompatibleProvider({
-      name: 'deepseek', apiKey: 'sk-test', model: 'deepseek-v4-flash'
-    })
-
-    let caught: Error | null = null
-    try {
-      await provider.generateWithRuntime(
-        { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
-        {}
-      )
-    } catch (err: any) {
-      caught = err
-    }
-
-    expect(caught).not.toBeNull()
-    // 错误信息必须明确说 "reasoning_content too long" 让用户能区分
-    // 真正的 empty content vs thinking 模式未给答案。
-    expect(caught!.message).toMatch(/reasoning_content too long/)
-    expect(caught!.message).toContain('likely pure thinking trace')
-    // 错误应包含实际 reasoning 长度, 帮助用户判断是否触发了长度阈值
-    expect(caught!.message).toMatch(/chars/)
-  })
-
-  it('falls back to short reasoning_content (< 4KB) as direct answer', async () => {
-    // 短 reasoning_content (< 4KB) 仍按原行为兜底: 短小内容更可能是直接
-    // 答案 (某些 reasoning 模型把简短答案放进 reasoning_content)。
-    mockFetch(200, 'application/json', JSON.stringify({
-      choices: [{
-        message: {
-          content: '',
-          reasoning_content: '短思考: 答案 = "direct answer"'
-        },
-        finish_reason: 'stop'
-      }],
-      model: 'deepseek-v4-flash'
-    }))
-
-    const provider = new OpenAICompatibleProvider({
-      name: 'deepseek', apiKey: 'sk-test', model: 'deepseek-v4-flash'
-    })
-
-    const content = await provider.generateWithRuntime(
-      { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
-      {}
-    )
-    expect(content).toBe('短思考: 答案 = "direct answer"')
   })
 })

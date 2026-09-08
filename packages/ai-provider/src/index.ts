@@ -102,49 +102,13 @@ export class OpenAICompatibleProvider implements AIProvider {
   }
 
   /**
-   * 从 AI 响应里提取文本内容。DeepSeek V4-Flash 等 reasoning 模型把 JSON
-   * 输出放进 reasoning_content 字段、content 留空; 这里把 reasoning_content
-   * 作为 content 的兜底, 让上层不用关心上游模型是否启用了 thinking mode。
-   *
-   * 长度阈值 (REASONING_MAX_LENGTH_FOR_FALLBACK): reasoning_content 太长
-   * (>4KB) 大概率是 "思考过程" 而非 "答案" (典型 deepseek-v4-flash thinking
-   * 模式输出 8KB+ 思考), 此时整段回退会把 15KB 思考散文当成 JSON 喂给上层
-   * `JSON.parse(cleanJsonBlock(...))`, 必然失败污染错误诊断。直接抛错
-   * 让上游抛明确的 "reasoning_content too long" 诊断, 用户能在 UI 看到
-   * "解析失败" 并主动关闭 thinking mode 或换模型。短 reasoning (<4KB)
-   * 仍按原行为兜底 — 短小内容更可能是直接答案 (某些 reasoning 模型会把
-   * 简短答案放进 reasoning_content, content 留空)。
-   *
-   * 这条防御策略与请求端的 thinking 配置正交：thinking 配置尽量阻止上游
-   * 产生 reasoning_content；这里兜底在 thinking 关闭失败/上游未遵守时仍能
-   * 让上层拿到明确错误，而不是把"纯思考过程"误当作答案。
+   * 从 AI 响应里提取文本内容。thinking 三态配置 (auto/enabled/disabled)
+   * 在请求端尽量阻止上游产生 reasoning_content; 这里不再做 fallback,
+   * content 为空就返回 null, 让上层抛明确的 "empty content" 错 (而不是
+   * 把"纯思考过程"误当作答案回退)。
    */
-  private static readonly REASONING_MAX_LENGTH_FOR_FALLBACK = 4096
-
   private extractContent(choice: any): string | null {
-    const content = choice?.message?.content
-    if (content) return content
-    const reasoning = choice?.message?.reasoning_content
-    if (!reasoning) return null
-
-    if (reasoning.length > OpenAICompatibleProvider.REASONING_MAX_LENGTH_FOR_FALLBACK) {
-      // 抛错而不是 return null, 否则 generateWithRuntime 抛 "empty content"
-      // 通用错会覆盖这里的 "纯思考过程" 诊断。错误信息必须明确告诉用户
-      // "reasoning_content 太长疑似纯思考, 不是答案", 让用户在 UI 能区分
-      // 真正的 empty content vs thinking 模式未给答案。
-      throw new Error(
-        `${this.config.name} API returned empty content; reasoning_content too long ` +
-        `(${reasoning.length} chars, limit=${OpenAICompatibleProvider.REASONING_MAX_LENGTH_FOR_FALLBACK}) — ` +
-        `likely pure thinking trace, not answer. model=${this.config.model}. ` +
-        `Hint: disable thinking mode or use a non-reasoning model.`
-      )
-    }
-
-    console.warn(
-      `[${this.config.name}] content empty, fell back to reasoning_content ` +
-      `(model=${this.config.model} likely uses thinking mode)`
-    )
-    return reasoning
+    return choice?.message?.content || null
   }
 
   private async callCompletions(body: any): Promise<any> {
