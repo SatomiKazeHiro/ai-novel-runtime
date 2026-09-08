@@ -31,6 +31,12 @@
         <n-form-item label="重要度">
           <n-slider v-model:value="form.importance" :min="1" :max="10" />
         </n-form-item>
+        <n-form-item label="分类">
+          <n-select v-model:value="form.category" :options="categoryOptions" clearable placeholder="默认事件" />
+        </n-form-item>
+        <n-form-item label="参与者">
+          <n-input v-model:value="form.participants" placeholder="逗号分隔的参与者姓名，可留空" />
+        </n-form-item>
         <n-form-item v-if="form.layer === 'temporary'" label="关联章节">
           <n-select
             v-model:value="form.chapterId"
@@ -64,12 +70,20 @@ const layerOptions = [
   { value: 'temporary', label: '临时记忆' }
 ]
 
+const categoryOptions = [
+  { value: 'event_memory', label: '事件' },
+  { value: 'state', label: '状态' },
+  { value: 'relationship_change', label: '关系变化' },
+  { value: 'foreshadowing', label: '伏笔' },
+  { value: 'emotional_change', label: '情绪变化' }
+]
+
 const route = useRoute()
 const activeLayer = ref('global')
 const memories = ref<any[]>([])
 const loading = ref(false)
 const showModal = ref(false)
-const form = ref({ layer: 'global', content: '', importance: 5, chapterId: '' })
+const form = ref({ layer: 'global', content: '', importance: 5, chapterId: '', category: '', participants: '' })
 const chapters = ref<any[]>([])
 
 function categoryLabel(category: string): string {
@@ -117,7 +131,7 @@ async function handleCreate() {
   if (!route.params.storyId || !form.value.content) return
   await memoryApi.create(route.params.storyId as string, { ...form.value })
   showModal.value = false
-  form.value = { layer: activeLayer.value, content: '', importance: 5, chapterId: '' }
+  form.value = { layer: activeLayer.value, content: '', importance: 5, chapterId: '', category: '', participants: '' }
   await loadMemory()
 }
 
