@@ -72,8 +72,9 @@ model Chapter {
   compiledPrompt    String?  // JSON: { systemMessage, userMessage, meta }
 
   // 图谱相关
-  chapterGraph     String?  // JSON: 本章图谱（gacha 抽取，与累计全局图谱分离）
-  cumulativeGraph  String?  // JSON: 累计到本章的全局图谱（经 N-1 去重）
+  chapterGraph              String?  // JSON: 本章图谱（gacha 抽取，与累计全局图谱分离）
+  cumulativeGraph           String?  // JSON: 累计到本章的全局图谱（经 N-1 去重）
+  cumulativeGraphGeneratedAt DateTime?  // 用户首次主动生成累计图谱的时间；null = 未生成
 
   // 归档审查：AI 预提取后、用户确认前的中间数据
   pendingArchiveData String?
