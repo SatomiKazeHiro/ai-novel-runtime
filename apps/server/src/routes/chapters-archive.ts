@@ -258,13 +258,18 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
 
     // reviewing 期间 chapterGraph 数据只活在 pendingArchiveData.stages.graph.result.chapterGraph,
     // Chapter.chapterGraph 列保持 null, archive confirm 时再从 pendingArchiveData 拷过来。
-    await prisma.chapter.update({
-      where: { id: chapterId },
+    // 乐观锁：仅当章节仍处于 reviewing 时才写回。若期间被 cancel 改回 draft，则放弃写回，
+    // 不覆盖用户的撤销。
+    const writeBack = await prisma.chapter.updateMany({
+      where: { id: chapterId, status: 'reviewing' },
       data: {
         status: 'reviewing',
         pendingArchiveData: JSON.stringify(pendingData)
       }
     })
+    if (writeBack.count === 0) {
+      app.log.warn(`[PrepareArchive] chapter ${chapterId} cancelled during extraction, skip write-back`)
+    }
 
     return { success: true, data: pendingData }
   })
@@ -814,8 +819,10 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       // 接通 v3 CharacterBranchState 写库 (修 P0 遗留): character-stage 输出 → CharacterBranchState 表
       // isNew=true 时 commitCharacterBranchStateWrites 内部自动 tx.character.create 建 Character 行
       await commitCharacterBranchStateWrites(tx, chapter.storyId, chapter.number, resolvedCharacterStates)
-      await tx.chapter.update({
-        where: { id: chapterId },
+      // 乐观锁：仅当章节仍处于 reviewing 时才翻 archived。若期间被 cancel 改回 draft，
+      // updateMany count=0 → 抛错回滚整个事务（memory/plotArc/branchState 都不落库）。
+      const archived = await tx.chapter.updateMany({
+        where: { id: chapterId, status: 'reviewing' },
         data: {
           summary,
           status: 'archived',
@@ -827,6 +834,9 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
             : null
         }
       })
+      if (archived.count === 0) {
+        throw new Error('归档期间章节状态已变更（可能被取消），请刷新后重试')
+      }
     })
     app.log.info(
       { chapterId, storyId: chapter.storyId, chapterRows: chapterRows.length, sceneRows: sceneRows.length, globalRows: globalRows.length },

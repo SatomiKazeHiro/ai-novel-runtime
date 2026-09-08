@@ -101,7 +101,7 @@ function makeChapter(pendingArchiveData: string | null) {
 
 function makePrisma() {
   const tx: any = {
-    chapter: { update: vi.fn().mockResolvedValue({}) },
+    chapter: { update: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     character: { create: vi.fn().mockResolvedValue({ id: 'new-char-id' }) },
     memory: { create: vi.fn().mockResolvedValue({ id: 'mem-row' }) },
     characterBranchState: { create: vi.fn().mockResolvedValue({ id: 'cbs-row' }) },
@@ -257,8 +257,8 @@ describe('archive confirm v4 — strict 5-stage validation + split data sources'
     expect(existGlobal![0].data.originUid).toBe('U-EXIST')
     expect(existGlobal![0].data.category).toBe('state')
 
-    // 验证 tx.chapter.update: summary + status=archived + pendingArchiveData=null + chapterGraph + cumulativeGraph
-    const chapterUpdateCalls = mockPrisma.tx.chapter.update.mock.calls.filter(
+    // 验证 tx.chapter.updateMany（乐观锁）: summary + status=archived + pendingArchiveData=null + chapterGraph + cumulativeGraph
+    const chapterUpdateCalls = mockPrisma.tx.chapter.updateMany.mock.calls.filter(
       (c: any[]) => c[0]?.data?.status === 'archived'
     )
     expect(chapterUpdateCalls.length).toBeGreaterThan(0)

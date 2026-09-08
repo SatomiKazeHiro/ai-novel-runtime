@@ -81,7 +81,7 @@ function makePrisma() {
       findUnique: vi.fn(),
       findFirst: vi.fn().mockResolvedValue(null),
       update: vi.fn(),
-      updateMany: vi.fn()
+      updateMany: vi.fn().mockResolvedValue({ count: 1 })
     },
     character: { findMany: vi.fn().mockResolvedValue([]) },
     characterBranchState: { findMany: vi.fn().mockResolvedValue([]) },
@@ -123,7 +123,7 @@ describe('prepare-archive v4 — split memory into memoryExtract + memoryOptimiz
     expect(optimizeMemories).toHaveBeenCalled()
 
     // 解析最后一次 chapter.update 写入的 pendingArchiveData
-    const updateCalls = mockPrisma.chapter.update.mock.calls.filter(
+    const updateCalls = mockPrisma.chapter.updateMany.mock.calls.filter(
       (c: any[]) => c[0]?.data?.pendingArchiveData && c[0].data.pendingArchiveData !== null
     )
     expect(updateCalls.length).toBeGreaterThan(0)
@@ -162,7 +162,7 @@ describe('prepare-archive v4 — split memory into memoryExtract + memoryOptimiz
 
     // 整个 prepare-archive 不应 200/500 失败;应是 200 + 失败 stage 单独标记
     expect(result.status).toBeUndefined() // bare return, 不是 reply.send
-    const updateCalls = mockPrisma.chapter.update.mock.calls.filter(
+    const updateCalls = mockPrisma.chapter.updateMany.mock.calls.filter(
       (c: any[]) => c[0]?.data?.pendingArchiveData && c[0].data.pendingArchiveData !== null
     )
     expect(updateCalls.length).toBeGreaterThan(0)
@@ -203,7 +203,7 @@ describe('prepare-archive v4 — split memory into memoryExtract + memoryOptimiz
     // 关键: optimizer 完全不应被调用
     expect(optimizeMemories).not.toHaveBeenCalled()
 
-    const updateCalls = mockPrisma.chapter.update.mock.calls.filter(
+    const updateCalls = mockPrisma.chapter.updateMany.mock.calls.filter(
       (c: any[]) => c[0]?.data?.pendingArchiveData && c[0].data.pendingArchiveData !== null
     )
     expect(updateCalls.length).toBeGreaterThan(0)

@@ -67,14 +67,20 @@ export function createGenerateProcessor(app: FastifyInstance) {
         const fallbackChapter = { title: chapterTitle, outline: chapterOutline }
         const content = result ?? generateFallbackContent(fallbackChapter, i, '未配置 API Key')
 
-        await prisma.draft.update({
-          where: { id: draftId },
+        // 乐观锁：仅当 draft 仍处于 pending/generating 时才写 completed。
+        // 若 AI 调用期间被 select 置 rejected（用户已采用其他候选），count=0 → 放弃写回，不复活。
+        const updated = await prisma.draft.updateMany({
+          where: { id: draftId, status: { in: ['pending', 'generating'] } },
           data: {
             content,
             status: 'completed',
             compiledPrompt: JSON.stringify(compiled)
           }
         })
+        if (updated.count === 0) {
+          app.log.info(`[Generate] Draft ${draftId} was rejected during generation, skip completed write`)
+          continue
+        }
         successCount++
         app.log.info(`[Generate] Draft ${draftId} completed, ${content.length} chars`)
       } catch (err: any) {

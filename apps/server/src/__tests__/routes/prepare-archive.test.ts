@@ -67,7 +67,7 @@ function makePrisma() {
       findUnique: vi.fn(),
       findFirst: vi.fn().mockResolvedValue(null),
       update: vi.fn(),
-      updateMany: vi.fn().mockResolvedValue({ count: 0 })
+      updateMany: vi.fn().mockResolvedValue({ count: 1 })
     },
     character: { findMany: vi.fn().mockResolvedValue([]) },
     characterBranchState: { findMany: vi.fn().mockResolvedValue([]) },
@@ -114,8 +114,8 @@ describe('prepare-archive route — v3 status pre-check (no updateMany lock)', (
     expect(mockPrisma.chapter.updateMany).not.toHaveBeenCalled()
   })
 
-  it('does NOT use updateMany lock — even when starting from draft', async () => {
-    // v3 删除了 updateMany 作为锁的所有路径。
+  it('uses updateMany optimistic lock on final write-back (from draft)', async () => {
+    // v4: 最终写回用 updateMany 乐观锁（where status='reviewing'），防止覆盖 cancel。
     mockAllStagesSuccess()
     mockPrisma.chapter.findUnique.mockResolvedValue({
       ...baseChapter,
@@ -127,11 +127,13 @@ describe('prepare-archive route — v3 status pre-check (no updateMany lock)', (
       undefined, { chapterId: 'c1' }
     )
 
-    expect(mockPrisma.chapter.updateMany).not.toHaveBeenCalled()
+    expect(mockPrisma.chapter.updateMany).toHaveBeenCalledWith({
+      where: { id: 'c1', status: 'reviewing' },
+      data: expect.objectContaining({ status: 'reviewing', pendingArchiveData: expect.any(String) })
+    })
   })
 
-  it('does NOT use updateMany lock — even when re-preparing from reviewing', async () => {
-    // v3 re-prepare 路径也不再需要 updateMany 锁。
+  it('uses updateMany optimistic lock when re-preparing from reviewing', async () => {
     mockAllStagesSuccess()
     mockPrisma.chapter.findUnique.mockResolvedValue({
       ...baseChapter,
@@ -144,13 +146,14 @@ describe('prepare-archive route — v3 status pre-check (no updateMany lock)', (
       undefined, { chapterId: 'c1' }
     )
 
-    expect(mockPrisma.chapter.updateMany).not.toHaveBeenCalled()
+    expect(mockPrisma.chapter.updateMany).toHaveBeenCalledWith({
+      where: { id: 'c1', status: 'reviewing' },
+      data: expect.objectContaining({ status: 'reviewing', pendingArchiveData: expect.any(String) })
+    })
   })
 
-  it('clears stale pendingArchiveData via update (not updateMany) when re-preparing from reviewing', async () => {
-    // v3 re-prepare: status 预检通过, then 第一波 update 把 pendingArchiveData 清空。
-    // reviewing 期间 chapterGraph 列本身就不被写入, re-prepare 也无需清列。
-    // 清理用的是 chapter.update (无锁), 不是 updateMany 锁。
+  it('clears stale pendingArchiveData via update, then writes back via updateMany optimistic lock', async () => {
+    // re-prepare: 第一波 update 清 pendingArchiveData（无锁），最终写回用 updateMany 乐观锁。
     mockAllStagesSuccess()
     mockPrisma.chapter.findUnique.mockResolvedValue({
       ...baseChapter,
@@ -172,7 +175,8 @@ describe('prepare-archive route — v3 status pre-check (no updateMany lock)', (
     expect(clearCall).toBeDefined()
     expect(clearCall[0].data.status).toBe('reviewing')
 
-    const finalUpdateCall = [...mockPrisma.chapter.update.mock.calls].reverse().find(
+    // 最终写回走 updateMany 乐观锁
+    const finalUpdateCall = mockPrisma.chapter.updateMany.mock.calls.find(
       (call: any[]) =>
         call[0]?.where?.id === 'c1' &&
         typeof call[0]?.data?.pendingArchiveData === 'string'

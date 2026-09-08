@@ -110,7 +110,7 @@ describe('prepare-archive route — v3 no updateMany lock, status pre-check only
         findUnique: vi.fn(),
         findFirst: vi.fn().mockResolvedValue(null),
         update: vi.fn(),
-        updateMany: vi.fn()
+        updateMany: vi.fn().mockResolvedValue({ count: 1 })
       },
       character: { findMany: vi.fn().mockResolvedValue([]) },
       characterBranchState: { findMany: vi.fn().mockResolvedValue([]) },
@@ -198,8 +198,11 @@ describe('prepare-archive route — v3 no updateMany lock, status pre-check only
     expect(runMemoryStage).toHaveBeenCalledTimes(1)
     expect(runPlotArcStage).toHaveBeenCalledTimes(1)
     expect(runGraphExtractStage).toHaveBeenCalledTimes(1)
-    // v3 删除 updateMany 锁
-    expect(mockPrisma.chapter.updateMany).not.toHaveBeenCalled()
+    // v4 最终写回用 updateMany 乐观锁（where status='reviewing'）
+    expect(mockPrisma.chapter.updateMany).toHaveBeenCalledWith({
+      where: { id: 'c1', status: 'reviewing' },
+      data: expect.objectContaining({ status: 'reviewing', pendingArchiveData: expect.any(String) })
+    })
   })
 })
 
@@ -214,7 +217,7 @@ describe('archive route — v3 commit (single $transaction, no 409 lock)', () =>
         findUnique: vi.fn(),
         findFirst: vi.fn().mockResolvedValue(null),
         update: vi.fn(),
-        updateMany: vi.fn()
+        updateMany: vi.fn().mockResolvedValue({ count: 1 })
       },
       memory: { create: vi.fn() },
       // v3 archive confirm 在 $transaction 内调 commitPlotArcWrites → 需要 plotArc 模型
@@ -307,11 +310,9 @@ describe('archive route — v3 commit (single $transaction, no 409 lock)', () =>
     expect(result.body).toEqual(expect.objectContaining({ success: true }))
     // v4: archive 用单 $transaction 写 memory 三层 + chapter.update
     expect(mockPrisma.$transaction).toHaveBeenCalled()
-    // v4 全程无 updateMany 锁
-    expect(mockPrisma.chapter.updateMany).not.toHaveBeenCalled()
-    // archive 路径应至少一次 chapter.update (翻 status → archived)
-    expect(mockPrisma.chapter.update).toHaveBeenCalled()
-    const archiveUpdate = mockPrisma.chapter.update.mock.calls.find(
+    // v4 archive 事务内用 updateMany 乐观锁（where status='reviewing'）翻 archived
+    expect(mockPrisma.chapter.updateMany).toHaveBeenCalled()
+    const archiveUpdate = mockPrisma.chapter.updateMany.mock.calls.find(
       (c: any[]) => c[0]?.data?.status === 'archived'
     )
     expect(archiveUpdate).toBeDefined()

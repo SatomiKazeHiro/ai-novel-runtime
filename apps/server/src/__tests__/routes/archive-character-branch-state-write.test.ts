@@ -82,7 +82,8 @@ describe('archive v3 — CharacterBranchState 写库 (P0 修复)', () => {
     mockPrisma = {
       chapter: {
         findUnique: vi.fn(),
-        update: vi.fn()
+        update: vi.fn(),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 })
       },
       character: { findMany: vi.fn().mockResolvedValue([]), create: vi.fn().mockResolvedValue({ id: 'new-char-id' }) },
       characterBranchState: { create: vi.fn().mockResolvedValue({ id: 'cbs-1' }) },
@@ -121,7 +122,7 @@ describe('archive v3 — CharacterBranchState 写库 (P0 修复)', () => {
       })
     })
     // 章节翻 archived
-    expect(mockPrisma.chapter.update).toHaveBeenCalledWith(
+    expect(mockPrisma.chapter.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: 'archived' })
       })
@@ -152,7 +153,7 @@ describe('archive v3 — CharacterBranchState 写库 (P0 修复)', () => {
     expect(mockPrisma.character.create).toHaveBeenCalledTimes(1)
     expect(mockPrisma.characterBranchState.create).toHaveBeenCalledTimes(1)
     // 章节仍翻 archived
-    expect(mockPrisma.chapter.update).toHaveBeenCalledWith(
+    expect(mockPrisma.chapter.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: 'archived' })
       })
@@ -167,8 +168,8 @@ describe('archive v3 — CharacterBranchState 写库 (P0 修复)', () => {
     await expect(
       callHandler(routes, 'POST', '/api/chapters/:chapterId/archive', undefined, { chapterId: 'ch-1' })
     ).rejects.toThrow(/cbs.create failed/)
-    // 章节 status 没翻 archived (rollback 生效) — tx.chapter.update 在 commitCharacterBranchStateWrites 之后调用
-    const updateCalls = mockPrisma.chapter.update.mock.calls
+    // 章节 status 没翻 archived (rollback 生效) — tx.chapter.updateMany 在 commitCharacterBranchStateWrites 之后调用
+    const updateCalls = mockPrisma.chapter.updateMany.mock.calls
     const archivedUpdate = updateCalls.find((c: any[]) => c[0]?.data?.status === 'archived')
     expect(archivedUpdate).toBeUndefined()
   })
