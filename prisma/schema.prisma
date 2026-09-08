@@ -25,7 +25,6 @@ model Story {
   loreItems   LoreItem[]
   memories    Memory[]
   drafts      Draft[]
-  scores      Score[]
   plotArcs    PlotArc[]
   aiProviderConfigs AiProviderConfig[] @relation("AiProviderConfigStory")
   promptLogs       PromptLog[]
@@ -89,7 +88,6 @@ model Chapter {
   aiProviderConfig  AiProviderConfig? @relation("ChapterAiProvider", fields: [aiProviderConfigId], references: [id])
   drafts            Draft[]
   memories          Memory[]
-  scores            Score[]
 
   @@index([storyId, parentChapterId])
   @@index([storyId, status])
@@ -204,7 +202,6 @@ model Draft {
   content         String
   compiledPrompt  String?  // JSON: { systemMessage, userMessage }
   params          String   @default("{}") // JSON: { temperature, maxTokens, model, runtimeProfileId, callType, durationMs }
-  score           String?  // JSON: 评分结果
   status          String   @default("generating") // generating, completed, failed, rejected (v2: 不再有 'selected'——采纳哪个 draft 只看 Chapter.content 是否匹配)
   errorMessage    String?
   createdAt       DateTime @default(now())
@@ -300,28 +297,6 @@ model PlotArcProgressPoint {
 
   @@index([arcId, chapterNumber])
   @@index([chapterNumber])
-}
-
-// 评分记录
-model Score {
-  id                    String   @id @default(uuid())
-  storyId               String
-  chapterId             String
-  draftId               String?
-  styleSimilarity       Float?
-  outlineAdherence      Float?
-  sceneMatch            Float?
-  profileConsistency    Float?
-  proseQuality          Float?
-  emotionalTension      Float?
-  pacing                Float?
-  totalScore            Float?
-  comment               String?
-  details               String   @default("{}") // JSON
-  createdAt             DateTime @default(now())
-
-  story       Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-  chapter     Chapter  @relation(fields: [chapterId], references: [id], onDelete: Cascade)
 }
 
 // AI Provider 配置
