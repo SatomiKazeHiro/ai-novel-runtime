@@ -357,18 +357,20 @@ importance 评分标准（按事件本身在本章的相对重要性打分，与
 事件格式示例：
 {
   "description": "许青向姜禾解释现代社会的身份制度和法律危险",
-  "importance": 6
+  "importance": 6,
+  "participants": "许青,姜禾"
 }
 
 提取字段（v3 收缩后，本章只输出这些字段；characterStatusChanges / timelinePosition / timelineEvents 不再要求）：
-- mainEvents: 主要事件（对象数组，每个对象包含 description / importance）
+- mainEvents: 主要事件（对象数组，每个对象包含 description / importance / participants）
 - sideEvents: 次要事件（对象数组，格式同上）
 - emotions: 主要角色情绪变化（字符串数组）
 - foreshadowing: 新埋下的伏笔（字符串数组）
 - relationshipChanges: 角色关系变化（字符串数组）
 - summary: 本章一句话摘要（50字以内；写 Chapter.summary 列，不进 Memory 表）
-- scenes: 推动剧情的关键地点（对象数组，如 [{ "location": "名称", "description": "场景描写（可选）", "event": "在此发生的事件概括", "importance": 1-10 }]）
+- scenes: 推动剧情的关键地点（对象数组，如 [{ "location": "名称", "description": "场景描写（可选）", "event": "在此发生的事件概括", "importance": 1-10, "participants": "逗号分隔的参与者姓名" }]）
   场景 importance 标准：7-10 核心剧情地点，4-6 有一定事件，1-3 路人提及/无实质事件
+- participants: 逗号分隔的参与者姓名，有明确参与者时填、无则留空（新角色也直接填名字）
 
 === 返回格式 ===
 {

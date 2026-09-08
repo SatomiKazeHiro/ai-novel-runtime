@@ -26,12 +26,12 @@ export interface MemoryStageInput extends StageContext {
  *   - scenes 数组 → archive confirm 时写 layer='scene'
  */
 export interface MemoryStageResult {
-  mainEvents: Array<{ description: string; importance: number }>
-  sideEvents: Array<{ description: string; importance: number }>
+  mainEvents: Array<{ description: string; importance: number; participants?: string }>
+  sideEvents: Array<{ description: string; importance: number; participants?: string }>
   emotions: string[]
   foreshadowing: string[]
   relationshipChanges: string[]
-  scenes: Array<{ location: string; event: string; importance: number }>
+  scenes: Array<{ location: string; event: string; importance: number; participants?: string }>
   summary: string
 }
 
@@ -77,12 +77,18 @@ export async function runMemoryStage(
     const parsedRoot = JSON.parse(cleanJsonBlock(raw))
     const memBlob = parsedRoot?.memories ?? parsedRoot
     const result: MemoryStageResult = {
-      mainEvents: Array.isArray(memBlob?.mainEvents) ? memBlob.mainEvents : [],
-      sideEvents: Array.isArray(memBlob?.sideEvents) ? memBlob.sideEvents : [],
+      mainEvents: (Array.isArray(memBlob?.mainEvents) ? memBlob.mainEvents : []).map((e: any) => ({
+        description: e.description, importance: e.importance, participants: e.participants
+      })),
+      sideEvents: (Array.isArray(memBlob?.sideEvents) ? memBlob.sideEvents : []).map((e: any) => ({
+        description: e.description, importance: e.importance, participants: e.participants
+      })),
       emotions: Array.isArray(memBlob?.emotions) ? memBlob.emotions : [],
       foreshadowing: Array.isArray(memBlob?.foreshadowing) ? memBlob.foreshadowing : [],
       relationshipChanges: Array.isArray(memBlob?.relationshipChanges) ? memBlob.relationshipChanges : [],
-      scenes: Array.isArray(memBlob?.scenes) ? memBlob.scenes : [],
+      scenes: (Array.isArray(memBlob?.scenes) ? memBlob.scenes : []).map((s: any) => ({
+        location: s.location, event: s.event, importance: s.importance, participants: s.participants
+      })),
       summary: typeof memBlob?.summary === 'string' ? memBlob.summary : ''
     }
 
