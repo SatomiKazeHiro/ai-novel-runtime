@@ -4,18 +4,18 @@ import { safeJsonParse, safeJsonStringify } from '@novel-runtime/shared'
 
 export async function graphRoutes(app: FastifyInstance) {
   // GET /api/stories/:storyId/graph
-  // 返回最新归档章节的 graphSnapshot（B+ 全局大图）
+  // 返回最新归档章节的 cumulativeGraph（B+ 全局大图）
   app.get('/api/stories/:storyId/graph', async (request, reply) => {
     const { storyId } = request.params as any
     const lastArchived = await app.prisma.chapter.findFirst({
       where: { storyId, status: 'archived' },
       orderBy: { number: 'desc' },
-      select: { graphSnapshot: true }
+      select: { cumulativeGraph: true }
     })
-    if (!lastArchived || !lastArchived.graphSnapshot) {
+    if (!lastArchived || !lastArchived.cumulativeGraph) {
       return { success: true, data: { nodes: [], edges: [] } }
     }
-    const snapshot = safeJsonParse<{ nodes: any[]; edges: any[] } | null>(lastArchived.graphSnapshot, null)
+    const snapshot = safeJsonParse<{ nodes: any[]; edges: any[] } | null>(lastArchived.cumulativeGraph, null)
     if (!snapshot) {
       // Corrupted DB field — fall back to empty graph instead of 500.
       return { success: true, data: { nodes: [], edges: [] } }
@@ -33,11 +33,11 @@ export async function graphRoutes(app: FastifyInstance) {
     const { chapterId } = request.params as any
     const chapter = await app.prisma.chapter.findUnique({
       where: { id: chapterId },
-      select: { graphSnapshot: true, graphDelta: true, title: true, number: true, status: true }
+      select: { cumulativeGraph: true, chapterGraph: true, title: true, number: true, status: true }
     })
     if (!chapter) return reply.status(404).send({ success: false, error: 'Chapter not found' })
-    const snapshot = safeJsonParse(chapter.graphSnapshot, null)
-    const delta = safeJsonParse(chapter.graphDelta, null)
+    const snapshot = safeJsonParse(chapter.cumulativeGraph, null)
+    const delta = safeJsonParse(chapter.chapterGraph, null)
     return { success: true, data: { chapter: { title: chapter.title, number: chapter.number, status: chapter.status }, snapshot, delta } }
   })
 
@@ -61,14 +61,14 @@ export async function graphRoutes(app: FastifyInstance) {
       where: { storyId, status: 'archived' },
       orderBy: { number: 'desc' }
     })
-    const snapshot = safeJsonParse<Record<string, any> | null>(lastArchived?.graphSnapshot, null)
+    const snapshot = safeJsonParse<Record<string, any> | null>(lastArchived?.cumulativeGraph, null)
     if (snapshot && lastArchived) {
       const exists = snapshot.nodes?.some((n: any) => n.type === body.type && n.key === body.key)
       if (!exists) {
         snapshot.nodes.push({ type: body.type, key: body.key, label: body.label, data: body.data || {} })
         await app.prisma.chapter.update({
           where: { id: lastArchived.id },
-          data: { graphSnapshot: safeJsonStringify(snapshot) }
+          data: { cumulativeGraph: safeJsonStringify(snapshot) }
         })
       }
     }
@@ -96,7 +96,7 @@ export async function graphRoutes(app: FastifyInstance) {
       where: { storyId, status: 'archived' },
       orderBy: { number: 'desc' }
     })
-    const snapshot = safeJsonParse<Record<string, any> | null>(lastArchived?.graphSnapshot, null)
+    const snapshot = safeJsonParse<Record<string, any> | null>(lastArchived?.cumulativeGraph, null)
     if (snapshot && lastArchived) {
       const fromNode = await app.prisma.graphNode.findUnique({ where: { id: body.fromId } })
       const toNode = await app.prisma.graphNode.findUnique({ where: { id: body.toId } })
@@ -114,7 +114,7 @@ export async function graphRoutes(app: FastifyInstance) {
           })
           await app.prisma.chapter.update({
             where: { id: lastArchived.id },
-            data: { graphSnapshot: safeJsonStringify(snapshot) }
+            data: { cumulativeGraph: safeJsonStringify(snapshot) }
           })
         }
       }

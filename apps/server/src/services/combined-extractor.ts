@@ -309,20 +309,20 @@ export async function prepareArchiveData(
   if (parentChapterId) {
     const parent = await prisma.chapter.findUnique({
       where: { id: parentChapterId },
-      select: { graphSnapshot: true }
+      select: { cumulativeGraph: true }
     })
-    if (parent?.graphSnapshot) {
-      previousSnapshot = safeJsonParse(parent.graphSnapshot, null)
+    if (parent?.cumulativeGraph) {
+      previousSnapshot = safeJsonParse(parent.cumulativeGraph, null)
     }
   }
   if (!previousSnapshot) {
     const lastArchived = await prisma.chapter.findFirst({
       where: { storyId, status: 'archived', id: { not: chapterId } },
       orderBy: { number: 'desc' },
-      select: { graphSnapshot: true }
+      select: { cumulativeGraph: true }
     })
-    if (lastArchived?.graphSnapshot) {
-      previousSnapshot = safeJsonParse(lastArchived.graphSnapshot, null)
+    if (lastArchived?.cumulativeGraph) {
+      previousSnapshot = safeJsonParse(lastArchived.cumulativeGraph, null)
     }
   }
 

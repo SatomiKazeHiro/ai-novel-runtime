@@ -21,11 +21,11 @@ describe('graph route — JSON.parse resilience', () => {
     routes = built.routes
   })
 
-  it('returns empty graph when graphSnapshot is corrupted (not 500)', async () => {
+  it('returns empty graph when cumulativeGraph is corrupted (not 500)', async () => {
     // Corrupted string in DB — current code throws SyntaxError, fix should
     // fall back to empty graph via safeJsonParse.
     mockPrisma.chapter.findFirst.mockResolvedValue({
-      graphSnapshot: 'this is not json{{'
+      cumulativeGraph: 'this is not json{{'
     })
 
     const result = await callHandler(

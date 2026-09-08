@@ -200,9 +200,9 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
       where: { storyId: chapter.storyId, status: 'archived' },
       orderBy: { number: 'desc' }
     })
-    if (prevChapter?.graphSnapshot) {
+    if (prevChapter?.cumulativeGraph) {
       try {
-        const snapshot = safeJsonParse(prevChapter.graphSnapshot, null)
+        const snapshot = safeJsonParse(prevChapter.cumulativeGraph, null)
         if (snapshot) await rebuildGraphFromSnapshot(prisma, chapter.storyId, snapshot)
         app.log.info(`[Delete] Rebuilt graph from chapter ${prevChapter.number} snapshot`)
       } catch (err: any) {

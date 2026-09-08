@@ -23,9 +23,9 @@ export interface GraphSnapshot {
 }
 
 /**
- * 保存 graphSnapshot 和 graphDelta
- * graphSnapshot = B+ (AI 合并后的全局大图)
- * graphDelta = A (AI 整理后的本章范围图谱)
+ * 保存 cumulativeGraph 和 chapterGraph
+ * cumulativeGraph = B+ (AI 合并后的全局大图)
+ * chapterGraph = A (AI 整理后的本章范围图谱)
  */
 export async function saveGraphSnapshotAndDelta(
   prisma: any,
@@ -79,8 +79,8 @@ export async function saveGraphSnapshotAndDelta(
     await prisma.chapter.update({
       where: { id: chapterId },
       data: {
-        graphSnapshot: JSON.stringify(graphResult.mergedGraph),
-        graphDelta: JSON.stringify(graphResult.chapterGraph)
+        cumulativeGraph: JSON.stringify(graphResult.mergedGraph),
+        chapterGraph: JSON.stringify(graphResult.chapterGraph)
       }
     })
 

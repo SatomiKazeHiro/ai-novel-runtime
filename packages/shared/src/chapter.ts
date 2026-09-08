@@ -37,8 +37,8 @@ export const ChapterResponseSchema = z.object({
   aiProviderConfigId: z.string().nullable().optional(),
   pendingArchiveData: z.string().nullable().optional(),
   compiledPrompt: z.string().nullable().optional(),
-  graphSnapshot: z.string().nullable().optional(),
-  graphDelta: z.string().nullable().optional(),
+  cumulativeGraph: z.string().nullable().optional(),
+  chapterGraph: z.string().nullable().optional(),
   runtimeProfileId: z.string().nullable().optional(),
   createdAt: z.union([z.string(), z.date()]).optional(),
   updatedAt: z.union([z.string(), z.date()]).optional()

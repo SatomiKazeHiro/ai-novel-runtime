@@ -26,7 +26,7 @@ export interface ExtractPromptInput {
   /** 已有实体 type:key 列表 (来自 graphNode.findMany) */
   existingNodeKeys: string[]
 
-  /** N-1 全局图谱节点 (来自上一章 Chapter.graphSnapshot) */
+  /** N-1 全局图谱节点 (来自上一章 Chapter.cumulativeGraph) */
   previousSnapshotNodes: Array<{
     type: string
     key: string
