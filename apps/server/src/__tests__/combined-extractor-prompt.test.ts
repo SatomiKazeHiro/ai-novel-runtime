@@ -31,7 +31,10 @@ function buildPrisma() {
   return {
     character: { findMany: vi.fn().mockResolvedValue([]) },
     plotArc: { findMany: vi.fn().mockResolvedValue([]) },
-    graphNode: { findMany: vi.fn().mockResolvedValue([]) }
+    chapter: {
+      // v3: existingKeys reads latest archived chapter's cumulativeGraph.
+      findFirst: vi.fn().mockResolvedValue(null)
+    }
   }
 }
 

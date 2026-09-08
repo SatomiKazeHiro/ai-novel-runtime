@@ -110,8 +110,6 @@ export function createMockPrisma(overrides: Record<string, any> = {}) {
     loreItem: { findMany: vi.fn() },
     timelineEvent: { findMany: vi.fn() },
     plotArc: { findMany: vi.fn() },
-    graphNode: { findUnique: vi.fn(), create: vi.fn() },
-    graphEdge: { create: vi.fn() },
     memory: { findMany: vi.fn(), create: vi.fn() },
     characterBranchState: { findMany: vi.fn(), create: vi.fn() },
     $transaction: vi.fn((fn) => fn(overrides.tx || {})),

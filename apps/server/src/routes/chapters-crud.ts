@@ -220,14 +220,7 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
         const { count: logCount } = await prisma.promptLog.deleteMany({
           where: { storyId: chapter.storyId }
         })
-        // GraphNode/GraphEdge 已经在上面 else 分支清理，但如果走的是 rebuild 路径没清理，这里兜底
-        const { count: edgeCount } = await prisma.graphEdge.deleteMany({
-          where: { storyId: chapter.storyId }
-        })
-        const { count: nodeCount } = await prisma.graphNode.deleteMany({
-          where: { storyId: chapter.storyId }
-        })
-        app.log.info(`[Delete] Last chapter removed. Cleaned plotArc=${arcCount}, promptLog=${logCount}, graphNode=${nodeCount}, graphEdge=${edgeCount}`)
+        app.log.info(`[Delete] Last chapter removed. Cleaned plotArc=${arcCount}, promptLog=${logCount}`)
       } catch (err: any) {
         app.log.error(`[Delete] Final cleanup failed: ${err.message}`)
       }

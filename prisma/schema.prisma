@@ -24,8 +24,6 @@ model Story {
   characters  Character[]
   loreItems   LoreItem[]
   memories    Memory[]
-  graphNodes  GraphNode[]
-  graphEdges  GraphEdge[]
   timelineEvents TimelineEvent[]
   drafts      Draft[]
   scores      Score[]
@@ -171,43 +169,6 @@ model Memory {
   @@index([storyId, layer])
   @@index([storyId, fromChapterNumber])
   @@index([storyId, originUid])
-}
-
-// 知识图谱节点
-/// @deprecated v3 不写不读. v3 GraphView 已重写 (读 Chapter.cumulativeGraph JSON).
-/// 本表及 GraphEdge 计划在 v3 GraphView 稳定后删除 schema + 迁移.
-/// 详见 docs/superpowers/specs/2026-07-28-graph-code-quality-refactor-design.md.
-model GraphNode {
-  id              String   @id @default(uuid())
-  storyId         String
-  type            String   // character, faction, event, realm, item
-  key             String
-  label           String
-  data            String   @default("{}") // JSON
-  createdAt       DateTime @default(now())
-
-  story           Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-  edgesFrom       GraphEdge[] @relation("from")
-  edgesTo         GraphEdge[] @relation("to")
-
-  @@unique([storyId, type, key])
-}
-
-// 知识图谱边
-/// @deprecated v3 不写不读. 见 GraphNode 注释.
-/// 详见 docs/superpowers/specs/2026-07-28-graph-code-quality-refactor-design.md.
-model GraphEdge {
-  id              String   @id @default(uuid())
-  storyId         String
-  fromId          String
-  toId            String
-  relation        String
-  weight          Int      @default(1)
-  createdAt       DateTime @default(now())
-
-  story           Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-  fromNode        GraphNode @relation("from", fields: [fromId], references: [id], onDelete: Cascade)
-  toNode          GraphNode @relation("to", fields: [toId], references: [id], onDelete: Cascade)
 }
 
 // 时间线事件。**@deprecated** v3 删除。理由见 docs/DESIGN.md 决策日志。

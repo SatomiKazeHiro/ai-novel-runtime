@@ -127,17 +127,22 @@ export async function extractAll(
   })
   const protagonistNames = protagonists.map(p => p.name)
 
-  // 加载已有节点（用于去重提示）：角色节点全部保留 + 其他类型只保留最近100个
-  const [characterNodes, recentOtherNodes] = await Promise.all([
-    prisma.graphNode.findMany({ where: { storyId, type: 'character' } }),
-    prisma.graphNode.findMany({
-      where: { storyId, type: { not: 'character' } },
-      orderBy: { createdAt: 'desc' },
-      take: 100
-    })
-  ])
-  const combinedNodes = [...characterNodes, ...recentOtherNodes]
-  const existingKeys = new Set(combinedNodes.map(n => `${n.type}:${n.key}`))
+  // 加载已有节点（用于去重提示）：从 latest archived chapter 的 cumulativeGraph
+  // 读 — v3 唯一 source-of-truth。GraphNode 表已弃用。
+  // 按原"character 全部 + 其他取最近 100 个"语义切两组。
+  const latestArchived = await prisma.chapter.findFirst({
+    where: { storyId, status: 'archived', id: { not: chapterId } },
+    orderBy: { number: 'desc' },
+    select: { cumulativeGraph: true }
+  })
+  const prevSnapshotNodes: any[] = latestArchived?.cumulativeGraph
+    ? (safeJsonParse<GraphSnapshot | null>(latestArchived.cumulativeGraph, null)?.nodes || [])
+    : []
+  const characterNodes = prevSnapshotNodes.filter((n) => n.type === 'character')
+  const recentOtherNodes = prevSnapshotNodes
+    .filter((n) => n.type !== 'character')
+    .slice(-100) // cumulativeGraph 数组顺序 = 累计顺序；取末尾 100
+  const existingKeys = new Set(prevSnapshotNodes.map((n) => `${n.type}:${n.key}`))
 
   app.log.info(
     `[CombinedExtractor] Context injection: ${characterNodes.length} characters, ${recentOtherNodes.length} recent nodes`

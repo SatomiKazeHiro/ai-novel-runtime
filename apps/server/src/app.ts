@@ -15,7 +15,6 @@ import { timelineRoutes } from './routes/timeline.js'
 import { chapterRoutes } from './routes/chapters.js'
 import { promptLogRoutes } from './routes/prompt-logs.js'
 import { draftRoutes } from './routes/drafts.js'
-import { graphRoutes } from './routes/graph.js'
 import { memoryRoutes } from './routes/memories.js'
 import { scoreRoutes } from './routes/scores.js'
 import { runtimeProfileRoutes } from './routes/runtime-profile.js'
@@ -75,7 +74,6 @@ export async function buildApp() {
   await app.register(timelineRoutes)
   await app.register(chapterRoutes)
   await app.register(draftRoutes)
-  await app.register(graphRoutes)
   await app.register(memoryRoutes)
   await app.register(scoreRoutes)
   await app.register(runtimeProfileRoutes)

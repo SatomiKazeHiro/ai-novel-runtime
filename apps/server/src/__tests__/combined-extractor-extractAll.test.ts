@@ -31,8 +31,10 @@ function buildPrisma() {
     plotArc: {
       findMany: vi.fn().mockResolvedValue([])
     },
-    graphNode: {
-      findMany: vi.fn().mockResolvedValue([])
+    chapter: {
+      // v3: existingKeys reads latest archived chapter's cumulativeGraph.
+      // Default null = no archived chapter = empty existingKeys (matches v3 default).
+      findFirst: vi.fn().mockResolvedValue(null)
     }
   }
 }
