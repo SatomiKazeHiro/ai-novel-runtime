@@ -312,7 +312,77 @@ AI 调用失败时（`result` 为 null）的降级内容，**是 mock 章节文�
 - 4 个 composables 都有"全局 manager"模式（`new MemoryManager()` 等），每次调用 new 一次。功能上无状态，性能上略有浪费
 - `Graph.vue` 是少数用 `as any` 的前端文件（2 处）—— 用于 type any 的 graph 节点数据
 - `ai-provider.ts` 的 POST 路由可以创建/更新 `aiProviderConfig` 含 `apiKey`——但 GET 路由**不过滤** `apiKey` 字段（见 `ISSUES.md` 安全类）
-- schema 中 `Chapter` 的 5 个 `String?` JSON 字段（`compiledPrompt` / `graphDelta` / `graphSnapshot` / `pendingArchiveData` / 隐式的 `summary`）—— 任何一个损坏（DB 写入时序错 / 字符截断）都会让读取方 500
+- schema 中 `Chapter` 的 5 个 `String?` JSON 字段（`compiledPrompt` / `chapterGraph` / `cumulativeGraph`(v3 重命名) / `pendingArchiveData` / 隐式的 `summary`）—— 任何一个损坏（DB 写入时序错 / 字符截断）都会让读取方 500
+
+---
+
+## §6 · v3 Stage 边界（2026-07-25, branch `v3/prepare-archive-stages`）
+
+v3 把 `prepare-archive` 的提取阶段拆为 4 个独立 stage 服务。所有 stage 服务签一致（`runXxxStage(app, input): Promise<StageState<XxxStageResult>>`），由 `apps/server/src/routes/chapters-archive.ts` 的 prepare-archive 端点用 `Promise.all` 并行触发，每个 stage 的写入路径：
+
+```
+stage.run() → StageState<{status, result, errorMessage, completedAt}>
+             ↓
+        路由汇总
+             ↓
+   Chapter.pendingArchiveData = JSON.stringify({ version: 3, stages: { ... }, meta })
+```
+
+### Stage 边界
+
+每个 stage 服务只调 AI + 解析，不写 DB。路由层负责持久化。
+
+- **character-stage**: 仅输出 `characterStates`；锚定 `matchedCharacters`（路由层 pre-stage 文本匹配）
+- **memory-stage**: 输出 `mainEvents` / `sideEvents` / `scenes` / `summary` / `timelinePosition`；**不输出** `characterStatusChanges`（归属 character-stage）
+- **plot-arc-stage**: 输出 `plotArcs`（内部 `consolidatePlotArcs` 自己读章节 + existing arcs）
+- **graph-extract-stage**: 输出 `chapterGraph`（本章范围，**不与历史合并**）；累积去重在 archive 端点 `buildCumulativeGraph` 做
+
+Stage 输入里的 `characterNames` / `characterKeys` / `latestBranchStates` / `prevCumulativeGraphKeys` **全部由路由层独立查 DB** 提供，stage 之间不通信。
+
+### 失败隔离
+
+- 单 stage 失败：返回 `StageState.failed` + `errorMessage`，其他 stage 结果仍写入 `pendingArchiveData.stages[name]`
+- archive 端点预检：∀ `stages[*].status === 'success'` 才允许确认归档；否则 400 列出失败 stage 名
+- 失败 stage 用户可在 `ReviewingPanel` 点"重新解析（全部）"重试（v3 端点 v3 不提供 per-stage 重试，按整体 retry；未来可加）
+
+### Graph 两段式
+
+- `Chapter.chapterGraph` = `graph-extract-stage` 的本章产出（gacha，单次 AI 抽取）
+- `Chapter.cumulativeGraph` = `buildCumulativeGraph` 产出（archive 端点在事务前调，AI 调用不能在事务里）
+  - 空 chapterGraph → 继承 prev（不调 AI）
+  - 首章 / prev=null → chapterGraph 自身（不调 AI）
+  - 正常 → 2-hop BFS over prev 找与 chapterGraph 共享 `type:key` 的邻域 → AI dedup（小范围子图）→ code merge 进 prev
+
+### 锁移除
+
+v3 删除所有 `updateMany({where: {status: ...}})` 锁（v2 还在 `prepare-archive` / `archive` 两处用）。仅依赖 `ChapterStatus` 状态机自身（draft → reviewing → archived）+ UI 按钮 disabled 防双击。prepare-archive 预检在 `draft` / `reviewing` 都允许，重试时先清空 `pendingArchiveData` + `chapterGraph` 再并行触发 4 stage。
+
+## pendingArchiveData v3
+
+```typescript
+interface PendingArchiveDataV3 {
+  version: 3
+  stages: {
+    character: PendingStageState
+    memory: PendingStageState
+    plotArc: PendingStageState
+    graph: PendingStageState
+  }
+  meta: {
+    extractedAt: string
+    chapterNumber: number
+  }
+}
+
+interface PendingStageState {
+  status: 'pending' | 'running' | 'success' | 'failed'
+  result?: unknown
+  errorMessage?: string
+  completedAt?: string
+}
+```
+
+**老 v1/v2 blob 无 `version` 字段** → 前端检测为老 shape，提示用户"数据格式过旧，请重新准备归档"。`PendingArchiveDataV3Schema` 在 `packages/shared/src/archive.ts` 定义，前后端共用。archive 端点对 `pending.version !== 3` 一律 400。
 
 ---
 
