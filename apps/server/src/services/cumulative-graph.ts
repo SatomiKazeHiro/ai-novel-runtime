@@ -124,8 +124,6 @@ function parseRelationMapping(raw: any[]): Map<string, string> {
       if (typeof v !== 'string') continue
       map.set(`${from}|${v}|${to}`, canonical)
     }
-    // 兜底: 即使 variants 缺, from/to/canonical 自身也算一条
-    map.set(`${from}|${canonical}|${to}`, canonical)
   }
   return map
 }
