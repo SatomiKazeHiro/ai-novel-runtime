@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { randomBytes } from 'crypto'
 import { PrepareArchiveRequestSchema, safeJsonParse } from '@novel-runtime/shared'
-import type { PendingArchiveDataV3, PendingArchiveDataV4, PendingStageState } from '@novel-runtime/shared'
+import type { PendingArchiveDataV3, PendingArchiveDataV4, PendingStageState, RetryStageName } from '@novel-runtime/shared'
 import { parseBody, getOrThrowChapter } from './_helpers.js'
 import { runCharacterStage } from '../services/stages/character-stage.js'
 import { runMemoryStage } from '../services/stages/memory-stage.js'
@@ -284,19 +284,24 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
         error: `章节当前状态为 ${chapter.status}，只允许 reviewing 状态重跑 stage`
       })
     }
-    if (!['character', 'memory', 'plotArc', 'graph'].includes(stageName)) {
-      return reply.status(400).send({ success: false, error: `未知 stage: ${stageName}` })
+    // v4: 老 'memory' 已被拆成 memoryExtract / memoryOptimize,不在白名单里 → 400
+    const validStages: RetryStageName[] = ['character', 'memoryExtract', 'memoryOptimize', 'plotArc', 'graph']
+    if (!validStages.includes(stageName)) {
+      return reply.status(400).send({
+        success: false,
+        error: `未知 stage: ${stageName}。v4 支持: ${validStages.join(', ')}`
+      })
     }
     if (!chapter.content) {
       return reply.status(400).send({ success: false, error: '正文为空,无法重跑 stage' })
     }
 
     // 读已有 pendingArchiveData,只重写目标 stage
-    const existing = safeJsonParse<PendingArchiveDataV3 | null>(chapter.pendingArchiveData, null)
-    if (!existing || existing.version !== 3) {
+    const existing = safeJsonParse<PendingArchiveDataV4 | null>(chapter.pendingArchiveData, null)
+    if (!existing || existing.version !== 4) {
       return reply.status(400).send({
         success: false,
-        error: '当前章节 pendingArchiveData 缺失或不是 v3,无法单 stage 重跑(请用重新准备归档)'
+        error: '当前章节 pendingArchiveData 缺失或不是 v4,无法单 stage 重跑(请用重新准备归档)'
       })
     }
 
@@ -356,37 +361,93 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     }
 
     // 单 stage 执行
-    let newStage: any
+    let newStage: PendingStageState
     try {
       if (stageName === 'character') {
         newStage = await runCharacterStage(app, {
           storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
           chapterNumber: chapter.number, matchedCharacters
         })
-      } else if (stageName === 'memory') {
+      } else if (stageName === 'memoryExtract') {
         // memory-stage retry 也要补足跨章上下文; protagonistNames / existingNodeKeys / previousSnapshotNodes
         // 与 prepare-archive 路由用同一组数据源。
         const protagonistNames = matchedCharacters.filter((c: any) => c.protagonist).map((c: any) => c.name)
         const existingNodeKeys = prevCumulativeGraphNodes.map(n => `${n.type}:${n.key}`)
         const previousSnapshotNodes = prevCumulativeGraphNodes.map(n => ({ ...n }))
-        newStage = await runMemoryStage(app, {
+        const extractState: PendingStageState = await runMemoryStage(app, {
           storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
           chapterNumber: chapter.number,
           protagonistNames, characterNames,
           existingNodeKeys, previousSnapshotNodes
         })
-        // 跑完 memory-stage 后追加 optimizer,与 prepare-archive 行为一致
-        if (newStage.status === 'success' && newStage.result) {
+
+        // v4: extract 成功后自动续跑 optimizer,两 stage 一起写回(与 prepare-archive 行为一致)
+        let optimizeState: PendingStageState
+        if (extractState.status === 'success' && extractState.result) {
           try {
             const optimized = await optimizeMemories(
               app, chapter.storyId, chapterId,
-              newStage.result as any
+              extractState.result as Parameters<typeof optimizeMemories>[3]
             )
-            ;(newStage.result as any).memories = optimized
+            optimizeState = {
+              status: 'success',
+              result: { memories: optimized },
+              completedAt: new Date().toISOString()
+            }
           } catch (err: any) {
-            app.log.error(`[RetryStage:memory] optimizer failed: ${err.message}`)
-            newStage.status = 'failed'
-            newStage.errorMessage = `memory-optimizer: ${err.message}`
+            app.log.error(`[RetryStage:memoryExtract] optimizer failed: ${err.message}`)
+            optimizeState = {
+              status: 'failed',
+              errorMessage: err.message,
+              completedAt: new Date().toISOString()
+            }
+          }
+        } else {
+          optimizeState = {
+            status: 'failed',
+            errorMessage: 'memoryExtract 未成功,跳过 optimizer',
+            completedAt: new Date().toISOString()
+          }
+        }
+
+        const mergedPending: PendingArchiveDataV4 = {
+          ...existing,
+          stages: {
+            ...existing.stages,
+            memoryExtract: extractState,
+            memoryOptimize: optimizeState
+          }
+        }
+        await prisma.chapter.update({
+          where: { id: chapterId },
+          data: { pendingArchiveData: JSON.stringify(mergedPending) }
+        })
+        return { success: true, data: mergedPending }
+      } else if (stageName === 'memoryOptimize') {
+        // v4: 仅重跑 optimizer,复用已有 memoryExtract 结果(不重跑抽取)
+        const extractState = existing.stages.memoryExtract
+        if (extractState?.status !== 'success' || !extractState.result) {
+          return reply.status(400).send({
+            success: false,
+            error: 'memoryExtract 未成功,无法单独重跑 memoryOptimize(请先重跑 memoryExtract)'
+          })
+        }
+        try {
+          const optimized = await optimizeMemories(
+            app, chapter.storyId, chapterId,
+            extractState.result as Parameters<typeof optimizeMemories>[3]
+          )
+          newStage = {
+            status: 'success',
+            result: { memories: optimized },
+            completedAt: new Date().toISOString()
+          }
+        } catch (err: any) {
+          app.log.error(`[RetryStage:memoryOptimize] optimizer failed: ${err.message}`)
+          newStage = {
+            status: 'failed',
+            errorMessage: err.message,
+            completedAt: new Date().toISOString()
           }
         }
       } else if (stageName === 'plotArc') {
@@ -408,7 +469,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     }
 
     // 合并回 pendingArchiveData(只覆盖目标 stage,其他不动)
-    const updatedPending: PendingArchiveDataV3 = {
+    const updatedPending: PendingArchiveDataV4 = {
       ...existing,
       stages: {
         ...existing.stages,
