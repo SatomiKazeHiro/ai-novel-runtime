@@ -11,6 +11,8 @@ export interface MemoryEntry {
   createdAt?: Date
   chapterNumber?: number // 该记忆所属章节的序号
   originUid?: string     // 事件起始UID
+  category?: string
+  participants?: string
 }
 
 function tokenize(text: string): number[] {
@@ -169,7 +171,9 @@ export class MemoryManager {
           tags: safeJsonParse<string[]>(m.tags, []),
           createdAt: m.createdAt,
           chapterNumber: m.chapter?.number,
-          originUid: m.originUid
+          originUid: m.originUid,
+          category: m.category,
+          participants: m.participants
         } as MemoryEntry,
         score
       }
