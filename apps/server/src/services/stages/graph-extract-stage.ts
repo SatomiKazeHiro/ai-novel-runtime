@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
-import { cleanJsonBlock } from '@novel-runtime/shared'
+import { cleanJsonBlock, aliasKey, GRAPH_NODE_EDGES_ALIASES } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from '../runtime-loader.js'
 import { callAIWithStageRetry, type StageContext, type StageState } from './types.js'
 import type { GraphSnapshot } from '../graph-snapshot.js'
@@ -16,64 +16,40 @@ export interface GraphExtractStageResult {
 }
 
 /**
- * AI JSON 字段名短→长映射。prompt 用短名省 token, 代码内部仍用长名。
- * 取值时优先短名, fallback 长名 —— 老数据 / AI 偶尔写长名也接受。
- */
-const FIELD_ALIASES = {
-  nodes: 'n',
-  edges: 'e',
-  type: 't',
-  key: 'k',
-  label: 'l',
-  data: 'd',
-  fromType: 'ft',
-  fromKey: 'fk',
-  toType: 'tt',
-  toKey: 'tk',
-  relation: 'r'
-} as const
-
-function aliasKey<T = any>(obj: any, long: keyof typeof FIELD_ALIASES): T | undefined {
-  if (!obj || typeof obj !== 'object') return undefined
-  const short = FIELD_ALIASES[long]
-  return (obj[short] ?? obj[long]) as T | undefined
-}
-
-/**
  * 把 AI 返回的短名 JSON 归一化为内部结构（长名）。
  * 不读 importance —— 上一轮实验证明 AI 自评 -1 / 配角 > 主角 等范式不可靠，
  * 改由【主线事件合并 / 支线独立 / 角色优先】三原则让 AI 按剧情作用判定。
  */
 function normalizeGraph(parsed: any): { nodes: any[]; edges: any[] } {
-  const rawNodes = Array.isArray(aliasKey(parsed, 'nodes')) ? aliasKey<any[]>(parsed, 'nodes')! : []
-  const rawEdges = Array.isArray(aliasKey(parsed, 'edges')) ? aliasKey<any[]>(parsed, 'edges')! : []
+  const rawNodes = Array.isArray(aliasKey(parsed, GRAPH_NODE_EDGES_ALIASES, 'nodes')) ? aliasKey<any[]>(parsed, GRAPH_NODE_EDGES_ALIASES, 'nodes')! : []
+  const rawEdges = Array.isArray(aliasKey(parsed, GRAPH_NODE_EDGES_ALIASES, 'edges')) ? aliasKey<any[]>(parsed, GRAPH_NODE_EDGES_ALIASES, 'edges')! : []
 
   return {
     nodes: rawNodes
       .filter((n: any) => {
-        const t = aliasKey<string>(n, 'type')
-        const k = aliasKey<string>(n, 'key')
+        const t = aliasKey<string>(n, GRAPH_NODE_EDGES_ALIASES, 'type')
+        const k = aliasKey<string>(n, GRAPH_NODE_EDGES_ALIASES, 'key')
         return n && typeof n === 'object' && typeof t === 'string' && typeof k === 'string'
       })
       .map((n: any) => ({
-        type: aliasKey<string>(n, 'type')!,
-        key: aliasKey<string>(n, 'key')!,
+        type: aliasKey<string>(n, GRAPH_NODE_EDGES_ALIASES, 'type')!,
+        key: aliasKey<string>(n, GRAPH_NODE_EDGES_ALIASES, 'key')!,
         label: (() => {
-          const l = aliasKey<string>(n, 'label')
-          return typeof l === 'string' ? l : aliasKey<string>(n, 'key')!
+          const l = aliasKey<string>(n, GRAPH_NODE_EDGES_ALIASES, 'label')
+          return typeof l === 'string' ? l : aliasKey<string>(n, GRAPH_NODE_EDGES_ALIASES, 'key')!
         })(),
         data: (() => {
-          const d = aliasKey<Record<string, unknown>>(n, 'data')
+          const d = aliasKey<Record<string, unknown>>(n, GRAPH_NODE_EDGES_ALIASES, 'data')
           return d && typeof d === 'object' ? d : {}
         })()
       })),
     edges: rawEdges.map((e: any) => ({
-      fromType: aliasKey<string>(e, 'fromType'),
-      fromKey: aliasKey<string>(e, 'fromKey'),
-      toType: aliasKey<string>(e, 'toType'),
-      toKey: aliasKey<string>(e, 'toKey'),
+      fromType: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'fromType'),
+      fromKey: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'fromKey'),
+      toType: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'toType'),
+      toKey: aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'toKey'),
       relation: (() => {
-        const r = aliasKey<string>(e, 'relation')
+        const r = aliasKey<string>(e, GRAPH_NODE_EDGES_ALIASES, 'relation')
         return typeof r === 'string' ? r : ''
       })(),
       // extract 阶段永远是新增边, weight 由 cumulative-graph.ts codeMerge 累加
