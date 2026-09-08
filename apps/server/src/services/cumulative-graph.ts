@@ -173,18 +173,30 @@ function codeMerge(prev: GraphSnapshot, chapterGraph: GraphSnapshot, now: string
   for (const n of prev.nodes) nodeMap.set(`${n.type}:${n.key}`, { ...n, data: n.data || {} })
   for (const n of chapterGraph.nodes) nodeMap.set(`${n.type}:${n.key}`, { ...n, data: n.data || {} })
 
-  const seen = new Set<string>()
-  const edges: any[] = []
+  // 边 weight = 跨章节出现次数 (程序计数, 不让 AI 自评)
+  //   - 新边: weight = 1
+  //   - 合并命中: weight += 1 (chapterGraph 里 AI 的 weight 字段被忽略)
+  //   - 语义: weight=N 表示这条关系在 N 个章节被 AI 抽出过
+  //
+  // TODO(2026-07-28) 已知局限 — 命名漂移会让 weight 失真:
+  //   - relation 漂移: AI 第 1 章写"收留", 第 3 章写"帮助", 第 5 章写"扶持"
+  //     → 3 条不同边, weight 各 = 1, 实际是同一段关系
+  //   - key 漂移: 同理, "xu_qing" / "xq" 不归一也算两条不同节点
+  // 解决需要额外调一次 AI 做 relation / entity 归一化 (独立 scope).
+  const edgeMap = new Map<string, any>()
   for (const e of [...prev.edges, ...chapterGraph.edges]) {
     const k = `${e.fromType}:${e.fromKey}|${e.relation}|${e.toType}:${e.toKey}`
-    if (seen.has(k)) continue
-    seen.add(k)
-    edges.push({ ...e, weight: e.weight ?? 1 })
+    const existing = edgeMap.get(k)
+    if (existing) {
+      existing.weight += 1
+    } else {
+      edgeMap.set(k, { ...e, weight: 1 })
+    }
   }
 
   return {
     nodes: Array.from(nodeMap.values()),
-    edges,
+    edges: Array.from(edgeMap.values()),
     timestamp: now
   }
 }

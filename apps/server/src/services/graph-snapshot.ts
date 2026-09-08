@@ -5,6 +5,9 @@ export interface GraphNodeSnapshot {
   key: string
   label: string
   data: Record<string, any>
+  // TODO(2026-07-28): 加 weight 字段, 含义 = 在正文中出现的重要性（章节内出现次数 / 总篇幅占比）,
+  //   用于 cytoscape 节点大小映射。计数源: chapter content 中 label 出现次数, 不让 AI 自评。
+  //   当前未启用 —— 见 cumulative-graph.ts codeMerge 同日注释。
 }
 
 export interface GraphEdgeSnapshot {
