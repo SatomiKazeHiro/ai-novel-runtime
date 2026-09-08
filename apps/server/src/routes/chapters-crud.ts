@@ -194,25 +194,17 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
       }
     }
 
-    // 删除后重建图谱：用剩余最新章节的 snapshot 回退
-    const { rebuildGraphFromSnapshot } = await import('../services/graph-snapshot.js')
+    // v3 累计图谱以 Chapter.cumulativeGraph JSON 为唯一 source-of-truth,
+    // 不再重建 GraphNode/Edge 表 (两表已 deprecated, 见 prisma/schema.prisma)。
+    // 删章节只移除本章 Chapter 行, 下一章打开时仍读 prev Chapter.cumulativeGraph。
     const prevChapter = await prisma.chapter.findFirst({
       where: { storyId: chapter.storyId, status: 'archived' },
       orderBy: { number: 'desc' }
     })
-    if (prevChapter?.cumulativeGraph) {
-      try {
-        const snapshot = safeJsonParse(prevChapter.cumulativeGraph, null)
-        if (snapshot) await rebuildGraphFromSnapshot(prisma, chapter.storyId, snapshot)
-        app.log.info(`[Delete] Rebuilt graph from chapter ${prevChapter.number} snapshot`)
-      } catch (err: any) {
-        app.log.error(`[Delete] Graph rebuild failed: ${err.message}`)
-      }
-    } else {
-      await prisma.graphEdge.deleteMany({ where: { storyId: chapter.storyId } })
-      await prisma.graphNode.deleteMany({ where: { storyId: chapter.storyId } })
-      app.log.info(`[Delete] Cleared all graph data for story ${chapter.storyId}`)
-    }
+    app.log.info(
+      { storyId: chapter.storyId, deletedChapterNumber: chapter.number, prevChapterNumber: prevChapter?.number },
+      '[Delete] v3 累计图谱以 Chapter.cumulativeGraph JSON 为准, 不重建 GraphNode/Edge 表'
+    )
 
     await prisma.chapter.delete({ where: { id: chapterId } })
 
