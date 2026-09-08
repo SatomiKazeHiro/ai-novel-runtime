@@ -93,6 +93,12 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     const memoryManager = new MemoryManager()
     const queryText = `${chapter.outline || ''} ${chapter.sceneLocation || ''} ${chapter.sceneMood || ''} ${chapter.sceneGoal || ''}`
     const relevantMemories = await memoryManager.searchRelevant(storyId, queryText, prisma, 20, checkpointNumber)
+    // 本章 temporary 记忆：用户手动加、只本章生效
+    const temporaryMemories = await prisma.memory.findMany({
+      where: { storyId, layer: 'temporary', chapterId },
+      orderBy: { createdAt: 'asc' }
+    })
+    const temporaryText = temporaryMemories.map(m => `- [临时] ${m.content}`).join('\n')
 
     const base = await loadRuntimeBase(storyId, prisma)
     const task = await loadWorkerTask(storyId, 'generation', prisma)
@@ -109,7 +115,7 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
       character: formatCharacterSnapshot(charactersWithBranchState),
       lore: loreItems.map(l => `【${l.name}】${l.content}`).join('\n') || '无世界观设定信息',
       scene: `标题：${chapter.title || '未设定'}\n地点：${chapter.sceneLocation || '未设定'}\n氛围：${chapter.sceneMood || '未设定'}\n目标：${chapter.sceneGoal || '未设定'}`,
-      memory: memoryManager.formatForPrompt(relevantMemories),
+      memory: [memoryManager.formatForPrompt(relevantMemories), temporaryText].filter(Boolean).join('\n'),
       timeline: timelineEvents.map(t => `[${formatTimelinePosition(t.position)}] ${safeJsonParse<string[]>(t.events, []).join('；')}`).join('\n'),
       plotArc: plotArcText || undefined,
       output: `请根据以下大纲生成本章正文：\n\n${chapter.outline || '无大纲'}`
@@ -182,6 +188,12 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     const memoryManager = new MemoryManager()
     const queryText = `${chapter.outline || ''} ${chapter.sceneLocation || ''} ${chapter.sceneMood || ''} ${chapter.sceneGoal || ''}`
     const relevantMemories = await memoryManager.searchRelevant(storyId, queryText, prisma, 20, checkpointNumber)
+    // 本章 temporary 记忆：用户手动加、只本章生效
+    const temporaryMemories = await prisma.memory.findMany({
+      where: { storyId, layer: 'temporary', chapterId },
+      orderBy: { createdAt: 'asc' }
+    })
+    const temporaryText = temporaryMemories.map(m => `- [临时] ${m.content}`).join('\n')
 
     const base = await loadRuntimeBase(storyId, prisma)
     const task = await loadWorkerTask(storyId, 'generation', prisma)
@@ -213,7 +225,7 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
         character: formatCharacterSnapshot(charactersWithBranchState),
         lore: loreItems.map(l => `【${l.name}】${l.content}`).join('\n') || '无世界观设定信息',
         scene: `标题：${chapter.title || '未设定'}\n地点：${chapter.sceneLocation || '未设定'}\n氛围：${chapter.sceneMood || '未设定'}\n目标：${chapter.sceneGoal || '未设定'}`,
-        memory: memoryManager.formatForPrompt(relevantMemories),
+        memory: [memoryManager.formatForPrompt(relevantMemories), temporaryText].filter(Boolean).join('\n'),
         timeline: timelineEvents.map(t => `[${formatTimelinePosition(t.position)}] ${safeJsonParse<string[]>(t.events, []).join('；')}`).join('\n'),
         plotArc: plotArcText || undefined,
         output: `请根据以下大纲生成本章正文（约2000-4000字）：\n\n${chapter.outline || '无大纲'}`
