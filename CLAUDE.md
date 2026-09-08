@@ -66,6 +66,11 @@ Prisma generates the client to `node_modules/.prisma/client` at the repo root. A
 
 ### Chapter Lifecycle
 
+**Mental model (v2):**
+- Chapter = environment snapshot (大纲/正文/角色状态/时间线/知识图谱/剧情弧线 = 小说在某一点的快照)
+- Candidate generation = **抽卡 (gacha)**: 抽到的卡（`Draft`）是用户对"下一份快照长什么样"的几种可能;与章节是否在编辑无关——抽卡过程不消耗、不污染、不依赖章节状态
+- ChapterStatus = snapshot lifecycle (3 个值, 见下); DraftStatus = candidate lifecycle (6 个值, 独立于 ChapterStatus)
+
 The system is organized around a chapter state machine (`prisma/schema.prisma` → `enum ChapterStatus`) that drives the entire creative workflow. As of the **v2 refactor**, `ChapterStatus` is a **3-value enum** (`draft` / `reviewing` / `archived`); candidate generation lives entirely in `Draft.status` and is orthogonal to chapter state:
 
 ```

@@ -421,4 +421,8 @@ Max-width 1200px centered container, light theme throughout except one dark deve
 
 **How to apply**: 未来新增章节相关功能时，候选相关问题去 Draft 层查，章节业务流转查 `ChapterStatus`，两者不要混用。
 
+**下个 phase 候选 (v3 之前)**：
+- **拆分"归档中"工作流**：当前 `prepare-archive` 一路由串了 4 phase（extract → organize graph → human review → confirm），状态机层面已用 `reviewing` 收口但路由仍单点。v3 应把 4 phase 拆为独立 sub-route 或后台 job，让每步可独立 retry / observability。前端 ReviewingPanel 当前承担了"review" 阶段的 UI，下一步要把"extract / organize" 也搬到前端可见的进度条。
+- **如何开始**：当再次出现"某个 phase 失败要把整个 archive 流程回退"的报告时，就是 v3 的触发信号。
+
 实现细节：5 个 commit × 1 branch，spec 在 `docs/superpowers/specs/2026-07-24-v2-state-machine-design.md`，plan 在 `docs/superpowers/plans/2026-07-24-v2-state-machine.md`。
