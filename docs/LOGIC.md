@@ -190,17 +190,18 @@ if (!current || SKIP_STATUSES.includes(current.status)) continue
 | 1 提取 | `services/stages/{character,memory,plot-arc,graph-extract}-stage.ts` | `prepare-archive` | 4 次并行（每 stage 各 1 次） | **v3**：单 stage 失败落 `stages[name].status='failed'`，不影响其他 stage，章节仍进 `reviewing` |
 | 2 累计图谱 | `services/cumulative-graph.ts:buildCumulativeGraph` | `cumulative-graph/build`（用户点"生成累计图谱"） | 1 次 | 失败返回错误，可重试；成功写 `pendingArchiveData.cumulativeGraph` |
 | 2.5 人工审查 | `ReviewingPanel.vue` | `chaptersApi.update({ pendingArchiveData })`（用户点"保存调整"） | 0 次 | 用户编辑失败可重试 |
-| 3 落列 | `routes/chapters-archive.ts:archive` | `archive` | 0 次 | 校验失败返回 400，章节维持 `reviewing`；`prisma.$transaction` 内写 Memory 三层 + Chapter.summary + Chapter 三列 + 翻 status（CharacterBranchState / PlotArc 写入另文档） |
+| 3 落列 | `routes/chapters-archive.ts:archive` | `archive` | 0 次 | 校验失败返回 400，章节维持 `reviewing`；`prisma.$transaction` 内写 Memory 三层 + PlotArc (`commitPlotArcWrites`) + Chapter.summary + Chapter 三列 + 翻 status（CharacterBranchState 写入另文档） |
 | 4 优化 | `memory-optimizer.ts:optimizeMemories` | `prepare-archive` 阶段(4 stage 后) | memory-optimizer(无 caller 阶段已结束) | 详见 §v3 memory 集成 |
 
 > **v3 归档前置条件**: 累计图谱必须已生成（`Chapter.cumulativeGraphGeneratedAt != null`）。否则后端返回 400 `cumulative-graph-not-generated`，前端 ReviewingPanel 也会预先拦截。
 
 **阶段 3 当前实现**：`prisma.$transaction` 内依次写：
 1. `tx.memory.create` 每条 mainEvent / sideEvent / emotion / foreshadowing / relationshipChange 写入 `layer='chapter'`（mainEvent 多带 `'main-plot'` tag）；每条 scene 写 `layer='scene'`；每条 optimizer 融合记忆写 `layer='global'`（tag 加 `event` / `state`）。
-2. `tx.chapter.update({ summary })` 写 Chapter 摘要（不进 Memory 表）。
-3. `tx.chapter.update({ chapterGraph, cumulativeGraph, cumulativeGraphGeneratedAt, status: 'archived', pendingArchiveData: null })`。
+2. `tx.commitPlotArcWrites(chapter.number, pending.plotArcs)` 写 PlotArc 表（接 v3, 2026-07-30）：包含 consolidator 输出的 isNew / update / closed 写库、lastTouchedChapter 刷新、stale 自动检测、Jaccard 兜底（详见 `services/plot-extractor.ts` 与 `docs/superpowers/specs/2026-07-30-v3-plot-arc-write-design.md`）。
+3. `tx.chapter.update({ summary })` 写 Chapter 摘要（不进 Memory 表）。
+4. `tx.chapter.update({ chapterGraph, cumulativeGraph, cumulativeGraphGeneratedAt, status: 'archived', pendingArchiveData: null })`。
 
-CharacterBranchState / PlotArc 写入不在本端点（用户单独做）。`TimelineEvent` 在 v3 删除，不再写。
+CharacterBranchState 写入不在本端点（用户单独做）。`TimelineEvent` 在 v3 删除，不再写。
 
 **阶段 2.5 用户操作**：
 - "保存调整" → `chaptersApi.update({ pendingArchiveData: JSON.stringify(data) })`
