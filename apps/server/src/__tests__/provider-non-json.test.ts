@@ -264,4 +264,70 @@ describe('OpenAICompatibleProvider — non-JSON response diagnostics', () => {
       {}
     )).rejects.toThrow(/empty content.*finish_reason=stop/)
   })
+
+  it('does NOT fall back to reasoning_content when too long (likely thinking trace, not answer)', async () => {
+    // DeepSeek V4-Flash thinking 模式常见: reasoning_content 写满 8KB+ 的
+    // 思考过程散文, 末尾没有 JSON 答案 (maxTokens=4096 不够"思考+答案")。
+    // 之前的兜底逻辑会整段回退 15KB 思考文本, 让 memory-optimizer 的
+    // `JSON.parse(cleanJsonBlock(...))` 抛错, 错误诊断被污染 (看起来像
+    // "AI 返回了非法 JSON", 实际是 "AI 没给答案, 给了一大段思考")。
+    //
+    // 修复后: reasoning_content 长度 > 4KB 视为 "纯思考过程", 直接抛
+    // empty content 错, 错误信息明确告诉用户 "likely pure thinking trace"。
+    const longThinkingTrace = 'I need to think carefully about this task. '.repeat(200) // ~9000 chars
+    mockFetch(200, 'application/json', JSON.stringify({
+      choices: [{
+        message: { content: '', reasoning_content: longThinkingTrace },
+        finish_reason: 'stop'
+      }],
+      model: 'deepseek-v4-flash'
+    }))
+
+    const provider = new OpenAICompatibleProvider({
+      name: 'deepseek', apiKey: 'sk-test', model: 'deepseek-v4-flash'
+    })
+
+    let caught: Error | null = null
+    try {
+      await provider.generateWithRuntime(
+        { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
+        {}
+      )
+    } catch (err: any) {
+      caught = err
+    }
+
+    expect(caught).not.toBeNull()
+    // 错误信息必须明确说 "reasoning_content too long" 让用户能区分
+    // 真正的 empty content vs thinking 模式未给答案。
+    expect(caught!.message).toMatch(/reasoning_content too long/)
+    expect(caught!.message).toContain('likely pure thinking trace')
+    // 错误应包含实际 reasoning 长度, 帮助用户判断是否触发了长度阈值
+    expect(caught!.message).toMatch(/chars/)
+  })
+
+  it('falls back to short reasoning_content (< 4KB) as direct answer', async () => {
+    // 短 reasoning_content (< 4KB) 仍按原行为兜底: 短小内容更可能是直接
+    // 答案 (某些 reasoning 模型把简短答案放进 reasoning_content)。
+    mockFetch(200, 'application/json', JSON.stringify({
+      choices: [{
+        message: {
+          content: '',
+          reasoning_content: '短思考: 答案 = "direct answer"'
+        },
+        finish_reason: 'stop'
+      }],
+      model: 'deepseek-v4-flash'
+    }))
+
+    const provider = new OpenAICompatibleProvider({
+      name: 'deepseek', apiKey: 'sk-test', model: 'deepseek-v4-flash'
+    })
+
+    const content = await provider.generateWithRuntime(
+      { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
+      {}
+    )
+    expect(content).toBe('短思考: 答案 = "direct answer"')
+  })
 })
