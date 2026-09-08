@@ -45,7 +45,7 @@ describe('graph-extract-stage', () => {
     const state = await runGraphExtractStage(mockApp, {
       storyId: 's1', chapterId: 'c1', content: 'x', outline: '', chapterNumber: 1,
       characterNames: ['张三'],
-      prevCumulativeGraphKeys: [],
+      prevCumulativeGraphNodes: [],
       latestBranchStates: []
     })
 
@@ -59,7 +59,7 @@ describe('graph-extract-stage', () => {
 
     const state = await runGraphExtractStage(mockApp, {
       storyId: 's1', chapterId: 'c1', content: 'x', outline: '', chapterNumber: 1,
-      characterNames: [], prevCumulativeGraphKeys: [], latestBranchStates: []
+      characterNames: [], prevCumulativeGraphNodes: [], latestBranchStates: []
     })
 
     expect(state.status).toBe('failed')
@@ -70,7 +70,7 @@ describe('graph-extract-stage', () => {
 
     const state = await runGraphExtractStage(mockApp, {
       storyId: 's1', chapterId: 'c1', content: 'x', outline: '', chapterNumber: 1,
-      characterNames: [], prevCumulativeGraphKeys: [], latestBranchStates: []
+      characterNames: [], prevCumulativeGraphNodes: [], latestBranchStates: []
     })
 
     expect(state.status).toBe('success')

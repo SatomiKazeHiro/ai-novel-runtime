@@ -9,6 +9,19 @@ import { runGraphExtractStage } from '../services/stages/graph-extract-stage.js'
 import type { GraphSnapshot } from '../services/graph-snapshot.js'
 import { buildCumulativeGraphWithTimestamp, type BuildAndSaveResult } from '../services/stages/cumulative-graph-build-service.js'
 
+function extractGraphNodes(
+  raw: string | null | undefined
+): Array<{ type: string; key: string; label: string }> {
+  const parsed = safeJsonParse<{ nodes?: Array<{ type?: unknown; key?: unknown; label?: unknown }> } | null>(raw, null)
+  if (!parsed?.nodes) return []
+  return parsed.nodes.filter((n): n is { type: string; key: string; label: string } =>
+    typeof n?.type === 'string' &&
+    typeof n?.key === 'string' &&
+    typeof n?.label === 'string' &&
+    n.label.length > 0
+  )
+}
+
 /**
  * v3 archive 端点 — 3 端点:
  *   POST /api/chapters/:chapterId/prepare-archive              (启动)
@@ -103,19 +116,16 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     // 查 existing arcs (全部状态, consolidator 内部按 status 分流)
     const allExistingArcs = await prisma.plotArc.findMany({ where: { storyId: chapter.storyId } })
 
-    // 查 prev cumulativeGraph keys
-    let prevCumulativeGraphKeys: string[] = []
+    // 查 prev cumulativeGraph 节点 (含 label, 供 stage 按正文预过滤)
+    let prevCumulativeGraphNodes: Array<{ type: string; key: string; label: string }> = []
     if (chapter.parentChapterId) {
       const parent = await prisma.chapter.findUnique({
         where: { id: chapter.parentChapterId },
         select: { cumulativeGraph: true }
       })
-      if (parent?.cumulativeGraph) {
-        const parsed = safeJsonParse<{ nodes?: Array<{ type: string; key: string }> } | null>(parent.cumulativeGraph, null)
-        if (parsed?.nodes) prevCumulativeGraphKeys = parsed.nodes.map(n => `${n.type}:${n.key}`)
-      }
+      prevCumulativeGraphNodes = extractGraphNodes(parent?.cumulativeGraph)
     }
-    if (prevCumulativeGraphKeys.length === 0) {
+    if (prevCumulativeGraphNodes.length === 0) {
       // 主线回退: 找前一个 number 的章节
       const prev = await prisma.chapter.findFirst({
         where: {
@@ -126,10 +136,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
         },
         select: { cumulativeGraph: true }
       })
-      if (prev?.cumulativeGraph) {
-        const parsed = safeJsonParse<{ nodes?: Array<{ type: string; key: string }> } | null>(prev.cumulativeGraph, null)
-        if (parsed?.nodes) prevCumulativeGraphKeys = parsed.nodes.map(n => `${n.type}:${n.key}`)
-      }
+      prevCumulativeGraphNodes = extractGraphNodes(prev?.cumulativeGraph)
     }
 
     // 4 stage 并行
@@ -149,7 +156,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       }),
       runGraphExtractStage(app, {
         storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
-        chapterNumber: chapter.number, characterNames, prevCumulativeGraphKeys,
+        chapterNumber: chapter.number, characterNames, prevCumulativeGraphNodes,
         latestBranchStates: dedupedBranchStates
       })
     ])
@@ -270,18 +277,15 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
 
     const allExistingArcs = await prisma.plotArc.findMany({ where: { storyId: chapter.storyId } })
 
-    let prevCumulativeGraphKeys: string[] = []
+    let prevCumulativeGraphNodes: Array<{ type: string; key: string; label: string }> = []
     if (chapter.parentChapterId) {
       const parent = await prisma.chapter.findUnique({
         where: { id: chapter.parentChapterId },
         select: { cumulativeGraph: true }
       })
-      if (parent?.cumulativeGraph) {
-        const parsed = safeJsonParse<{ nodes?: Array<{ type: string; key: string }> } | null>(parent.cumulativeGraph, null)
-        if (parsed?.nodes) prevCumulativeGraphKeys = parsed.nodes.map(n => `${n.type}:${n.key}`)
-      }
+      prevCumulativeGraphNodes = extractGraphNodes(parent?.cumulativeGraph)
     }
-    if (prevCumulativeGraphKeys.length === 0) {
+    if (prevCumulativeGraphNodes.length === 0) {
       const prev = await prisma.chapter.findFirst({
         where: {
           storyId: chapter.storyId,
@@ -291,10 +295,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
         },
         select: { cumulativeGraph: true }
       })
-      if (prev?.cumulativeGraph) {
-        const parsed = safeJsonParse<{ nodes?: Array<{ type: string; key: string }> } | null>(prev.cumulativeGraph, null)
-        if (parsed?.nodes) prevCumulativeGraphKeys = parsed.nodes.map(n => `${n.type}:${n.key}`)
-      }
+      prevCumulativeGraphNodes = extractGraphNodes(prev?.cumulativeGraph)
     }
 
     // 单 stage 执行
@@ -319,7 +320,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       } else {
         newStage = await runGraphExtractStage(app, {
           storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
-          chapterNumber: chapter.number, characterNames, prevCumulativeGraphKeys,
+          chapterNumber: chapter.number, characterNames, prevCumulativeGraphNodes,
           latestBranchStates: dedupedBranchStates
         })
       }
