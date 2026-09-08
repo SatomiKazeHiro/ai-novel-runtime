@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { randomBytes } from 'crypto'
 import { PrepareArchiveRequestSchema, safeJsonParse } from '@novel-runtime/shared'
-import type { PendingArchiveDataV3 } from '@novel-runtime/shared'
+import type { PendingArchiveDataV3, PendingArchiveDataV4, PendingStageState } from '@novel-runtime/shared'
 import { parseBody, getOrThrowChapter } from './_helpers.js'
 import { runCharacterStage } from '../services/stages/character-stage.js'
 import { runMemoryStage } from '../services/stages/memory-stage.js'
@@ -156,8 +156,9 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     // prevCumulativeGraphNodes 不带 importance; 重要度统一视为 0,全量进 prompt 由 cap 截断
     const previousSnapshotNodes = prevCumulativeGraphNodes.map(n => ({ ...n }))
 
-    // 4 stage 并行
-    const [characterState, memoryState, plotArcState, graphState] = await Promise.all([
+    // 5 stage 并行: 4 个独立 stage + memoryExtract(原 memory stage 去 optimizer)
+    // memoryOptimize 串行跑 (依赖 memoryExtract success)
+    const [characterState, memoryExtractState, plotArcState, graphState] = await Promise.all([
       runCharacterStage(app, {
         storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
         chapterNumber: chapter.number, matchedCharacters
@@ -180,32 +181,52 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       })
     ])
 
-    // 1.5. Optimize memory(v3 spec D7):
-    //   memory-stage success 时, 跑 optimizer, 把融合结果覆盖到 stages.memory.result.memories。
-    //   optimizer 失败时该 stage 标记 failed, 不影响 graph / character / plot-arc。
-    //   备注: '未来探讨是否可以优化' — 失败时是否回退到 raw result 让用户 review? 暂不实现, 直接标记 failed。
-    if (memoryState.status === 'success' && memoryState.result) {
+    // 1.5. memoryOptimize (v4 拆分): 仅当 memoryExtract success 时跑 optimizer 融合
+    // 失败时该 stage 独立标记 failed,不影响其他 4 stage,也不会浪费 raw 抽取结果。
+    // v3 注释: '未来探讨是否可以优化' — 失败时是否回退到 raw result 让用户 review? 暂不实现, 直接标记 failed。
+    let memoryOptimizeState: PendingStageState = {
+      status: 'pending',
+      completedAt: new Date().toISOString()
+    }
+    if (memoryExtractState.status === 'success' && memoryExtractState.result) {
       try {
+        // memoryExtractState.result 是 MemoryStageResult (来自 runMemoryStage),
+        // optimizer 接受 MemoryStageRawResult(结构兼容)。无需 as any。
         const optimized = await optimizeMemories(
           app, chapter.storyId, chapterId,
-          memoryState.result as any
+          memoryExtractState.result
         )
-        ;(memoryState.result as any).memories = optimized
+        memoryOptimizeState = {
+          status: 'success',
+          result: { memories: optimized },
+          completedAt: new Date().toISOString()
+        }
         app.log.info(
           `[PrepareArchive] optimizer: ${optimized.length} global memories for chapter ${chapter.number}`
         )
       } catch (err: any) {
         app.log.error(`[PrepareArchive] memory-optimizer failed: ${err.message}`)
-        memoryState.status = 'failed'
-        memoryState.errorMessage = `memory-optimizer: ${err.message}`
+        memoryOptimizeState = {
+          status: 'failed',
+          errorMessage: err.message,
+          completedAt: new Date().toISOString()
+        }
+      }
+    } else {
+      // memoryExtract failed → optimizer 不跑,标记 failed + 明确原因
+      memoryOptimizeState = {
+        status: 'failed',
+        errorMessage: 'memoryExtract 未成功,跳过 optimizer',
+        completedAt: new Date().toISOString()
       }
     }
 
-    const pendingData: PendingArchiveDataV3 = {
-      version: 3,
+    const pendingData: PendingArchiveDataV4 = {
+      version: 4,
       stages: {
         character: characterState,
-        memory: memoryState,
+        memoryExtract: memoryExtractState,
+        memoryOptimize: memoryOptimizeState,
         plotArc: plotArcState,
         graph: graphState
       },
