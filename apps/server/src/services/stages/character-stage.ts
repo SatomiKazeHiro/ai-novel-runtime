@@ -26,6 +26,7 @@ export interface CharacterStateRow {
   // 边界统一 JSON.stringify, 这里类型放宽以匹配实际数据, 避免类型断言失真。
   status: string | object
   relationships: string | object
+  costume?: string
   isNew: boolean
 }
 
@@ -59,6 +60,7 @@ ${matchedList || '（空）'}
       "key": "<graph key，已有角色复用已有 key，新角色用拼音小写下划线>",
       "status": {"rank":"练气","location":"楼道","realm":"凡人"},
       "relationships": {"<其他角色名>": "<关系>"},
+      "costume": "<本章节结束时的衣着/服饰描述；未描写或无变化则留空字符串>",
       "isNew": <true / false>
     }
   ]
@@ -86,7 +88,15 @@ CharacterBranchState 表时会统一 JSON.stringify 存储。
 
     const parsed = JSON.parse(cleanJsonBlock(raw))
     const result: CharacterStageResult = {
-      characterStates: Array.isArray(parsed.characterStates) ? parsed.characterStates : []
+      characterStates: (Array.isArray(parsed.characterStates) ? parsed.characterStates : []).map((s: any) => ({
+        characterId: s.characterId ?? null,
+        name: s.name,
+        key: s.key,
+        status: s.status ?? {},
+        relationships: s.relationships ?? {},
+        costume: typeof s.costume === 'string' ? s.costume : '',
+        isNew: s.isNew === true
+      }))
     }
 
     return { status: 'success', result, completedAt }
