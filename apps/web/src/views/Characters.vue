@@ -177,10 +177,10 @@
       </n-form>
         <aside v-if="editingHasSnapshot && editingCharacter" class="character-edit-snapshot">
           <div class="character-edit-snapshot__bar">
-            <span class="character-edit-snapshot__hint">章节快照由归档 AI 分析生成；手动修改由你负责。</span>
-            <n-button v-if="!snapshotEditing" size="tiny" @click="startSnapshotEdit">编辑快照</n-button>
+            <span class="character-edit-snapshot__hint">章节快照由归档 AI 分析生成。</span>
+            <n-button v-if="!snapshotEditing" size="tiny" :disabled="snapshotLoading || snapshotChapterEmpty" @click="startSnapshotEdit">编辑快照</n-button>
             <n-space v-else size="small">
-              <n-button size="tiny" type="primary" @click="saveSnapshot">保存快照</n-button>
+              <n-button size="tiny" type="primary" :loading="snapshotSaving" @click="saveSnapshot">保存快照</n-button>
               <n-button size="tiny" @click="cancelSnapshotEdit">取消编辑</n-button>
             </n-space>
           </div>
@@ -207,6 +207,7 @@
             <div class="character-edit-snapshot__row"><strong>关系</strong><span>{{ formatObject(snapshotCharacter?.relationships?.value) || '未提取' }}</span></div>
             <div class="character-edit-snapshot__row"><strong>状态</strong><span>{{ formatObject(snapshotCharacter?.status?.value) || '未提取' }}</span></div>
             <div class="character-edit-snapshot__row"><strong>衣着</strong><span>{{ snapshotCharacter?.costume?.value || '未提取' }}</span></div>
+            <n-text v-if="snapshotChapterEmpty && !snapshotLoading" depth="3">该章无此角色的快照，无法编辑。</n-text>
             <span class="char-card__source is-snapshot">归档快照</span>
           </template>
         </aside>
@@ -226,7 +227,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NSpace, NButton, NModal, NForm, NFormItem, NInput, NCheckbox,
-  NSelect, NAlert, NSpin, NEmpty, NDivider, useDialog, useMessage
+  NSelect, NAlert, NSpin, NEmpty, NDivider, NText, useDialog, useMessage
 } from 'naive-ui'
 import { charactersApi, type CharacterDisplayRow } from '../api/characters'
 /**
@@ -358,6 +359,10 @@ function resetForm() {
 }
 
 function openCreate() {
+  // 快照编辑态为会话级 UI 状态,开弹窗即重置,避免上一角色残留编辑态污染新会话
+  snapshotEditing.value = false
+  snapshotForm.value = { relationshipsText: '{}', statusText: '{}', costume: '' }
+  snapshotSaving.value = false
   isEdit.value = false
   editId.value = ''
   editingCharacter.value = null
@@ -368,6 +373,10 @@ function openCreate() {
 }
 
 function openEdit(row: CharacterDisplayRow) {
+  // 快照编辑态为会话级 UI 状态,开弹窗即重置,避免上一角色残留编辑态污染新会话
+  snapshotEditing.value = false
+  snapshotForm.value = { relationshipsText: '{}', statusText: '{}', costume: '' }
+  snapshotSaving.value = false
   isEdit.value = true
   editId.value = row.id
   editingCharacter.value = row
@@ -441,7 +450,14 @@ watch(viewChapter, () => {
 
 // ========== 快照编辑 (v4 快照纠错) ==========
 const snapshotEditing = ref(false)
+const snapshotSaving = ref(false)
+const snapshotLoading = ref(false)
 const snapshotForm = ref({ relationshipsText: '{}', statusText: '{}', costume: '' })
+/** 当前选中章无该角色快照(三个字段均缺失) → 编辑死胡同,禁用编辑入口 */
+const snapshotChapterEmpty = computed(() => {
+  const s = snapshotCharacter.value
+  return !s?.relationships && !s?.status && !s?.costume
+})
 
 function startSnapshotEdit() {
   if (!snapshotCharacter.value) return
@@ -458,7 +474,14 @@ function cancelSnapshotEdit() {
 }
 
 async function saveSnapshot() {
-  if (!editingCharacter.value || snapshotChapter.value === null || !route.params.storyId) return
+  if (!editingCharacter.value || snapshotChapter.value === null || !route.params.storyId) {
+    if (snapshotChapter.value === null) message.error('请先选择快照章节')
+    return
+  }
+  // 保存前捕获身份快照,await 之后据此判断会话是否已被用户切换
+  const charId = editingCharacter.value.id
+  const chapter = snapshotChapter.value
+  const storyId = route.params.storyId as string
   let status: Record<string, any>
   let relationships: Record<string, any>
   try {
@@ -468,29 +491,37 @@ async function saveSnapshot() {
     message.error(`快照 JSON 不合法: ${err.message || err}`)
     return
   }
+  snapshotSaving.value = true
   try {
-    await charactersApi.updateSnapshot(
-      route.params.storyId as string,
-      editingCharacter.value.id,
-      snapshotChapter.value,
-      { status, relationships, costume: snapshotForm.value.costume }
-    )
+    await charactersApi.updateSnapshot(storyId, charId, chapter, { status, relationships, costume: snapshotForm.value.costume })
   } catch (err: any) {
     message.error(err?.response?.data?.error || '快照更新失败')
     return
+  } finally {
+    snapshotSaving.value = false
   }
   message.success('快照已更新')
+  // 保存期间弹窗被关/换角色 → 不再写共享 ref,避免污染新会话
+  if (editingCharacter.value?.id !== charId || !showModal.value) return
   snapshotEditing.value = false
-  // 重新拉取该章快照 + 刷新列表
-  const res = await charactersApi.getSnapshot(route.params.storyId as string, editingCharacter.value.id, snapshotChapter.value)
-  snapshotCharacter.value = res.data.data ?? null
+  try {
+    const res = await charactersApi.getSnapshot(storyId, charId, chapter)
+    if (editingCharacter.value?.id === charId) snapshotCharacter.value = res.data.data ?? null
+  } catch {
+    message.error('快照已更新，但刷新失败，请重试')
+  }
   await loadCharacters()
 }
 
 watch(snapshotChapter, async (chapter) => {
   if (!editingHasSnapshot.value || !editingCharacter.value || chapter === null || !route.params.storyId) return
-  const res = await charactersApi.getSnapshot(route.params.storyId as string, editingCharacter.value.id, chapter)
-  snapshotCharacter.value = res.data.data ?? null
+  snapshotLoading.value = true
+  try {
+    const res = await charactersApi.getSnapshot(route.params.storyId as string, editingCharacter.value.id, chapter)
+    snapshotCharacter.value = res.data.data ?? null
+  } finally {
+    snapshotLoading.value = false
+  }
 })
 
 watch(() => route.params.storyId, () => {
