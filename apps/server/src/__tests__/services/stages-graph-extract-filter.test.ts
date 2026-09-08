@@ -72,7 +72,7 @@ describe('graph-extract-stage filter (importance >= 8, type whitelist)', () => {
     expect(state.result?.chapterGraph.nodes).toHaveLength(1)
   })
 
-  it('falls back non-whitelisted relation to 关联', async () => {
+  it('drops edges with non-whitelisted relation (no 关联 fallback)', async () => {
     const ai = {
       nodes: [
         { type: 'character', key: 'zhangsan', label: '张三', importance: 8 },
@@ -80,14 +80,15 @@ describe('graph-extract-stage filter (importance >= 8, type whitelist)', () => {
       ],
       edges: [
         { fromType: 'character', fromKey: 'zhangsan', toType: 'character', toKey: 'lisi', relation: '隶属', weight: 1 },   // 保留
-        { fromType: 'character', fromKey: 'lisi',     toType: 'character', toKey: 'zhangsan', relation: '暧昧', weight: 1 } // → 关联
+        { fromType: 'character', fromKey: 'lisi',     toType: 'character', toKey: 'zhangsan', relation: '暧昧', weight: 1 }, // 丢
+        { fromType: 'character', fromKey: 'zhangsan', toType: 'character', toKey: 'lisi', relation: '关联', weight: 1 }   // 丢
       ]
     }
     ;(callAIWithLog as any).mockResolvedValueOnce(JSON.stringify(ai))
 
     const state = await runGraphExtractStage(mockApp, baseInput)
-    const rels = state.result?.chapterGraph.edges.map((e: any) => e.relation).sort()
-    expect(rels).toEqual(['关联', '隶属'])
+    const rels = state.result?.chapterGraph.edges.map((e: any) => e.relation)
+    expect(rels).toEqual(['隶属'])
   })
 
   it('drops orphan edges whose endpoints are missing from nodes', async () => {
