@@ -30,34 +30,21 @@ export async function runGraphExtractStage(
     ? input.prevCumulativeGraphKeys.join(', ')
     : '（空，本章可自由起 key）'
 
-  const prompt = `你是小说知识图谱抽取助手。
+  const prompt = `抽取本章实体节点和关系边。
 
-【任务】基于章节内容，抽取本章涉及的实体节点和关系边。只看本章正文，不要混入历史上下文。
+type 仅限 character / faction / event / item。
+复用【已有 graph key】中的 key；新 key 用拼音小写下划线。
+importance >= 6 才提取。
+relation 简洁。
 
-【约束】
-1. type 必须是 character / faction / event / item 之一，其他值（如 weapon/prop/realm/object）一律收敛为 item
-2. character/faction/item 类型节点：
-   - 若在【已有 graph key 列表】中，复用对应 type:key
-   - 若对应【已有角色名】，type=character，key 用角色英文拼音小写下划线
-   - 否则 key 用拼音小写下划线
-3. event 类型节点 key 用英文小写下划线
-4. importance >= 6 才提取（过滤路人/环境）
-5. relation 简洁（2-6 字），如 隶属 / 对抗 / 师徒 / 配偶 / 兄弟
+已有 key：${keyList}
+已有角色名：${charList}
 
-【已有 graph key 列表（必须复用）】
-${keyList}
+章节大纲：${input.outline}
+章节内容：${input.content.slice(0, 8000)}
 
-【已有角色名（锚定命名）】
-${charList}
-
-【输出严格 JSON】
-{
-  "nodes": [{ "type": "character", "key": "zhangsan", "label": "张三", "importance": 8, "data": {} }],
-  "edges": [{ "fromType": "character", "fromKey": "zhangsan", "toType": "faction", "toKey": "mingjiao", "relation": "隶属" }]
-}
-
-【章节大纲】${input.outline}
-【章节内容】${input.content.slice(0, 8000)}`
+输出 JSON：
+{"nodes":[{"type":"character","key":"zhangsan","label":"张三","importance":8,"data":{}}],"edges":[{"fromType":"character","fromKey":"zhangsan","toType":"faction","toKey":"mingjiao","relation":"隶属"}]}`
 
   try {
     const prisma = app.prisma
