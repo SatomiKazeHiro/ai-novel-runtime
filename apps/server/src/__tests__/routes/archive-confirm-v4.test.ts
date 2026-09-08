@@ -250,12 +250,12 @@ describe('archive confirm v4 — strict 5-stage validation + split data sources'
     expect(newGlobal).toBeDefined()
     // originUid === 'NEW' → 替换成 `${chapterNumber}#${4位hex}`
     expect(newGlobal![0].data.originUid).toMatch(/^1#[0-9A-F]{4}$/)
-    expect(newGlobal![0].data.tags).toContain('event')
+    expect(newGlobal![0].data.category).toBe('event_memory')
     const existGlobal = globalRows.find((c: any[]) => c[0].data.content === '全局记忆2')
     expect(existGlobal).toBeDefined()
     // 继承的旧 UID 不动
     expect(existGlobal![0].data.originUid).toBe('U-EXIST')
-    expect(existGlobal![0].data.tags).toContain('state')
+    expect(existGlobal![0].data.category).toBe('state')
 
     // 验证 tx.chapter.update: summary + status=archived + pendingArchiveData=null + chapterGraph + cumulativeGraph
     const chapterUpdateCalls = mockPrisma.tx.chapter.update.mock.calls.filter(

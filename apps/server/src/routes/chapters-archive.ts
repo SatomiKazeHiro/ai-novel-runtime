@@ -707,41 +707,50 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     // 构造每条 Memory 行的写入数据(后端按 layer 规则打 tag, 备注: '未来探讨是否可以优化' — 是否让 raw 也由 AI 给 tag?)
     type MemoryRowData = Parameters<typeof prisma.memory.create>[0]['data']
     const chapterRows: MemoryRowData[] = []
-    // 5 段同构 row (layer=chapter),共一个 push helper;extraTag 控制 main-plot 标记,缺省 5
-    const pushChapterRow = (content: string, importance: number, extraTags: string[] = []) => {
+    const CATEGORY = {
+      event: 'event_memory', emotional: 'emotional_change',
+      foreshadowing: 'foreshadowing', relationship: 'relationship_change', state: 'state'
+    } as const
+    // 5 段同构 row (layer=chapter),共一个 push helper;category 表达语义,extraTag 控制 main-plot 标记
+    const pushChapterRow = (content: string, importance: number, category: string, extraTags: string[] = [], participants?: string) => {
       chapterRows.push({
         storyId: chapter.storyId,
         chapterId,
         fromChapterNumber,
         layer: 'chapter',
+        category: category as any,
         content,
         tags: JSON.stringify(['auto-extracted', ...extraTags]),
-        importance
+        importance,
+        participants: participants ?? null
       })
     }
     for (const e of mainEvents) {
       if (!e?.description) continue
-      pushChapterRow(e.description, typeof e.importance === 'number' ? e.importance : 5, ['main-plot'])
+      pushChapterRow(e.description, typeof e.importance === 'number' ? e.importance : 5, CATEGORY.event, ['main-plot'], e.participants)
     }
     for (const e of sideEvents) {
       if (!e?.description) continue
-      pushChapterRow(e.description, typeof e.importance === 'number' ? e.importance : 5)
+      pushChapterRow(e.description, typeof e.importance === 'number' ? e.importance : 5, CATEGORY.event, [], e.participants)
     }
-    const pushStringRow = (s: string) => pushChapterRow(s, 5)
-    for (const e of emotions) if (typeof e === 'string' && e) pushStringRow(e)
-    for (const e of foreshadowing) if (typeof e === 'string' && e) pushStringRow(e)
-    for (const e of relationshipChanges) if (typeof e === 'string' && e) pushStringRow(e)
+    const pushStringRow = (s: string, category: string) => pushChapterRow(s, 5, category)
+    for (const e of emotions) if (typeof e === 'string' && e) pushStringRow(e, CATEGORY.emotional)
+    for (const e of foreshadowing) if (typeof e === 'string' && e) pushStringRow(e, CATEGORY.foreshadowing)
+    for (const e of relationshipChanges) if (typeof e === 'string' && e) pushStringRow(e, CATEGORY.relationship)
     const sceneRows: MemoryRowData[] = scenes.filter(s => s?.location).map(s => ({
       storyId: chapter.storyId, chapterId, fromChapterNumber, layer: 'scene',
+      category: CATEGORY.event,
       content: `${s.location} | ${s.event || ''}`,
       tags: JSON.stringify(['auto-extracted', 'scene-memory']),
-      importance: typeof s.importance === 'number' ? s.importance : 5
+      importance: typeof s.importance === 'number' ? s.importance : 5,
+      participants: s.participants ?? null
     }))
 
     const globalRows: MemoryRowData[] = optimized.filter(m => m?.content).map(m => ({
       storyId: chapter.storyId, chapterId, fromChapterNumber, layer: 'global',
+      category: m.type === 'state' ? CATEGORY.state : CATEGORY.event,
       content: m.content,
-      tags: JSON.stringify(['auto-extracted', m.type === 'state' ? 'state' : 'event']),
+      tags: JSON.stringify(['auto-extracted']),
       importance: typeof m.importance === 'number' ? m.importance : 5,
       originUid: m.originUid === 'NEW' ? `${fromChapterNumber}#${newUidHex()}` : m.originUid
     }))
