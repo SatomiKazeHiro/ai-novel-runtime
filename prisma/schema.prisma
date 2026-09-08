@@ -154,24 +154,42 @@ model LoreItem {
   @@unique([storyId, category, slug])
 }
 
+enum MemoryLayer {
+  global
+  chapter
+  scene
+  temporary
+}
+
+enum MemoryCategory {
+  relationship_change
+  foreshadowing
+  emotional_change
+  event_memory
+  state
+}
+
 // 记忆
 model Memory {
-  id                String   @id @default(uuid())
+  id                String          @id @default(uuid())
   storyId           String
   chapterId         String?
-  fromChapterNumber Float?   // 来源章节序号（archive 时标记）
-  originUid         String?  // 事件起始UID，如 "1#A3F2"
-  layer             String   // global, chapter, scene, temporary
+  fromChapterNumber Float?          // 来源章节序号（archive 时标记）
+  originUid         String?         // 事件起始UID，如 "1#A3F2"
+  layer             MemoryLayer
+  category          MemoryCategory  @default(event_memory)
   content           String
-  tags              String   @default("[]") // JSON string array
-  importance        Int      @default(5) // 1-10
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  tags              String          @default("[]") // JSON string array（只留来源标记）
+  importance        Int             @default(5)    // 1-10
+  participants      String?         // 参与者姓名，逗号分隔
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
-  story             Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-  chapter           Chapter? @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  story             Story           @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  chapter           Chapter?        @relation(fields: [chapterId], references: [id], onDelete: Cascade)
 
   @@index([storyId, layer])
+  @@index([storyId, category])
   @@index([storyId, fromChapterNumber])
   @@index([storyId, originUid])
 }
