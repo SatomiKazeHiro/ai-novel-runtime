@@ -736,7 +736,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     const characterStates = characterStageResult.characterStates ?? []
 
     // 把 'NEW' UID 替换成本章生成的实际 UID
-    const newUidHex = (): string => randomBytes(2).toString('hex').toUpperCase()
+    const newUidHex = (): string => randomBytes(4).toString('hex').toUpperCase()
     const fromChapterNumber = chapter.number
 
     // 构造每条 Memory 行的写入数据(后端按 layer 规则打 tag, 备注: '未来探讨是否可以优化' — 是否让 raw 也由 AI 给 tag?)

@@ -140,4 +140,41 @@ describe('optimizeMemories — empty AI response', () => {
     // 必须包含实际长度数字 (本测试是 thinkingTrace 的字符数)
     expect(caught!.message).toContain(`length=${thinkingTrace.length}`)
   })
+
+  it('merges multiple memories with same inherited originUid into one', async () => {
+    const app = mockApp({
+      memory: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 'm1', originUid: 'U1', content: '旧状态', importance: 5, fromChapterNumber: 1 }
+        ])
+      }
+    })
+    const ai = {
+      memories: [
+        { content: '状态快照A', originUid: 'U1', importance: 5, type: 'state' },
+        { content: '状态快照B', originUid: 'U1', importance: 7, type: 'event' }
+      ]
+    }
+    ;(callAIWithLog as any).mockResolvedValueOnce(JSON.stringify(ai))
+
+    const result = await optimizeMemories(app, 's1', 'c1', baseRaw)
+    expect(result).toHaveLength(1)
+    expect(result[0].content).toBe('状态快照A；状态快照B')
+    expect(result[0].importance).toBe(7) // 取最高
+    expect(result[0].originUid).toBe('U1')
+  })
+
+  it('keeps multiple NEW memories separate (does not merge)', async () => {
+    const ai = {
+      memories: [
+        { content: '新事件A', originUid: 'NEW', importance: 5, type: 'event' },
+        { content: '新事件B', originUid: 'NEW', importance: 6, type: 'event' }
+      ]
+    }
+    ;(callAIWithLog as any).mockResolvedValueOnce(JSON.stringify(ai))
+
+    const result = await optimizeMemories(mockApp(), 's1', 'c1', baseRaw)
+    expect(result).toHaveLength(2) // NEW 不合并
+    expect(result.map(r => r.content)).toEqual(['新事件A', '新事件B'])
+  })
 })

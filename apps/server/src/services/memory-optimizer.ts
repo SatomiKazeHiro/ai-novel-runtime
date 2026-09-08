@@ -178,8 +178,27 @@ ${rawText}
     }
   }
 
+  // 同 originUid（继承 UID）合并成一条：AI 可能对同一 UID 输出多条状态快照，
+  // 会导致 archive 写多行同 UID 同章 → searchRelevant 分组丢行。'NEW' 不合并（多个 NEW 是不同新事件）。
+  const byUid = new Map<string, OptimizedMemory>()
+  const newMemories: OptimizedMemory[] = []
+  for (const mem of memories) {
+    if (mem.originUid === 'NEW') {
+      newMemories.push(mem)
+      continue
+    }
+    const existing = byUid.get(mem.originUid)
+    if (existing) {
+      existing.content = `${existing.content}；${mem.content}`
+      existing.importance = Math.max(existing.importance, mem.importance)
+    } else {
+      byUid.set(mem.originUid, { ...mem })
+    }
+  }
+  const merged = [...Array.from(byUid.values()), ...newMemories]
+
   app.log.info(
-    `[MemoryOptimizer] Generated ${memories.length} global memories (chapterId=${chapterId}, from existing global=${latestGlobal.length})`
+    `[MemoryOptimizer] Generated ${merged.length} global memories (chapterId=${chapterId}, from existing global=${latestGlobal.length})`
   )
-  return memories
+  return merged
 }

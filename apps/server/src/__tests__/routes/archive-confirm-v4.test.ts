@@ -275,7 +275,7 @@ describe('archive confirm v4 — strict 5-stage validation + split data sources'
     const newGlobal = globalRows.find((c: any[]) => c[0].data.content === '全局记忆1')
     expect(newGlobal).toBeDefined()
     // originUid === 'NEW' → 替换成 `${chapterNumber}#${4位hex}`
-    expect(newGlobal![0].data.originUid).toMatch(/^1#[0-9A-F]{4}$/)
+    expect(newGlobal![0].data.originUid).toMatch(/^1#[0-9A-F]{8}$/)
     expect(newGlobal![0].data.category).toBe('event_memory')
     const existGlobal = globalRows.find((c: any[]) => c[0].data.content === '全局记忆2')
     expect(existGlobal).toBeDefined()
