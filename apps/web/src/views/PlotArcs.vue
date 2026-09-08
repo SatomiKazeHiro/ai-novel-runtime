@@ -59,10 +59,10 @@ function statusLabel(status: string): string {
 
 function statusChipClass(status: string): string {
   return {
-    active: 'is-success',
+    active: 'is-positive',
     inactive: 'is-muted',
-    completed: 'is-info',
-    closed: 'is-warm'
+    completed: 'is-snow',
+    closed: 'is-error'
   }[status] ?? ''
 }
 
