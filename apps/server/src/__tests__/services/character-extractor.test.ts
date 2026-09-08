@@ -63,4 +63,56 @@ describe('commitCharacterBranchStateWrites', () => {
       })
     })
   })
+
+  // 实际 AI 输出 status 是 Object (JSON.parse 后), 不是 String。
+  // 修前报错: "Argument `status`: Invalid value provided. Expected String, provided Object."
+  // 修后边界统一 JSON.stringify, 同时不重复 stringify 已 String 的输入 (测试 fixture)。
+  it('status / relationships 是 Object 时自动 JSON.stringify', async () => {
+    const writes: CharacterStateRow[] = [
+      {
+        characterId: 'char-3',
+        name: '林若',
+        key: 'lin_ruo',
+        status: { location: '许青家中', appearance: '穿着许青的衬衫', weapon: '长剑已收入剑鞘' },
+        relationships: { '许青': '信任并接受其帮助' },
+        isNew: false
+      }
+    ]
+
+    await commitCharacterBranchStateWrites(tx, 2, writes, log)
+
+    expect(tx.characterBranchState.create).toHaveBeenCalledTimes(1)
+    expect(tx.characterBranchState.create).toHaveBeenCalledWith({
+      data: {
+        characterId: 'char-3',
+        fromChapterNumber: 2,
+        status: JSON.stringify(writes[0].status),
+        relationships: JSON.stringify(writes[0].relationships)
+      }
+    })
+  })
+
+  it('null Object 字段安全处理 (status=null → "null" 字符串, 不抛错)', async () => {
+    const writes: CharacterStateRow[] = [
+      {
+        characterId: 'char-4',
+        name: '空状态',
+        key: 'empty',
+        status: null as any,
+        relationships: null as any,
+        isNew: false
+      }
+    ]
+
+    await commitCharacterBranchStateWrites(tx, 3, writes, log)
+
+    expect(tx.characterBranchState.create).toHaveBeenCalledWith({
+      data: {
+        characterId: 'char-4',
+        fromChapterNumber: 3,
+        status: 'null',
+        relationships: 'null'
+      }
+    })
+  })
 })

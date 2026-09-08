@@ -22,13 +22,13 @@ const newCharacterState = {
 }
 
 const basePending = {
-  version: 3,
+  version: 4,
   stages: {
     character: {
       status: 'success',
       result: { characterStates: [matchedState, newCharacterState] }
     },
-    memory: {
+    memoryExtract: {
       status: 'success',
       result: {
         mainEvents: [{ description: '主角觉醒', importance: 8 }],
@@ -40,6 +40,10 @@ const basePending = {
         summary: '主角觉醒',
         memories: []
       }
+    },
+    memoryOptimize: {
+      status: 'success',
+      result: { memories: [] }
     },
     plotArc: { status: 'success', result: { plotArcs: [] } },
     graph: {

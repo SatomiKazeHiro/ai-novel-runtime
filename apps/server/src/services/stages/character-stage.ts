@@ -20,8 +20,12 @@ export interface CharacterStateRow {
   characterId: string | null
   name: string
   key: string
-  status: string
-  relationships: string
+  // status / relationships 都是 JSON 对象。Prompt 明确要求输出 JSON 对象,
+  // character-stage 解析后 w.status 实际是 Object (AI 真实输出) 或 String
+  // (测试 fixture / 上游已 stringify)。commitCharacterBranchStateWrites 在
+  // 边界统一 JSON.stringify, 这里类型放宽以匹配实际数据, 避免类型断言失真。
+  status: string | object
+  relationships: string | object
   isNew: boolean
 }
 
@@ -53,12 +57,15 @@ ${matchedList || '（空）'}
       "characterId": "<已有角色 id；新角色 → null>",
       "name": "<角色名>",
       "key": "<graph key，已有角色复用已有 key，新角色用拼音小写下划线>",
-      "status": "<JSON 对象：rank/location/realm 等本章结束时的状态>",
-      "relationships": "<JSON 对象：{\"其他角色名\": \"关系\"}>",
+      "status": {"rank":"练气","location":"楼道","realm":"凡人"},
+      "relationships": {"<其他角色名>": "<关系>"},
       "isNew": <true / false>
     }
   ]
 }
+
+status / relationships 必须是 JSON 对象（不是字符串包装）。后端在写入
+CharacterBranchState 表时会统一 JSON.stringify 存储。
 
 【章节大纲】${input.outline}
 【章节内容】${input.content}`
