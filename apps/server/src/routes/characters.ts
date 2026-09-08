@@ -1,6 +1,21 @@
 import type { FastifyInstance } from 'fastify'
+import { fetchCharacterDisplay } from '../services/character-display.js'
 
 export async function characterRoutes(app: FastifyInstance) {
+  // GET /api/stories/:storyId/characters/display — v4 三字段独立查快照
+  app.get('/api/stories/:storyId/characters/display', async (request, reply) => {
+    const { storyId } = request.params as any
+    const chapterParam = (request.query as any).chapter
+    const viewChapterNumber = chapterParam && chapterParam !== 'null'
+      ? Number(chapterParam)
+      : null
+    if (viewChapterNumber !== null && Number.isNaN(viewChapterNumber)) {
+      return reply.status(400).send({ success: false, error: 'invalid chapter number' })
+    }
+    const data = await fetchCharacterDisplay(app.prisma, storyId, viewChapterNumber)
+    return { success: true, data }
+  })
+
   // GET /api/stories/:id/characters
   app.get('/api/stories/:storyId/characters', async (request, reply) => {
     const { storyId } = request.params as any
