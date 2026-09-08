@@ -18,9 +18,8 @@
 - **主线 + 番外分支设计** — 主线严格线性（1 → 2 → 3），番外（`isSideStory`）可挂在任意已归档章节下（`1.01`、`2.03`），一个小说承载多条叙事支线
 - **结构化世界观管理** — LoreBook 系统化维护境界、地图、功法、势力、物品、规则
 - **角色卡系统** — 静态属性（性格、外貌、说话风格）+ 历史快照动态状态（按 `fromChapterNumber` 记录，删除章节自动回退）
-- **章节状态机** — `Draft → Generating → Generated → Scored → Selected → Reviewing → Archived`(+ `Rejected`)，`Reviewing` 是 2026-06 新加的人工审查环节（见 `Chapter.pendingArchiveData`）
+- **章节状态机** — `ChapterStatus` 3 值（`draft` / `reviewing` / `archived`），候选生成（`Draft.status`）与章节状态正交
 - **多候选生成** — 一次生成多个候选版本，支持不同 temperature 采样策略
-- **AI 评分** — 7 维度评分（文风接近度、大纲符合度、场景符合度、写作人格一致性、文笔质量、情感张力、节奏把控）
 - **Prompt Pipeline** — Pipeline 式 Prompt 组装，Token 预算控制，动态裁剪，Stateless Generation
 - **多模型兼容** — `AIProvider` 统一接口；当前 `DeepSeekProvider` 完整实现，`OpenAIProvider` 是 stub（其它 Provider 按同一接口实现即可接入）
 - **知识图谱** — 人物关系图、势力图、事件图、物品图的可视化与管理（全局工作表，Cytoscape）
@@ -94,7 +93,6 @@ novel-runtime/
 │   │       │   ├── drafts.ts
 │   │       │   ├── graph.ts
 │   │       │   ├── memories.ts
-│   │       │   ├── scores.ts
 │   │       │   ├── runtime-profile.ts
 │   │       │   ├── worker-task.ts
 │   │       │   ├── ai-provider.ts
@@ -290,7 +288,6 @@ http://localhost:3000/documentation
 | `/api/stories/:id/lore` | GET/POST | 世界观条目 |
 | `/api/stories/:id/graph` | GET | 知识图谱 |
 | `/api/stories/:id/memory` | GET/POST | 记忆管理 |
-| `/api/drafts/:id/score` | POST | AI 评分（7 维度） |
 | `/api/ai-providers/default` | GET | 默认模型配置 |
 
 ---
@@ -340,7 +337,6 @@ User Message  ← Style → Story → Lore → Character → Scene → Memory �
 | character | 12000 | 18.8% |
 | scene | 12000 | 18.8% |
 | memory | 8000 | 12.5% |
-| timeline | 4000 | 6.3% |
 | plotArc | 3000 | 4.7% |
 | output | 16000 | 25.0% |
 
@@ -360,16 +356,15 @@ Temporary Memory → 临时上下文
 
 ### 章节状态机
 
+`ChapterStatus` 3 值：`draft` / `reviewing` / `archived`；候选生成（`Draft.status`）与章节状态正交。
+
 ```
-   Draft → Generating → Generated → Scored → Selected → Reviewing → Archived
-     ↓         ↓             ↓          ↓       ↓           ↓              ↑
-  Rejected  Rejected     Rejected  (保留)  Rejected   (取消 = 删除章节)   阶段 1+2: 合并提取 + 图谱整理
-                                                                              → 写 pendingArchiveData → reviewing
-                                                                  阶段 3: prisma.$transaction 提交
-                                                                  阶段 4: optimizeMemories 全局融合（失败不阻塞）
+draft ──┬─→ preparing-archive ─→ reviewing ─→ archived
+        │       (AI 提取)              ↑
+        └──── 用户重编辑 / 取消 ────────┘ (回退)
 ```
 
-8 个状态值见 `prisma/schema.prisma` 的 `enum ChapterStatus`。`reviewing` 是 2026-06 新加的关键环节，AI 提取完不直接写库，等用户在 `ReviewingPanel.vue` 编辑后再 commit。
+归档分阶段：`prepare-archive`（4 个 stage 并行提取 + memoryOptimize 串行）→ 用户审查 → `archive`（事务提交）。
 
 ---
 

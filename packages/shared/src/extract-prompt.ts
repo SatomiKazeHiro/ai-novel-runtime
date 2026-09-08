@@ -361,7 +361,7 @@ importance 评分标准（按事件本身在本章的相对重要性打分，与
   "participants": "许青,姜禾"
 }
 
-提取字段（v3 收缩后，本章只输出这些字段；characterStatusChanges / timelinePosition / timelineEvents 不再要求）：
+提取字段（v3 收缩后，本章只输出这些字段；characterStatusChanges 不再要求）：
 - mainEvents: 主要事件（对象数组，每个对象包含 description / importance / participants）
 - sideEvents: 次要事件（对象数组，格式同上）
 - emotions: 主要角色情绪变化（字符串数组）
@@ -376,7 +376,7 @@ importance 评分标准（按事件本身在本章的相对重要性打分，与
 {
   "memories": { mainEvents, sideEvents, emotions, foreshadowing, relationshipChanges, summary, scenes }
 }
-不要输出 graph / characterStatusChanges / timelinePosition / timelineEvents 字段。${previousEntitiesBlock}
+不要输出 graph / characterStatusChanges 字段。${previousEntitiesBlock}
 
 章节大纲：${input.outline || '无大纲'}
 章节内容如下：

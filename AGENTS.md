@@ -202,7 +202,6 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 | `drafts.ts` | `/api/chapters/:chapterId/drafts`, `/api/drafts/:draftId` | 草稿 CRUD |
 | `graph.ts` | `/api/stories/:storyId/graph`, `/api/chapters/:chapterId/graph-snapshot` | 知识图谱查询 + 手动增删节点/边 |
 | `memories.ts` | `/api/stories/:storyId/memory` | 记忆查询 + 创建 |
-| `scores.ts` | `/api/drafts/:draftId/score`, `/api/stories/:storyId/scores` | AI + 规则双引擎评分 |
 | `runtime-profile.ts` | `/api/runtime-profiles` | 写作人格 CRUD |
 | `worker-task.ts` | `/api/worker-tasks` | Worker 任务模板 CRUD |
 | `ai-provider.ts` | `/api/ai-providers` | AI 提供商配置 CRUD + 默认设置 |
@@ -251,7 +250,6 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 `src/api/*.ts` 按领域封装，每个模块导出一个对象，包含该领域的 CRUD 函数。例如：
 - `storiesApi.list()`、`storiesApi.create(data)`
 - `chaptersApi.generate(chapterId, params)`
-- `draftsApi.score(draftId)`
 - `graphApi.createNode(storyId, data)`
 
 ---
@@ -285,7 +283,7 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 
 ### 5.3 JSON 字段处理
 
-Prisma 的 JSON 字段（`personality`、`metadata`、`params`、`settings`、`pendingArchiveData`、`chapterGraph`、`cumulativeGraph`、`score` 等）在路由层**手动 `JSON.stringify` / `JSON.parse`**。前端拿到后也常需 `JSON.parse`。
+Prisma 的 JSON 字段（`personality`、`metadata`、`params`、`settings`、`pendingArchiveData`、`chapterGraph`、`cumulativeGraph` 等）在路由层**手动 `JSON.stringify` / `JSON.parse`**。前端拿到后也常需 `JSON.parse`。
 
 ### 5.4 AI 调用规范
 

@@ -36,7 +36,7 @@
         <!-- 嵌入现有 ChapterBranchTree 组件(emit 转发) -->
         <div v-else class="cap-card branch-card">
             <div class="branch-card__header">
-                <span class="cap-eyebrow">TIMELINE</span>
+                <span class="cap-eyebrow">CHAPTERS</span>
                 <span class="branch-card__divider" />
                 <span class="branch-card__stat">{{ treeData.length }} ROOT · {{ chapterStats.total }} CHAPTERS</span>
                 <span v-if="chapterStats.branches > 0" class="branch-card__stat branch-card__stat--branch">+ {{ chapterStats.branches }} BRANCH</span>
