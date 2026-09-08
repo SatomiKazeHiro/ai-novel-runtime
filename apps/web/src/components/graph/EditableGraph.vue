@@ -227,8 +227,7 @@ async function handleCreateNode() {
     id: `${nodeForm.value.type}:${nodeForm.value.key}`,
     type: nodeForm.value.type,
     key: nodeForm.value.key,
-    label: nodeForm.value.label,
-    importance: 5
+    label: nodeForm.value.label
   }
   draftGraphData.value = {
     nodes: [...(draftGraphData.value?.nodes || []), newNode],
