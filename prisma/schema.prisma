@@ -324,6 +324,7 @@ model AiProviderConfig {
   contextLength Int      @default(64000)
   maxTokens     Int      @default(4096)
   temperature   Float    @default(0.7)
+  thinking      String   @default("auto") // auto | enabled | disabled，思考模式配置
   isDefault     Boolean  @default(false)
   remarks       String?  // 备注/说明
   createdAt     DateTime @default(now())

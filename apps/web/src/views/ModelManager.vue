@@ -38,6 +38,18 @@
         <n-form-item label="温度">
           <n-slider v-model:value="form.temperature" :min="0" :max="2" :step="0.05" :marks="{ 0: '0', 1: '1', 2: '2' }" />
         </n-form-item>
+        <n-form-item label="思考模式">
+          <n-radio-group v-model:value="form.thinking">
+            <n-radio value="auto">自动</n-radio>
+            <n-radio value="enabled">启用</n-radio>
+            <n-radio value="disabled">关闭</n-radio>
+          </n-radio-group>
+          <div class="cap-caption" style="margin-top: 6px">
+            自动：DeepSeek 模型默认关闭思考，其他模型遵循上游默认；
+            启用：交给上游默认行为（可能启用思考）；
+            关闭：强制发送禁用参数，部分模型可能不支持。
+          </div>
+        </n-form-item>
         <n-form-item label="备注/说明">
           <n-input v-model:value="form.remarks" type="textarea" :rows="2" placeholder="如：用于生成章节，余额充足" />
         </n-form-item>
@@ -61,9 +73,10 @@ import { ref, onMounted, h } from 'vue'
 import {
   NSpace, NButton, NDataTable, NModal, NForm, NFormItem,
   NInput, NInputNumber, NSelect, NSwitch, NSlider, NTag,
+  NRadio, NRadioGroup,
   useMessage, type DataTableColumns
 } from 'naive-ui'
-import { aiProviderApi } from '../api/ai-provider'
+import { aiProviderApi, type ThinkingMode } from '../api/ai-provider'
 
 interface AiProviderConfig {
   id: string
@@ -75,6 +88,7 @@ interface AiProviderConfig {
   contextLength: number
   maxTokens: number
   temperature: number
+  thinking: ThinkingMode
   isDefault: boolean
   remarks: string | null
 }
@@ -91,6 +105,7 @@ const form = ref({
   contextLength: 64000,
   maxTokens: 4096,
   temperature: 0.7,
+  thinking: 'auto' as ThinkingMode,
   remarks: '',
   isDefault: false
 })
@@ -145,6 +160,18 @@ const columns: DataTableColumns<AiProviderConfig> = [
   { title: '上下文长度', key: 'contextLength', width: 120 },
   { title: '最大输出', key: 'maxTokens', width: 96 },
   { title: '温度', key: 'temperature', width: 60 },
+  {
+    title: '思考', key: 'thinking', width: 90, render(row) {
+      const map: Record<ThinkingMode, { label: string; type: 'default' | 'info' | 'warning' | 'success' }> = {
+        auto: { label: '自动', type: 'info' },
+        enabled: { label: '启用', type: 'success' },
+        disabled: { label: '关闭', type: 'warning' }
+      }
+      const v = (row.thinking || 'auto') as ThinkingMode
+      const m = map[v]
+      return h(NTag, { size: 'small', type: m.type }, { default: () => m.label })
+    }
+  },
   { title: '备注', key: 'remarks', width: 120, ellipsis: { tooltip: true } },
   { title: '默认', key: 'isDefault', width: 80, render(row) {
     return row.isDefault ? h(NTag, { type: 'success', size: 'small' }, { default: () => '是' }) : '-'
@@ -190,6 +217,7 @@ function openCreate() {
     contextLength: 64000,
     maxTokens: 4096,
     temperature: 0.7,
+    thinking: 'auto',
     remarks: '',
     isDefault: false
   }
@@ -206,6 +234,7 @@ function startEdit(row: AiProviderConfig) {
     contextLength: row.contextLength,
     maxTokens: row.maxTokens,
     temperature: row.temperature,
+    thinking: (row.thinking || 'auto') as ThinkingMode,
     remarks: row.remarks || '',
     isDefault: row.isDefault
   }
@@ -224,6 +253,7 @@ async function handleTest() {
       apiKey: form.value.apiKey || undefined,
       baseUrl: form.value.baseUrl || undefined,
       model: form.value.model,
+      thinking: form.value.thinking,
       id: editingId.value || undefined
     })
     const result = res.data
@@ -248,6 +278,7 @@ async function handleSave() {
     contextLength: form.value.contextLength,
     maxTokens: form.value.maxTokens,
     temperature: form.value.temperature,
+    thinking: form.value.thinking,
     remarks: form.value.remarks || undefined,
     isDefault: form.value.isDefault
   }

@@ -18,6 +18,20 @@ export interface AIProvider {
   readonly lastUsage?: TokenUsage | null
 }
 
+const DEFAULT_BASE_URLS: Record<string, string> = {
+  deepseek: 'https://api.deepseek.com',
+  openai: 'https://api.openai.com',
+  openrouter: 'https://openrouter.ai/api',
+  moonshot: 'https://api.moonshot.cn',
+  siliconflow: 'https://api.siliconflow.cn'
+}
+
+// 三态 thinking 配置：auto 跟模型名启发式决定；enabled/disabled 显式覆盖。
+// 与 DeepSeek /v1/chat/completions 的 `thinking.type` 字段对应：disabled
+// 直接发送 { type: 'disabled' }；enabled / 其他模型 auto 不发送该字段，
+// 由上游默认行为决定是否启用 reasoning。
+export type ThinkingMode = 'auto' | 'enabled' | 'disabled'
+
 export interface AIProviderConfig {
   name: string
   apiKey?: string
@@ -25,14 +39,28 @@ export interface AIProviderConfig {
   model: string
   maxTokens?: number
   temperature?: number
+  thinking?: ThinkingMode
 }
 
-const DEFAULT_BASE_URLS: Record<string, string> = {
-  deepseek: 'https://api.deepseek.com',
-  openai: 'https://api.openai.com',
-  openrouter: 'https://openrouter.ai/api',
-  moonshot: 'https://api.moonshot.cn',
-  siliconflow: 'https://api.siliconflow.cn'
+/**
+ * 纯函数：依据 thinking 配置与模型名判断是否要在请求 body 中发送
+ * `thinking: { type: 'disabled' }` 以关闭上游 reasoning 行为。
+ *
+ * 规则：
+ * - 'disabled' 永远发送（不论模型）
+ * - 'enabled'  永远不发送（让上游按自身默认走，可能启用可能不启用）
+ * - 'auto'     默认对 DeepSeek 模型关闭，其他模型保持上游默认
+ *
+ * 抽成纯函数是为了让请求体构造逻辑单点可测，避免 `generate` 与
+ * `generateWithRuntime` 两处重复判断逻辑导致行为漂移。
+ */
+export function shouldDisableThinking(
+  model: string,
+  thinking: ThinkingMode = 'auto'
+): boolean {
+  if (thinking === 'disabled') return true
+  if (thinking === 'enabled') return false
+  return /deepseek/i.test(model)
 }
 
 // 支持 OpenAI 兼容格式的 Provider 白名单
@@ -78,22 +106,45 @@ export class OpenAICompatibleProvider implements AIProvider {
    * 输出放进 reasoning_content 字段、content 留空; 这里把 reasoning_content
    * 作为 content 的兜底, 让上层不用关心上游模型是否启用了 thinking mode。
    *
-   * 两个字段都空时返回 null, 让调用方抛 "empty content" 诊断错误
-   * (上游真正故障, 不能吞)。fallback 触发时打一行 warning, 让用户能
-   * 在 server.log 看到 reasoning mode 激活的频率。
+   * 长度阈值 (REASONING_MAX_LENGTH_FOR_FALLBACK): reasoning_content 太长
+   * (>4KB) 大概率是 "思考过程" 而非 "答案" (典型 deepseek-v4-flash thinking
+   * 模式输出 8KB+ 思考), 此时整段回退会把 15KB 思考散文当成 JSON 喂给上层
+   * `JSON.parse(cleanJsonBlock(...))`, 必然失败污染错误诊断。直接抛错
+   * 让上游抛明确的 "reasoning_content too long" 诊断, 用户能在 UI 看到
+   * "解析失败" 并主动关闭 thinking mode 或换模型。短 reasoning (<4KB)
+   * 仍按原行为兜底 — 短小内容更可能是直接答案 (某些 reasoning 模型会把
+   * 简短答案放进 reasoning_content, content 留空)。
+   *
+   * 这条防御策略与请求端的 thinking 配置正交：thinking 配置尽量阻止上游
+   * 产生 reasoning_content；这里兜底在 thinking 关闭失败/上游未遵守时仍能
+   * 让上层拿到明确错误，而不是把"纯思考过程"误当作答案。
    */
+  private static readonly REASONING_MAX_LENGTH_FOR_FALLBACK = 4096
+
   private extractContent(choice: any): string | null {
     const content = choice?.message?.content
     if (content) return content
     const reasoning = choice?.message?.reasoning_content
-    if (reasoning) {
-      console.warn(
-        `[${this.config.name}] content empty, fell back to reasoning_content ` +
-        `(model=${this.config.model} likely uses thinking mode)`
+    if (!reasoning) return null
+
+    if (reasoning.length > OpenAICompatibleProvider.REASONING_MAX_LENGTH_FOR_FALLBACK) {
+      // 抛错而不是 return null, 否则 generateWithRuntime 抛 "empty content"
+      // 通用错会覆盖这里的 "纯思考过程" 诊断。错误信息必须明确告诉用户
+      // "reasoning_content 太长疑似纯思考, 不是答案", 让用户在 UI 能区分
+      // 真正的 empty content vs thinking 模式未给答案。
+      throw new Error(
+        `${this.config.name} API returned empty content; reasoning_content too long ` +
+        `(${reasoning.length} chars, limit=${OpenAICompatibleProvider.REASONING_MAX_LENGTH_FOR_FALLBACK}) — ` +
+        `likely pure thinking trace, not answer. model=${this.config.model}. ` +
+        `Hint: disable thinking mode or use a non-reasoning model.`
       )
-      return reasoning
     }
-    return null
+
+    console.warn(
+      `[${this.config.name}] content empty, fell back to reasoning_content ` +
+      `(model=${this.config.model} likely uses thinking mode)`
+    )
+    return reasoning
   }
 
   private async callCompletions(body: any): Promise<any> {
@@ -104,6 +155,12 @@ export class OpenAICompatibleProvider implements AIProvider {
       throw new Error(`${this.config.name} API key is not configured`)
     }
 
+    // 统一在请求体入口应用 thinking 决策：让 generate 与 generateWithRuntime
+    // 都不必各自重复判断逻辑，shouldDisableThinking 是纯函数可单测。
+    const requestBody = shouldDisableThinking(this.config.model, this.config.thinking)
+      ? { ...body, thinking: { type: 'disabled' } }
+      : body
+
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 30000)
 
@@ -113,7 +170,7 @@ export class OpenAICompatibleProvider implements AIProvider {
         method: 'POST',
         signal: controller.signal,
         headers: this.getAuthHeaders(),
-        body: JSON.stringify(body)
+        body: JSON.stringify(requestBody)
       })
     } finally {
       clearTimeout(timeout)
