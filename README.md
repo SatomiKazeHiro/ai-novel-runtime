@@ -1,5 +1,9 @@
 # AI 小说工坊
 
+<p align="center">
+  <img src="docs/logo.png" alt="AI 小说工坊" width="160" />
+</p>
+
 > **AI 小说工程化 Runtime 系统**
 >
 > 目标不是让 AI 自动写小说，而是让用户可以**稳定、高质量、可控地**开发长篇小说。
