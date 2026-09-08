@@ -20,6 +20,7 @@ import { scoreRoutes } from './routes/scores.js'
 import { runtimeProfileRoutes } from './routes/runtime-profile.js'
 import { workerTaskRoutes } from './routes/worker-task.js'
 import { aiProviderRoutes } from './routes/ai-provider.js'
+import { plotArcRoutes } from './routes/plot-arcs.js'
 import { initAiProviderConfig } from './services/ai-provider-init.js'
 import { initRuntimeProfile } from './services/runtime-profile-init.js'
 import { initWorkerTasks } from './services/worker-task-init.js'
@@ -80,6 +81,7 @@ export async function buildApp() {
   await app.register(workerTaskRoutes)
   await app.register(aiProviderRoutes)
   await app.register(promptLogRoutes)
+  await app.register(plotArcRoutes)
 
   // Global error handler
   app.setErrorHandler((error: any, request, reply) => {

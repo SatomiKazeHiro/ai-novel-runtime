@@ -279,14 +279,14 @@
                     <div class="cap-arc-card__head-meta">
                       <span class="cap-arc-card__no">N°&nbsp;{{ String(idx + 1).padStart(2, '0') }}<span class="cap-arc-card__no-sep"> / {{ String(plotArcs.length).padStart(2, '0') }}</span></span>
                       <div class="cap-arc-card__head-chips">
-                        <span class="cap-chip" :class="arcTypeChipClass(arc.type)">
-                          {{ arc.type === 'main' ? '主线' : '支线' }}
+                        <span class="cap-chip" :class="arc.isMainline ? 'is-primary' : ''">
+                          {{ arc.isMainline ? '主线' : '支线' }}
                         </span>
-                        <span class="cap-chip" :class="arcStatusChipClass(arc.status)">
-                          {{ arcStatusLabel(arc.status) }}
+                        <span class="cap-chip" :class="arcActionChipClass(arc.action)">
+                          {{ arcActionLabel(arc.action) }}
                         </span>
-                        <span v-if="arc.status === 'closed'" class="cap-chip is-error">
-                          已关闭
+                        <span v-if="arc.isEnd" class="cap-chip is-warm">
+                          尾声
                         </span>
                       </div>
                     </div>
@@ -313,101 +313,15 @@
                     />
                   </div>
 
-                  <!-- 类型 / 状态 (chip-row, 可点改) -->
+                  <!-- 推进内容 -->
                   <div class="cap-arc-card__field">
-                    <span class="cap-arc-card__label">02 · 类型 / 状态</span>
-                    <div class="cap-arc-card__chip-row">
-                      <n-select
-                        v-model:value="arc.type"
-                        :options="arcTypeOptions"
-                        size="small"
-                        style="flex: 1"
-                      />
-                      <n-select
-                        v-model:value="arc.status"
-                        :options="arcStatusOptions"
-                        size="small"
-                        style="flex: 1"
-                      />
-                    </div>
-                  </div>
-
-                  <!-- 进度条: 笔触 visual + 透明 slider + mono % -->
-                  <div class="cap-arc-card__field">
-                    <span class="cap-arc-card__label">03 · 进度</span>
-                    <div class="cap-arc-card__progress">
-                      <div class="cap-arc-card__progress-track" aria-hidden="true">
-                        <div
-                          class="cap-arc-card__progress-fill"
-                          :style="{ width: arc.progress + '%' }"
-                        />
-                      </div>
-                      <n-slider
-                        v-model:value="arc.progress"
-                        :min="0"
-                        :max="100"
-                        :step="1"
-                        class="cap-arc-card__progress-slider"
-                      />
-                      <span class="cap-arc-card__progress-text">{{ String(arc.progress).padStart(2, '0') }}%</span>
-                    </div>
-                  </div>
-
-                  <!-- 当前阶段 -->
-                  <div class="cap-arc-card__field">
-                    <span class="cap-arc-card__label">04 · 当前阶段</span>
+                    <span class="cap-arc-card__label">02 · 推进内容</span>
                     <n-input
-                      v-model:value="arc.currentStage"
-                      placeholder="当前阶段"
-                      size="small"
-                    />
-                  </div>
-
-                  <!-- 下一目标 -->
-                  <div class="cap-arc-card__field">
-                    <span class="cap-arc-card__label">05 · 下一目标</span>
-                    <n-input
-                      v-model:value="arc.nextGoal"
-                      placeholder="下一目标"
-                      size="small"
-                    />
-                  </div>
-
-                  <!-- 摘要: textarea 直接编辑 -->
-                  <div class="cap-arc-card__field">
-                    <span class="cap-arc-card__label">06 · 摘要</span>
-                    <n-input
-                      v-model:value="arc.summary"
+                      v-model:value="arc.content"
                       type="textarea"
                       :rows="2"
-                      placeholder="弧线摘要"
+                      placeholder="本章推进内容"
                       size="small"
-                    />
-                  </div>
-
-                  <!-- 未解悬念 (mono 块) -->
-                  <div class="cap-arc-card__field">
-                    <span class="cap-arc-card__label">07 · 未解悬念</span>
-                    <n-input
-                      v-model:value="arc.unresolved"
-                      type="textarea"
-                      :rows="2"
-                      placeholder='JSON 数组, 如 ["悬念1", "悬念2"]'
-                      size="small"
-                      class="cap-arc-card__mono-input"
-                    />
-                  </div>
-
-                  <!-- 阶段记录 (mono 块) -->
-                  <div class="cap-arc-card__field">
-                    <span class="cap-arc-card__label">08 · 阶段记录</span>
-                    <n-input
-                      v-model:value="arc.stages"
-                      type="textarea"
-                      :rows="5"
-                      placeholder="阶段记录 JSON"
-                      size="small"
-                      class="cap-arc-card__mono-input"
                     />
                   </div>
 
@@ -498,7 +412,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import {
   NCard, NSpace, NTabs, NTabPane, NCollapse, NCollapseItem,
   NInput, NInputNumber, NButton, NEmpty, NGrid, NGi, NText,
-  NSelect, NSlider, NAlert,
+  NSelect, NAlert,
   useDialog, useMessage
 } from 'naive-ui'
 import EditableGraph from '../components/graph/EditableGraph.vue'
@@ -594,38 +508,13 @@ function confirmRemove(content: string, onConfirm: () => void) {
   })
 }
 
-// === 剧情弧线常量与 helper(照搬 v2,删除 timeline / similar 相关) ===
-const arcTypeOptions = [
-  { label: '主线', value: 'main' },
-  { label: '支线', value: 'side' }
-]
-
-const arcStatusOptions = [
-  { label: '进行中', value: 'active' },
-  { label: '收尾中', value: 'resolving' },
-  { label: '已完成', value: 'completed' },
-  { label: '已关闭', value: 'closed' },
-  { label: '沉寂', value: 'stale' }
-]
-
-function arcStatusLabel(status: string): string {
-  const opt = arcStatusOptions.find(o => o.value === status)
-  return opt?.label || status
+// === 剧情弧线 helper(v3: 推进点 + action + isEnd) ===
+function arcActionLabel(action: string): string {
+  return { create: '新建', update: '推进', close: '关闭' }[action] ?? action
 }
 
-function arcStatusChipClass(status: string): string {
-  switch (status) {
-    case 'active': return 'is-positive'
-    case 'resolving': return 'is-warm'
-    case 'completed': return 'is-snow'
-    case 'closed': return 'is-error'
-    case 'stale': return 'is-muted'
-    default: return ''
-  }
-}
-
-function arcTypeChipClass(type: string): string {
-  return type === 'main' ? 'is-warm' : 'is-blue'
+function arcActionChipClass(action: string): string {
+  return { create: 'is-primary', update: 'is-positive', close: 'is-error' }[action] ?? ''
 }
 
 // === computed 与各 tab 用到的派生 ===
@@ -718,16 +607,13 @@ function removeCharacterState(idx: number) {
 }
 function addPlotArc() {
   localData.value.plotArcs.push({
+    storyId: '',
+    arcId: null,
     name: '新弧线',
-    type: 'side',
-    status: 'active',
-    progress: 0,
-    currentStage: '',
-    nextGoal: '',
-    summary: '',
-    unresolved: '[]',
-    stages: '[]',
-    isNew: true
+    isMainline: false,
+    content: '',
+    isEnd: false,
+    action: 'create'
   })
 }
 function removePlotArc(idx: number) {

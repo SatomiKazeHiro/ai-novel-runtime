@@ -8,6 +8,7 @@ import LoreBook from '../views/LoreBook.vue'
 import Timeline from '../views/Timeline.vue'
 import Chapters from '../views/Chapters.vue'
 import Graph from '../views/Graph.vue'
+import PlotArcs from '../views/PlotArcs.vue'
 import Memory from '../views/Memory.vue'
 import RuntimeProfile from '../views/RuntimeProfile.vue'
 import WorkerTask from '../views/WorkerTask.vue'
@@ -37,6 +38,7 @@ const routes = [
       { path: 'chapters', name: 'Chapters', component: Chapters },
       { path: 'reader', name: 'ChapterReader', component: ChapterReader },
       { path: 'graph', name: 'Graph', component: Graph },
+      { path: 'plot-arcs', name: 'PlotArcs', component: PlotArcs },
       { path: 'memory', name: 'Memory', component: Memory },
       { path: 'timeline', name: 'Timeline', component: Timeline },
       { path: 'worker-tasks', name: 'StoryWorkerTasks', component: StoryWorkerTask },

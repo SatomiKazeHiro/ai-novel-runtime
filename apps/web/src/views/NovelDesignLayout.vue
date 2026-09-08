@@ -49,7 +49,7 @@ import {
 import {
   PeopleOutline, GlobeOutline, CreateOutline,
   AnalyticsOutline, LibraryOutline, TimerOutline,
-  HammerOutline, CodeWorkingOutline, BookOutline
+  HammerOutline, CodeWorkingOutline, BookOutline, GitBranchOutline
 } from '@vicons/ionicons5'
 import NavBar from '../components/NavBar.vue'
 import { useStoryStore } from '../stores/story'
@@ -87,6 +87,7 @@ const menuOptions: MenuOption[] = [
   { label: '知识图谱', key: 'Graph', icon: renderIcon(AnalyticsOutline) },
   { label: '记忆管理', key: 'Memory', icon: renderIcon(LibraryOutline) },
   { label: '时间线', key: 'Timeline', icon: renderIcon(TimerOutline) },
+  { label: '剧情弧线', key: 'PlotArcs', icon: renderIcon(GitBranchOutline) },
   { label: '任务模板', key: 'StoryWorkerTasks', icon: renderIcon(HammerOutline) },
   { label: '调用日志', key: 'PromptLogs', icon: renderIcon(CodeWorkingOutline) }
 ]
@@ -104,6 +105,7 @@ function handleMenuSelect(key: string) {
     Graph: `/novel-design/${sid}/graph`,
     Memory: `/novel-design/${sid}/memory`,
     Timeline: `/novel-design/${sid}/timeline`,
+    PlotArcs: `/novel-design/${sid}/plot-arcs`,
     StoryWorkerTasks: `/novel-design/${sid}/worker-tasks`,
     PromptLogs: `/novel-design/${sid}/prompt-logs`
   }
