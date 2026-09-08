@@ -121,8 +121,11 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     }
     const dedupedBranchStates = Array.from(latestPerChar.values())
 
-    // 查 existing arcs (全部状态, consolidator 内部按 status 分流)
-    const allExistingArcs = await prisma.plotArc.findMany({ where: { storyId: chapter.storyId } })
+    // 查 existing arcs — 只送「激活 + 待激活」（完成/关闭终态不送 AI 分析）
+    const allExistingArcs = await prisma.plotArc.findMany({
+      where: { storyId: chapter.storyId, status: { in: ['active', 'inactive'] } },
+      select: { id: true, name: true, isMainline: true, status: true, firstChapterNumber: true, closedBy: true, closedTargetArcId: true }
+    })
 
     // 查 prev cumulativeGraph 节点 (含 label, 供 stage 按正文预过滤)
     let prevCumulativeGraphNodes: Array<{ type: string; key: string; label: string }> = []
@@ -689,7 +692,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     const summary: string = typeof extractResult.summary === 'string' ? extractResult.summary : ''
     const optimized = toArray<OptimizedMemory>(optimizeResult.memories)
 
-    // plot-consolidator 输出 (PendingPlotArcWrite[]) — archive confirm 时落 PlotArc 表
+    // plot-consolidator 输出 (PlotArcWriteRow[]) — archive confirm 时落推进点 + 推导状态
     const plotArcResult = (pending.stages.plotArc.result ?? {}) as PlotArcStageResult
     const plotArcs = plotArcResult.plotArcs ?? []
 
@@ -774,8 +777,8 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       for (const data of [...chapterRows, ...sceneRows, ...globalRows]) {
         await tx.memory.create({ data })
       }
-      // 接通 v3 PlotArc 写库 (修 P0 遗留): consolidator 输出 → PlotArc 表
-      await commitPlotArcWrites(tx, chapter.number, plotArcs)
+      // 剧情弧线落库：推进点 + 关闭 + 状态推导
+      await commitPlotArcWrites(tx, chapter.storyId, chapter.number, plotArcs)
       // 接通 v3 CharacterBranchState 写库 (修 P0 遗留): character-stage 输出 → CharacterBranchState 表
       // isNew=true 时 commitCharacterBranchStateWrites 内部自动 tx.character.create 建 Character 行
       await commitCharacterBranchStateWrites(tx, chapter.storyId, chapter.number, resolvedCharacterStates)

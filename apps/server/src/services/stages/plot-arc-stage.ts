@@ -1,6 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import type { PendingPlotArcWrite } from '@novel-runtime/shared'
-import { consolidatePlotArcs, type ExistingArcView } from '../plot-consolidator.js'
+import { consolidatePlotArcs, type ExistingArcView, type PlotArcWriteRow } from '../plot-consolidator.js'
 import type { StageContext, StageState } from './types.js'
 
 export interface PlotArcStageInput extends StageContext {
@@ -14,7 +13,7 @@ export interface PlotArcStageInput extends StageContext {
 }
 
 export interface PlotArcStageResult {
-  plotArcs: PendingPlotArcWrite[]
+  plotArcs: PlotArcWriteRow[]
 }
 
 export async function runPlotArcStage(

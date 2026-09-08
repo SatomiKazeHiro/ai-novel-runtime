@@ -174,10 +174,7 @@ export async function storyRoutes(app: FastifyInstance) {
     const { id } = request.params as any
     const arcs = await app.prisma.plotArc.findMany({
       where: { storyId: id },
-      orderBy: [
-        { type: 'asc' },
-        { progress: 'desc' }
-      ]
+      orderBy: { firstChapterNumber: 'asc' }
     })
     return { success: true, data: arcs }
   })

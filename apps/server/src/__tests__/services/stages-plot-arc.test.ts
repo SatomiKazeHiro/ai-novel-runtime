@@ -19,17 +19,10 @@ function buildExistingArc(name: string): ExistingArcView {
   return {
     id: `arc-${name}`,
     name,
-    type: 'main',
+    isMainline: true,
     status: 'active',
-    progress: 40,
-    currentStage: 'old',
-    nextGoal: 'og',
-    unresolved: '[]',
-    summary: 'old sum',
-    stages: '[]',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    closedReason: null,
+    firstChapterNumber: 1,
+    closedBy: null,
     closedTargetArcId: null
   }
 }
@@ -41,16 +34,15 @@ function buildApp() {
 describe('plot-arc-stage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockLoadRuntimeBase.mockResolvedValue({ identity: '', settings: {}, behavior: '' })
+    mockLoadRuntimeBase.mockResolvedValue({ identity: '', settings: {}, behavior: '', jailbreak: '' })
     mockLoadWorkerTask.mockResolvedValue({ workerType: 'memory', taskPrompt: '' })
   })
 
   it('returns success with consolidated plot arcs', async () => {
     mockCallAIWithLog.mockResolvedValue(JSON.stringify({
-      updates: [
-        { existingId: 'arc-主线', progress: 60, currentStage: 's', nextGoal: 'g', unresolved: ['u'], summary: 'sum' }
-      ],
-      newArcs: []
+      arcUpdates: [{ arcId: 'arc-主线', content: '推进', isEnd: false }],
+      newArcs: [],
+      closes: []
     }))
 
     const state = await runPlotArcStage(buildApp(), {
@@ -65,9 +57,8 @@ describe('plot-arc-stage', () => {
     expect(state.result!.plotArcs.length).toBeGreaterThan(0)
   })
 
-  it('falls back to carry-forward when AI parsing fails twice', async () => {
-    mockCallAIWithLog.mockResolvedValueOnce('not-json')
-    mockCallAIWithLog.mockResolvedValueOnce('still-not-json')
+  it('AI 失败 → stage failed（不再 carry-forward）', async () => {
+    mockCallAIWithLog.mockRejectedValue(new Error('AI down'))
 
     const state = await runPlotArcStage(buildApp(), {
       storyId: 's1', chapterId: 'c1', content: 'x', outline: '', chapterNumber: 1,
@@ -75,9 +66,7 @@ describe('plot-arc-stage', () => {
       characterNames: [], latestBranchStates: []
     })
 
-    // consolidatePlotArcs 内部有 carry-forward 兜底，AI 失败两次仍返回 success
-    expect(state.status).toBe('success')
-    expect(state.result?.plotArcs).toBeDefined()
-    expect(state.result!.plotArcs.length).toBeGreaterThan(0)
+    expect(state.status).toBe('failed')
+    expect(state.errorMessage).toContain('AI down')
   })
 })
