@@ -1,27 +1,9 @@
 import type { FastifyInstance } from 'fastify'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
-import { cleanJsonBlock } from '@novel-runtime/shared'
+import { cleanJsonBlock, aliasKey, RELATION_MAPPING_ALIASES } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
 import { type GraphSnapshot } from './graph-snapshot.js'
-
-/**
- * 短→长字段映射, 用于解析 AI 返回 JSON。
- * 优先短名, fallback 长名 —— 老数据 / AI 偶尔写长名也接受。
- */
-const FIELD_ALIASES = {
-  mappings: 'mappings',
-  from: 'f',
-  to: 't',
-  variants: 'v',
-  canonical: 'c'
-} as const
-
-function aliasKey<T = any>(obj: any, long: keyof typeof FIELD_ALIASES): T | undefined {
-  if (!obj || typeof obj !== 'object') return undefined
-  const short = FIELD_ALIASES[long]
-  return (obj[short] ?? obj[long]) as T | undefined
-}
 
 export interface CumulativeGraphInput {
   storyId: string
@@ -104,7 +86,7 @@ export async function buildCumulativeGraph(
   }
 
   // 解析 AI 返回的 relation 归一映射
-  const mappingRaw = Array.isArray(aliasKey(parsed, 'mappings')) ? aliasKey<any[]>(parsed, 'mappings')! : []
+  const mappingRaw = Array.isArray(aliasKey(parsed, RELATION_MAPPING_ALIASES, 'mappings')) ? aliasKey<any[]>(parsed, RELATION_MAPPING_ALIASES, 'mappings')! : []
   const mapping = parseRelationMapping(mappingRaw)
 
   // 应用映射: 重写 prev 全部边 relation 字面
@@ -132,10 +114,10 @@ function parseRelationMapping(raw: any[]): Map<string, string> {
   const map = new Map<string, string>()  // key = `${from}|${variant}`, value = canonical
   for (const m of raw) {
     if (!m || typeof m !== 'object') continue
-    const from = aliasKey<string>(m, 'from')
-    const to = aliasKey<string>(m, 'to')
-    const canonical = aliasKey<string>(m, 'canonical')
-    const variants = Array.isArray(aliasKey<any[]>(m, 'variants')) ? aliasKey<any[]>(m, 'variants')! : []
+    const from = aliasKey<string>(m, RELATION_MAPPING_ALIASES, 'from')
+    const to = aliasKey<string>(m, RELATION_MAPPING_ALIASES, 'to')
+    const canonical = aliasKey<string>(m, RELATION_MAPPING_ALIASES, 'canonical')
+    const variants = Array.isArray(aliasKey<any[]>(m, RELATION_MAPPING_ALIASES, 'variants')) ? aliasKey<any[]>(m, RELATION_MAPPING_ALIASES, 'variants')! : []
     if (typeof from !== 'string' || typeof to !== 'string' || typeof canonical !== 'string') continue
     for (const v of variants) {
       if (typeof v !== 'string') continue
