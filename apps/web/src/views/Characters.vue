@@ -141,7 +141,8 @@
     </n-spin>
 
     <!-- 新建/编辑角色弹窗 (v4: 不再编辑关系/状态,走 PUT append snapshot) -->
-    <n-modal v-model:show="showModal" :title="isEdit ? '编辑角色' : '新建角色'" preset="card" style="width: 640px">
+    <n-modal v-model:show="showModal" :title="isEdit ? '编辑角色' : '新建角色'" preset="card" :style="{ width: editingHasSnapshot ? '960px' : '640px' }">
+      <div :class="{ 'character-edit-columns': editingHasSnapshot }">
       <n-form :model="form" label-placement="left" label-width="80">
         <n-form-item label="标识" required :disabled="isEdit">
           <n-input v-model:value="form.slug" placeholder="英文标识,如 linfan" :disabled="isEdit" />
@@ -167,11 +168,24 @@
         <n-form-item label="说话风格">
           <DynamicTags v-model="form.speechStyle" />
         </n-form-item>
-        <n-alert type="info" :show-icon="true" style="margin-top: 8px">
-          关系 / 状态 / 衣着 字段由归档时 AI 抽取并落入快照,不在此处编辑。
-          创建时可设置基础关系/状态;查看章节快照请使用上方档案视图切换器。
+        <template v-if="!isEdit || !editingHasSnapshot">
+          <n-form-item label="基础关系"><n-input v-model:value="form.relationshipsText" type="textarea" /></n-form-item>
+          <n-form-item label="Base status"><n-input v-model:value="form.statusText" type="textarea" /></n-form-item>
+        </template>
+        <n-alert v-if="!isEdit || !editingHasSnapshot" type="info" :show-icon="true" style="margin-top: 8px">
+          {{ isEdit ? '当前角色尚无章节快照。这里修改的是基础关系和基础状态，会作为后续生成时的 fallback。' : '基础关系和基础状态会作为角色初始设定保存。后续章节归档产生的关系、状态和衣着将以章节快照记录，不会覆盖这里的基础设定。' }}
         </n-alert>
       </n-form>
+        <aside v-if="editingHasSnapshot && editingCharacter" class="character-edit-snapshot">
+          <span class="character-edit-snapshot__hint">章节快照由归档分析生成，仅供查看，暂不支持手动编辑。</span>
+          <n-select v-model:value="snapshotChapter" :options="snapshotChapterOptions" size="small" placeholder="Select snapshot chapter" />
+          <span class="char-card__label">最新章节快照</span>
+          <div class="character-edit-snapshot__row"><strong>关系</strong><span>{{ formatObject(snapshotCharacter?.relationships?.value) || '未提取' }}</span></div>
+          <div class="character-edit-snapshot__row"><strong>状态</strong><span>{{ formatObject(snapshotCharacter?.status?.value) || '未提取' }}</span></div>
+          <div class="character-edit-snapshot__row"><strong>衣着</strong><span>{{ snapshotCharacter?.costume?.value || '未提取' }}</span></div>
+          <span class="char-card__source is-snapshot">只读·归档快照</span>
+        </aside>
+      </div>
       <template #footer>
         <n-space justify="end">
           <n-button @click="showModal = false">取消</n-button>
@@ -199,6 +213,11 @@ const loading = ref(false)
 const showModal = ref(false)
 const isEdit = ref(false)
 const editId = ref('')
+const editingHasSnapshot = ref(false)
+const editingCharacter = ref<CharacterDisplayRow | null>(null)
+const snapshotCharacter = ref<CharacterDisplayRow | null>(null)
+const snapshotChapter = ref<number | null>(null)
+const snapshotChapterOptions = computed(() => chapterOptions.value)
 const viewChapter = ref<number | null>(null)
 const chapterOptions = ref<Array<{ label: string; value: number }>>([])
 
@@ -210,7 +229,8 @@ const form = ref({
   appearance: [] as string[],
   temperament: [] as string[],
   personality: [] as string[],
-  speechStyle: [] as string[]
+  speechStyle: [] as string[],
+  relationshipsText: '{}', statusText: '{}'
 })
 
 /** 档案编号: № 001 */
@@ -285,13 +305,18 @@ function resetForm() {
   form.value = {
     slug: '', name: '', protagonist: false,
     identity: [], appearance: [], temperament: [],
-    personality: [], speechStyle: []
+    personality: [], speechStyle: [],
+    relationshipsText: '{}', statusText: '{}'
   }
 }
 
 function openCreate() {
   isEdit.value = false
   editId.value = ''
+  editingHasSnapshot.value = false
+  editingCharacter.value = null
+  snapshotCharacter.value = null
+  snapshotChapter.value = null
   resetForm()
   showModal.value = true
 }
@@ -299,6 +324,10 @@ function openCreate() {
 function openEdit(row: CharacterDisplayRow) {
   isEdit.value = true
   editId.value = row.id
+  editingHasSnapshot.value = Boolean(row.relationships || row.status || row.costume)
+  editingCharacter.value = row
+  snapshotCharacter.value = row
+  snapshotChapter.value = row.relationships?.sourceChapterNumber ?? row.status?.sourceChapterNumber ?? row.costume?.sourceChapterNumber ?? null
   form.value = {
     slug: row.slug,
     name: row.name,
@@ -307,14 +336,16 @@ function openEdit(row: CharacterDisplayRow) {
     appearance: Array.isArray(row.appearance) ? row.appearance : [],
     temperament: Array.isArray(row.temperament) ? row.temperament : [],
     personality: Array.isArray(row.personality) ? row.personality : [],
-    speechStyle: Array.isArray(row.speechStyle) ? row.speechStyle : []
+    speechStyle: Array.isArray(row.speechStyle) ? row.speechStyle : [],
+    relationshipsText: JSON.stringify(row.baseRelationships ?? {}, null, 2),
+    statusText: JSON.stringify(row.baseStatus ?? {}, null, 2)
   }
   showModal.value = true
 }
 
 async function handleSubmit() {
   if (!route.params.storyId) return
-  const data = {
+  const data: Record<string, any> = {
     name: form.value.name,
     protagonist: form.value.protagonist,
     identity: form.value.identity,
@@ -323,6 +354,14 @@ async function handleSubmit() {
     personality: form.value.personality,
     speechStyle: form.value.speechStyle
   }
+  if (!isEdit.value || !editingHasSnapshot.value) {
+    try {
+      data.relationships = JSON.parse(form.value.relationshipsText || '{}')
+      data.status = JSON.parse(form.value.statusText || '{}')
+    } catch {
+      return
+    }
+  }
 
   if (isEdit.value && editId.value) {
     await charactersApi.update(editId.value, data)
@@ -330,6 +369,7 @@ async function handleSubmit() {
     if (!form.value.slug || !form.value.name) return
     await charactersApi.create(route.params.storyId as string, {
       slug: form.value.slug,
+      name: form.value.name,
       ...data
     })
   }
@@ -348,6 +388,12 @@ watch(viewChapter, () => {
   loadCharacters()
 })
 
+watch(snapshotChapter, async (chapter) => {
+  if (!editingHasSnapshot.value || !editingCharacter.value || chapter === null || !route.params.storyId) return
+  const res = await charactersApi.display(route.params.storyId as string, chapter)
+  snapshotCharacter.value = (res.data.data ?? []).find((row: CharacterDisplayRow) => row.id === editingCharacter.value?.id) ?? null
+})
+
 watch(() => route.params.storyId, () => {
   loadCharacters()
   loadChapterOptions()
@@ -362,6 +408,13 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.character-edit-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr); gap: 24px; align-items: start; }
+.character-edit-snapshot { border-left: 1px solid var(--border-default); padding-left: 24px; display: flex; flex-direction: column; gap: 14px; }
+.character-edit-snapshot__hint { font-size: 12px; line-height: 1.5; color: var(--color-mid-gray); }
+.character-edit-snapshot__row { display: flex; flex-direction: column; gap: 5px; padding-bottom: 12px; border-bottom: 1px dashed var(--border-default); }
+.character-edit-snapshot__row strong { font-size: 12px; color: var(--color-mid-gray); }
+.character-edit-snapshot__row span { font-size: 13px; line-height: 1.6; color: var(--text-primary); word-break: break-word; }
+@media (max-width: 820px) { .character-edit-columns { grid-template-columns: 1fr; } .character-edit-snapshot { border-left: 0; border-top: 1px solid var(--border-default); padding-left: 0; padding-top: 20px; } }
 /* === 档案视图工具条 === */
 .char-toolbar {
   display: flex;

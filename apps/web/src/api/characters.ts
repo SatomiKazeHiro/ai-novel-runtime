@@ -42,6 +42,8 @@ export interface CharacterDisplayRow {
   speechStyle: string[]
   relationships: FieldDisplay<Record<string, any>> | null
   status: FieldDisplay<Record<string, any>> | null
+  baseRelationships: Record<string, any> | null
+  baseStatus: Record<string, any> | null
   costume: FieldDisplay<string> | null
 }
 

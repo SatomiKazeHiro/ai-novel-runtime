@@ -17,6 +17,8 @@ export interface CharacterDisplayRow {
   speechStyle: string[]
   relationships: FieldDisplay<Record<string, any>> | null
   status: FieldDisplay<Record<string, any>> | null
+  baseRelationships: Record<string, any> | null
+  baseStatus: Record<string, any> | null
   costume: FieldDisplay<string> | null
 }
 
@@ -134,6 +136,8 @@ export async function fetchCharacterDisplay(
       speechStyle: safeJsonParse(c.speechStyle, []),
       relationships: pickJson('relationships', c.relationships),
       status: pickJson('status', c.status),
+      baseRelationships: safeJsonParse<Record<string, any> | null>(c.relationships, null),
+      baseStatus: safeJsonParse<Record<string, any> | null>(c.status, null),
       costume: pickText()
     }
   })

@@ -56,6 +56,13 @@ export async function characterRoutes(app: FastifyInstance) {
   app.put('/api/characters/:charId', async (request, reply) => {
     const { charId } = request.params as any
     const body = request.body as any
+    if (body.status !== undefined || body.relationships !== undefined) {
+      const snapshot = await app.prisma.characterBranchState.findFirst({ where: { characterId: charId } })
+      if (snapshot) {
+        return reply.status(400).send({ success: false, error: 'Character base relationships/status cannot be changed after snapshots exist' })
+      }
+    }
+
     const data: any = { name: body.name }
     if (body.protagonist !== undefined) data.protagonist = body.protagonist
     if (body.personality !== undefined) data.personality = JSON.stringify(body.personality)
@@ -63,6 +70,8 @@ export async function characterRoutes(app: FastifyInstance) {
     if (body.identity !== undefined) data.identity = JSON.stringify(body.identity)
     if (body.appearance !== undefined) data.appearance = JSON.stringify(body.appearance)
     if (body.temperament !== undefined) data.temperament = JSON.stringify(body.temperament)
+    if (body.relationships !== undefined) data.relationships = JSON.stringify(body.relationships)
+    if (body.status !== undefined) data.status = JSON.stringify(body.status)
 
     const character = await app.prisma.character.update({
       where: { id: charId },
@@ -70,16 +79,7 @@ export async function characterRoutes(app: FastifyInstance) {
     })
 
     // 如果提供了状态/关系，插入新的历史记录（而不是更新旧记录）
-    if (body.status !== undefined || body.relationships !== undefined) {
-      await app.prisma.characterBranchState.create({
-        data: {
-          characterId: charId,
-          fromChapterNumber: body.fromChapterNumber ?? null,
-          status: JSON.stringify(body.status || {}),
-          relationships: JSON.stringify(body.relationships || {})
-        }
-      })
-    }
+    // Snapshot state is written only by archive confirmation.
 
     return { success: true, data: character }
   })
