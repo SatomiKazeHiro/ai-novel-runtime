@@ -82,10 +82,27 @@ export function useDraftManager() {
     }
   }
 
-  async function selectDraft(chapterId: string, draftId: string) {
+  async function selectDraft(chapterId: string, draftId: string, currentContent = '', opts: { confirmIfContentDiffers?: boolean } = { confirmIfContentDiffers: true }) {
+    const draft = drafts.value.find(d => d.id === draftId)
+
+    // v2: 选候选时若 chapter.content 与 draft.content 不同,弹确认窗(默认行为)
+    if (opts.confirmIfContentDiffers && (currentContent || '').trim() && (draft?.content ?? '') !== currentContent) {
+      const ok = await new Promise<boolean>((resolve) => {
+        dialog.warning({
+          title: '覆盖章节正文？',
+          content: '当前章节已有正文。继续将以所选候选内容覆盖。',
+          positiveText: '覆盖',
+          negativeText: '取消',
+          onPositiveClick: () => resolve(true),
+          onNegativeClick: () => resolve(false),
+          onClose: () => resolve(false)
+        })
+      })
+      if (!ok) return null
+    }
+
     try {
-      await chaptersApi.selectDraft(chapterId, draftId)
-      const draft = drafts.value.find(d => d.id === draftId)
+      await chaptersApi.selectDraft(chapterId, draftId, { overrideContent: true })
       const res = await draftsApi.list(chapterId)
       drafts.value = res.data.data || []
       message.success('已采用')

@@ -150,9 +150,9 @@ async function handleGeneratePrompt() {
 async function handleGenerateDefault() {
     if (!editor.currentChapter || !storyId()) return;
 
-    // 仅在 generated/selected 状态弹 token 成本确认对话框
+    // 仅在非草稿状态弹 token 成本确认对话框(已有候选,再生成属追加)
     // draft 状态是首次生成,直接放行(用户刚点进来,没有"追加"的成本顾虑)
-    if (["generated", "selected"].includes(editor.currentChapter.status)) {
+    if (editor.currentChapter.status !== 'draft') {
         const existingCount = drafts.drafts.length;
         const newCount = 3;
         // 粗估:每候选 ~maxTokens × 1.3 (含 system prompt + 输出冗余)
@@ -201,29 +201,15 @@ async function handleGenerateCustom() {
 
 async function handleAdoptDraft(draft: any) {
     if (!draft.content || !editor.currentChapter) return;
-    const doAdopt = async () => {
-        const content = await drafts.selectDraft(
-            editor.currentChapter!.id,
-            draft.id,
-        );
-        if (content !== null) {
-            editor.editForm.content = content;
-            editor.currentChapter!.content = content;
-            editor.currentChapter!.status = "selected";
-        }
-    };
-    const currentContent = editor.editForm.content || "";
-    if (currentContent.trim() && currentContent !== draft.content) {
-        dialog.warning({
-            title: "确认覆盖",
-            content: "右侧正文已有内容,采用此版本将覆盖当前正文。是否继续?",
-            positiveText: "覆盖",
-            negativeText: "取消",
-            positiveButtonProps: { type: "primary" },
-            onPositiveClick: doAdopt,
-        });
-    } else {
-        await doAdopt();
+    // v2: 覆盖确认已下沉到 drafts.selectDraft;chapter.status 不再被翻成 selected
+    const content = await drafts.selectDraft(
+        editor.currentChapter.id,
+        draft.id,
+        editor.editForm.content || "",
+    );
+    if (content !== null) {
+        editor.editForm.content = content;
+        editor.currentChapter!.content = content;
     }
 }
 

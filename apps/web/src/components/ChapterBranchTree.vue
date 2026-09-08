@@ -300,11 +300,7 @@ function getRowColor(node: FlatNode) {
 
 function getSpineColor(node: FlatNode) {
   if (node.status === 'archived') return MAIN_COLOR
-  if (node.status === 'selected') return MAIN_COLOR
-  if (node.status === 'generating') return COLOR.chapterGenerating
-  if (node.status === 'generated') return COLOR.chapterGenerated
   if (node.status === 'reviewing') return COLOR.chapterReviewing
-  if (node.status === 'rejected') return COLOR.chapterFailed
   return getRowColor(node)
 }
 
@@ -382,12 +378,8 @@ function canDevelop(node: FlatNode) {
   return node.status === 'archived'
 }
 function canEdit(node: FlatNode) {
-  // generating 也允许编辑: server PUT 路由(apps/server/src/routes/chapters-crud.ts)
-  // 对 generating 状态无字段限制; generate-processor 只写 Draft + chapter.status,
-  // 不写 title/outline/sceneLocation/sceneMood/sceneGoal,
-  // 用户在 generating 期间改这些字段不影响当前次 AI 调用
-  // (worker 已持有编译好的 prompt snapshot), 下次 generate 会用新 outline。
-  return ['draft', 'generated', 'selected', 'reviewing', 'generating'].includes(node.status)
+  // v2: draft / reviewing 可编辑; archived 只读
+  return ['draft', 'reviewing'].includes(node.status)
 }
 function canView(node: FlatNode) {
   return node.status === 'archived'

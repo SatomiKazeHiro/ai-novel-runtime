@@ -3,7 +3,7 @@
         <!-- 顶部按钮 -->
         <n-space align="center" style="margin-bottom: 12px">
             <n-button
-                v-if="chapter && ['draft', 'generated', 'selected'].includes(chapter.status)"
+                v-if="chapter && chapter.status !== 'archived'"
                 type="primary"
                 size="small"
                 @click="emit('generate-default')"
@@ -31,7 +31,7 @@
         >
             <n-text depth="3" style="font-size: 12px">
                 共 {{ drafts.drafts.length }} 个候选
-                <template v-if="chapter?.status === 'selected'">
+                <template v-if="drafts.drafts.some((d: any) => d.status === 'selected')">
                     ,已选 1 个(右上角带 ✓)
                 </template>
             </n-text>

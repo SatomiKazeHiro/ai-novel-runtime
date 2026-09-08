@@ -138,10 +138,10 @@ export function useChapterEditor(storyId: () => string | undefined) {
 
   async function prepareArchive() {
     if (!currentChapter.value) return { success: false }
-    // 允许 selected（首次）和 reviewing（重试：上一次提取失败导致
-    // pendingArchiveData 损坏 / null）两种状态进入 prepare-archive。
+    // v2: 允许 draft（首次，有 content 即可）和 reviewing（重试：上一次提取
+    // 失败导致 pendingArchiveData 损坏 / null）两种状态进入 prepare-archive。
     // 后端路由的 updateMany 锁也接受这两种状态。
-    if (currentChapter.value.status !== 'selected' &&
+    if (currentChapter.value.status !== 'draft' &&
         currentChapter.value.status !== 'reviewing') {
       message.warning('当前状态不支持准备归档')
       return { success: false }

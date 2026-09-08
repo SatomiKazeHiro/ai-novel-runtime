@@ -114,7 +114,6 @@ function goNext() {
 
 function statusTagType(status?: string): 'default' | 'info' | 'warning' | 'success' | 'error' {
   if (status === 'archived') return 'success'
-  if (status === 'failed') return 'error'
   if (status === 'reviewing') return 'warning'
   return 'default'
 }

@@ -235,7 +235,7 @@
                     <n-space align="center" justify="space-between" style="margin-top: 12px">
                         <n-space>
                             <n-button v-if="chapter?.status !== 'archived'" type="primary" size="small" @click="emit('save-content')" :loading="savingContent" :disabled="savingContent">保存正文</n-button>
-                            <n-button v-if="chapter?.status === 'selected'" size="small" @click="emit('prepare-archive')" :loading="archiving">准备归档</n-button>
+                            <n-button v-if="chapter?.status === 'draft'" size="small" @click="emit('prepare-archive')" :loading="archiving">准备归档</n-button>
                         </n-space>
                         <n-text depth="3" style="font-size: 13px">
                             {{ (editForm.content || "").length.toLocaleString() }} 字
@@ -456,23 +456,13 @@ function stopConfirm() {
 
 defineExpose({ startConfirm, stopConfirm });
 
-// 章节 status → n-tag type 映射(从原 Chapters.vue line 1130-1151 搬过来)
+// 章节 status → n-tag type 映射 (v2 3 态: draft / reviewing / archived)
 function statusTagType(status?: string) {
     switch (status) {
         case "archived":
             return "success";
-        case "selected":
-            return "info";
         case "reviewing":
             return "warning";
-        case "generated":
-            return "warning";
-        case "generating":
-            return "warning";
-        case "scored":
-            return "warning";
-        case "rejected":
-            return "error";
         case "draft":
             return "default";
         default:

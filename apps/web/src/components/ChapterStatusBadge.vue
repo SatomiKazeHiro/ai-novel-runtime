@@ -2,7 +2,6 @@
   <span class="chapter-status-badge" :data-tone="def.tone">
     <span
       class="chapter-status-badge__dot"
-      :class="{ 'chapter-status-badge__dot--pulse': def.pulse }"
     />
     {{ def.label }}
   </span>
@@ -67,13 +66,4 @@ const def = computed(() => getChapterStatus(props.status))
   background: var(--color-error-tint);
 }
 /* 'neutral' (草稿) 留默认 stone-gray + text-tertiary, 不覆盖 */
-
-.chapter-status-badge__dot--pulse {
-  animation: chapter-status-pulse 1.05s ease-in-out infinite;
-}
-
-@keyframes chapter-status-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
 </style>
