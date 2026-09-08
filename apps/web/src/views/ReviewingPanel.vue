@@ -54,8 +54,14 @@
             <p style="margin: 0 0 8px 0">以下条目需要在归档前处理:</p>
             <ul style="margin: 0 0 8px 0; padding-left: 20px">
               <li v-for="c in conflicts" :key="c.writeIndex" style="margin-bottom: 4px">
-                AI 返回 name="{{ c.aiWrite?.name }}", slug="{{ c.aiWrite?.key }}"
-                与已有 name="{{ c.existingCharacter?.name }}", slug="{{ c.existingCharacter?.slug }}" 冲突
+                <template v-if="c.reason === 'batch_duplicate_key'">
+                  AI 重复返回了 slug="{{ c.aiWrite?.key }}"（name="{{ c.aiWrite?.name }}"），
+                  与第 {{ (c.duplicateOfWriteIndex ?? 0) + 1 }} 条重复，请删除重复项或改 key
+                </template>
+                <template v-else>
+                  AI 返回 name="{{ c.aiWrite?.name }}", slug="{{ c.aiWrite?.key }}"
+                  与已有 name="{{ c.existingCharacter?.name }}", slug="{{ c.existingCharacter?.slug }}" 冲突
+                </template>
               </li>
             </ul>
             <p style="margin: 0">请在下方表格中纠正(选已有 / 修改 AI 返回的 key),或取消归档。</p>
@@ -518,6 +524,7 @@ const props = defineProps<{
     reason: string
     existingCharacter?: { id: string; slug: string; name: string }
     aiWrite?: { name: string; key: string }
+    duplicateOfWriteIndex?: number
   }>
 }>()
 
