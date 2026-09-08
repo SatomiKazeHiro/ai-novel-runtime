@@ -175,7 +175,6 @@ export function useChapterEditor(storyId: () => string | undefined) {
       const json = JSON.stringify(data)
       const res = await chaptersApi.update(currentChapter.value.id, { pendingArchiveData: json })
       if (res.data.success) {
-        currentChapter.value.pendingArchiveData = json
         pendingArchiveData.value = data
         message.success('归档数据已保存')
         return { success: true }
