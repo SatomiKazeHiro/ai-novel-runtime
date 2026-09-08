@@ -237,7 +237,9 @@ export function useChapterEditor(storyId: () => string | undefined) {
     }
   }
 
-  async function retryChapterStage(stageName: 'character' | 'memory' | 'plotArc' | 'graph') {
+  async function retryChapterStage(
+    stageName: 'character' | 'memoryExtract' | 'memoryOptimize' | 'plotArc' | 'graph'
+  ) {
     if (!currentChapter.value) return { success: false }
     if (currentChapter.value.status !== 'reviewing') {
       message.warning('只有 reviewing 状态可以重跑 stage')

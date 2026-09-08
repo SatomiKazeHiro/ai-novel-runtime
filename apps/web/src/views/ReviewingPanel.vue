@@ -33,9 +33,9 @@
       </n-card>
 
       <!-- 主编辑区 -->
-      <n-tabs type="line" default-value="characters" :animated="true">
+      <n-tabs type="line" :default-value="defaultTab" :animated="true">
         <!-- 角色 tab: 角色状态 (2 列 grid + 卡片, 与剧情弧线节奏一致) -->
-        <n-tab-pane name="characters">
+        <n-tab-pane name="characters" display-directive="show">
           <template #tab>
             <span class="rp-tab-label">
               <span class="rp-tab-dot" :style="{ background: dotColor('character') }" aria-hidden="true" />
@@ -108,24 +108,68 @@
           </footer>
         </n-tab-pane>
 
-        <!-- 记忆 tab: 提取的记忆 (主/次事件 + 情绪/伏笔/关系). 摘要上移到 banner 下, 角色状态在第 1 个 tab -->
+        <!-- 记忆 tab: v4 split-stage 两步进度 (抽取 + 优化) + 提取的记忆编辑器 -->
         <n-tab-pane name="memories">
           <template #tab>
             <span class="rp-tab-label">
-              <span class="rp-tab-dot" :style="{ background: dotColor('memory') }" aria-hidden="true" />
+              <span class="rp-tab-dot" :style="{ background: dotColor('memoryExtract') }" aria-hidden="true" />
               记忆
             </span>
           </template>
-          <div v-if="stageStatus('memory') === 'failed'" class="rp-stage-error">
-            <strong>解析失败:</strong> {{ props.pending?.stages?.memory?.errorMessage || '未知错误' }}
-          </div>
-          <div class="rp-stage-actions">
-            <n-button size="small" :disabled="isRetrying('memory')" @click="emit('retry-stage', 'memory')">
-              {{ isRetrying('memory') ? '重新解析中…' : '重新解析此阶段' }}
-            </n-button>
-          </div>
+
+          <!-- 两步进度条 (v4 split) -->
+          <n-card size="small" style="margin-bottom: 16px">
+            <n-space vertical size="small">
+              <!-- 步骤 1: 抽取 -->
+              <n-space align="center" :wrap="false">
+                <span class="rp-step-dot" :class="stepDotClass('memoryExtract')" aria-hidden="true">
+                  {{ stepDotMark('memoryExtract') }}
+                </span>
+                <span class="rp-step-label">抽取</span>
+                <n-button
+                  v-if="stageStatus('memoryExtract') === 'failed'"
+                  size="tiny"
+                  type="warning"
+                  :disabled="isRetrying('memoryExtract')"
+                  data-test="restart-memoryExtract"
+                  @click="emit('retry-stage', 'memoryExtract')"
+                >重启抽取</n-button>
+              </n-space>
+              <div v-if="stageStatus('memoryExtract') === 'failed'" class="rp-stage-error">
+                <strong>抽取失败:</strong> {{ props.pending?.stages?.memoryExtract?.errorMessage || '未知错误' }}
+              </div>
+
+              <!-- 步骤 2: 优化 -->
+              <n-space align="center" :wrap="false">
+                <span class="rp-step-dot" :class="stepDotClass('memoryOptimize')" aria-hidden="true">
+                  {{ stepDotMark('memoryOptimize') }}
+                </span>
+                <span class="rp-step-label">优化</span>
+                <n-button
+                  v-if="stageStatus('memoryOptimize') === 'failed'"
+                  size="tiny"
+                  type="warning"
+                  :disabled="isRetrying('memoryOptimize')"
+                  data-test="restart-memoryOptimize"
+                  @click="emit('retry-stage', 'memoryOptimize')"
+                >重启优化</n-button>
+              </n-space>
+              <div v-if="stageStatus('memoryOptimize') === 'failed'" class="rp-stage-error">
+                <strong>优化失败:</strong> {{ props.pending?.stages?.memoryOptimize?.errorMessage || '未知错误' }}
+              </div>
+
+              <!-- 总入口: 始终保留 -->
+              <n-button
+                size="small"
+                :disabled="isRetrying('memoryExtract') || isRetrying('memoryOptimize')"
+                data-test="restart-all-memory"
+                @click="handleRestartAllMemory"
+              >重新解析两步</n-button>
+            </n-space>
+          </n-card>
+
+          <!-- 原有记忆编辑器 (mainEvents / sideEvents / emotions / ...) -->
           <n-space vertical size="large" style="width: 100%">
-            <!-- 记忆编辑器 -->
             <n-card title="提取的记忆" size="small">
               <n-space vertical style="width: 100%">
                 <n-collapse :default-expanded-names="['mainEvents']">
@@ -429,22 +473,27 @@ import EditableGraph from '../components/graph/EditableGraph.vue'
 import { cumulativeGraphApi } from '../api/cumulative-graph'
 import DynamicTags from '../components/DynamicTags.vue'
 import {
-  fromV3, toV3,
-  type V3PendingArchiveData, type LocalData
+  fromV4, toV4,
+  type V4PendingArchiveData, type LocalData
 } from './ReviewingPanel.adapter'
 
 const props = defineProps<{
-  pending: V3PendingArchiveData
+  pending: V4PendingArchiveData
   retryingStages?: Partial<Record<StageName, boolean>>
   chapterId: string
   archiveRunning?: boolean
+  // 可选: 指定默认激活的 tab (默认 'characters')。父组件可传入 'memories' 等
+  defaultTab?: string
 }>()
 
-type StageName = 'character' | 'memory' | 'plotArc' | 'graph'
+const defaultTab = computed(() => props.defaultTab ?? 'characters')
+
+// v4: memory 拆为 memoryExtract (原 4 stage) + memoryOptimize (optimizer 融合)
+type StageName = 'character' | 'memoryExtract' | 'memoryOptimize' | 'plotArc' | 'graph'
 
 const emit = defineEmits<{
-  (e: 'save', data: V3PendingArchiveData): void
-  (e: 'confirm', data: V3PendingArchiveData): void
+  (e: 'save', data: V4PendingArchiveData): void
+  (e: 'confirm', data: V4PendingArchiveData): void
   (e: 'cancel'): void
   (e: 'reprepare'): void
   (e: 'retry-stage', stageName: StageName): void
@@ -458,11 +507,11 @@ const chapterGraphRef = ref<InstanceType<typeof EditableGraph> | null>(null)
 const cumulativeGraphRef = ref<InstanceType<typeof EditableGraph> | null>(null)
 const buildingCumulative = ref(false)
 
-const localData = ref<LocalData>(fromV3(props.pending))
+const localData = ref<LocalData>(fromV4(props.pending))
 
 // 父组件传入新 pending(整章重抽)时重新初始化本地编辑态
 watch(() => props.pending, (next) => {
-  localData.value = fromV3(next)
+  localData.value = fromV4(next)
 })
 
 // 取消自动保存: 所有改动必须手动点 "保存调整" 持久化
@@ -656,7 +705,7 @@ function handleSave() {
   pullGraphDraftIntoLocalData()
   pullCumulativeDraftIntoLocalData()
   saving.value = true
-  try { emit('save', toV3(localData.value, props.pending)) }
+  try { emit('save', toV4(localData.value, props.pending)) }
   finally { saving.value = false }
 }
 function handleConfirm() {
@@ -668,7 +717,25 @@ function handleConfirm() {
   pullGraphDraftIntoLocalData()
   pullCumulativeDraftIntoLocalData()
   // 注意: 按钮 loading 由父组件 archiveRunning 控制, 这里不再 set confirming
-  emit('confirm', toV3(localData.value, props.pending))
+  emit('confirm', toV4(localData.value, props.pending))
+}
+
+// === 记忆 tab 两步进度 helper (v4 split-stage) ===
+function stepDotMark(name: StageName): string {
+  const s = stageStatus(name)
+  if (s === 'success') return '✓'
+  if (s === 'failed') return '✗'
+  return '○'
+}
+function stepDotClass(name: StageName): string {
+  const s = stageStatus(name)
+  if (s === 'success') return 'is-positive'
+  if (s === 'failed') return 'is-error'
+  return 'is-muted'
+}
+function handleRestartAllMemory() {
+  // 重跑两步: extract 会自动续跑 optimizer (后端职责)
+  emit('retry-stage', 'memoryExtract')
 }
 </script>
 
@@ -685,6 +752,47 @@ function handleConfirm() {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+/* === 记忆 tab 两步进度 (v4 split-stage) ===
+   圆点 + 标签同行, 跟 NButton 重启按钮并排;
+   颜色按 status 切换: success 绿 / failed 红 / 其它灰 */
+.rp-step-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  flex-shrink: 0;
+  border: 1px solid var(--border-default);
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+}
+.rp-step-dot.is-positive {
+  background: var(--color-positive);
+  border-color: var(--color-positive);
+  color: #fff;
+}
+.rp-step-dot.is-error {
+  background: var(--color-error);
+  border-color: var(--color-error);
+  color: #fff;
+}
+.rp-step-dot.is-muted {
+  background: var(--color-stone-gray);
+  border-color: var(--border-subtle);
+  color: var(--text-tertiary);
+}
+.rp-step-label {
+  font-size: 14px;
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
 }
 
 /* === stage 失败提示条: 暖底红字 === */

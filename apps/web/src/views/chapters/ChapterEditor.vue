@@ -450,7 +450,7 @@ const emit = defineEmits<{
     (e: "confirm-archive-with-data", data: any): void;
     (e: "reprepare-archive"): void;
     (e: "cancel-reviewing"): void;
-    (e: "retry-stage", stageName: "character" | "memory" | "plotArc" | "graph"): void;
+    (e: "retry-stage", stageName: "character" | "memoryExtract" | "memoryOptimize" | "plotArc" | "graph"): void;
 }>();
 
 // v2 细粒度 readonly:

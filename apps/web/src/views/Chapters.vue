@@ -87,7 +87,9 @@ const repreparingArchive = ref(false);
 // 归档提交 in-flight 状态(ChapterEditor → ReviewingPanel 确认按钮 loading)
 const archiveRunning = ref(false);
 // 单 stage 重跑 in-flight 标记(per stage 独立 key)
-const retryingStages = ref<Partial<Record<"character" | "memory" | "plotArc" | "graph", boolean>>>({});
+type StageName = 'character' | 'memoryExtract' | 'memoryOptimize' | 'plotArc' | 'graph'
+
+const retryingStages = ref<Partial<Record<StageName, boolean>>>({});
 const dialog = useDialog();
 const message = useMessage();
 
@@ -351,7 +353,7 @@ function handleCancelReviewing() {
     });
 }
 
-async function handleRetryStage(stageName: "character" | "memory" | "plotArc" | "graph") {
+async function handleRetryStage(stageName: 'character' | 'memoryExtract' | 'memoryOptimize' | 'plotArc' | 'graph') {
     // 单 stage 重跑: 只重跑指定 stage, 不动其他 stage 结果, 不撤销整章
     if (retryingStages.value[stageName]) return;
     retryingStages.value = { ...retryingStages.value, [stageName]: true };
