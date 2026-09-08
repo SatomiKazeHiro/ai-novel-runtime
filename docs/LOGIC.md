@@ -511,4 +511,4 @@ V4-Flash 是 reasoning 模型（`deepseek-v4-flash` / `deepseek/deepseek-v3.2` v
 
 ---
 
-*本文档对应代码版本：commit `<TBD>`（branch `v2/state-machine` 2026-08-02），含 v4 归档流水线 + thinking 三态 + CharacterBranchState 写库 + 4KB 阈值清理。生成工具：见 `docs/superpowers/specs/2026-06-16-codebase-analysis-design.md`。*
+*本文档对应代码版本：commit `e28aad5`（branch `v2/state-machine` 2026-08-02），含 v4 归档流水线 + thinking 三态 + CharacterBranchState 写库 + 4KB 阈值清理。生成工具：见 `docs/superpowers/specs/2026-06-16-codebase-analysis-design.md`。*
