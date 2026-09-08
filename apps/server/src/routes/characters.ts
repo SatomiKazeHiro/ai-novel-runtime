@@ -16,6 +16,8 @@ export async function characterRoutes(app: FastifyInstance) {
   app.post('/api/stories/:storyId/characters', async (request, reply) => {
     const { storyId } = request.params as any
     const body = request.body as any
+    // v4 角色管理重构: base 关系/状态直接写入 Character 表,不再创建初始 branchState
+    // (base 已是初始值,初始 branchState fromChapterNumber=null 冗余,会让 fallback 走偏)
     const character = await app.prisma.character.create({
       data: {
         storyId,
@@ -26,21 +28,11 @@ export async function characterRoutes(app: FastifyInstance) {
         speechStyle: JSON.stringify(body.speechStyle || []),
         identity: JSON.stringify(body.identity || []),
         appearance: JSON.stringify(body.appearance || []),
-        temperament: JSON.stringify(body.temperament || [])
+        temperament: JSON.stringify(body.temperament || []),
+        relationships: body.relationships !== undefined ? JSON.stringify(body.relationships) : null,
+        status: body.status !== undefined ? JSON.stringify(body.status) : null
       }
     })
-
-    // 如果提供了初始状态，创建 CharacterBranchState（fromChapterNumber 为 null 表示初始状态）
-    if (body.status !== undefined || body.relationships !== undefined) {
-      await app.prisma.characterBranchState.create({
-        data: {
-          characterId: character.id,
-          fromChapterNumber: null,
-          status: JSON.stringify(body.status || {}),
-          relationships: JSON.stringify(body.relationships || {})
-        }
-      })
-    }
 
     return { success: true, data: character }
   })
