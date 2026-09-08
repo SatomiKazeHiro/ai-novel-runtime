@@ -251,10 +251,10 @@
         <ReviewingPanel
             v-if="chapter?.status === 'reviewing' && pendingArchiveData?.version === 3"
             :pending="pendingArchiveData"
-            @reprepare="emit('reprepare-archive')"
+            @save="(data) => emit('save-pending-archive', data)"
+            @confirm="(data) => emit('confirm-archive-with-data', data)"
             @cancel="emit('prepare-archive-cancel')"
-            @archive="emit('confirm-archive')"
-            @update-stage="(stageName: string, result: unknown) => emit('update-stage', stageName, result)"
+            @reprepare="emit('reprepare-archive')"
         />
 
         <!-- reviewing 但无待归档数据 / 数据版本过旧:提示异常 -->
@@ -440,7 +440,8 @@ const emit = defineEmits<{
     (e: "prepare-archive"): void;
     (e: "confirm-archive"): void;
     (e: "prepare-archive-cancel"): void;
-    (e: "update-stage", stageName: string, result: unknown): void;
+    (e: "save-pending-archive", data: any): void;
+    (e: "confirm-archive-with-data", data: any): void;
     (e: "reprepare-archive"): void;
     (e: "cancel-reviewing"): void;
 }>();

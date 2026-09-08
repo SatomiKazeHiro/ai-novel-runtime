@@ -44,8 +44,9 @@
         @adopt-draft="handleAdoptDraft"
         @prepare-archive="handlePrepareArchive"
         @confirm-archive="handleConfirmArchive"
+        @confirm-archive-with-data="handleConfirmArchiveWithData"
         @prepare-archive-cancel="handlePrepareArchiveCancel"
-        @update-stage="handleUpdateStage"
+        @save-pending-archive="handleSavePendingArchive"
         @reprepare-archive="handleReprepareArchive"
         @cancel-reviewing="handleCancelReviewing"
     />
@@ -280,19 +281,18 @@ async function handlePrepareArchiveCancel() {
     await editor.prepareArchiveCancel();
 }
 
-async function handleUpdateStage(stageName: string, result: unknown) {
-    // v3 改造:用户在 ReviewingPanel 点行内 × 删除 AI 输出后,
-    // 把改动深拷贝到 pendingArchiveData.stages[stageName].result 并静默持久化。
-    // savePendingArchiveData 内部已用 1s 静默,不会每点 × 就 message 一次。
-    if (!editor.pendingArchiveData) return
-    const next = JSON.parse(JSON.stringify(editor.pendingArchiveData))
-    if (!next.stages) next.stages = {}
-    if (!next.stages[stageName]) {
-        next.stages[stageName] = { status: 'success', result }
-    } else {
-        next.stages[stageName].result = result
-    }
-    await editor.savePendingArchiveData(next)
+async function handleSavePendingArchive(data: any) {
+    // ReviewingPanel 防抖触发或手动点"保存调整"。
+    // data 已是 v3 shape,直接持久化。
+    await editor.savePendingArchiveData(data)
+}
+
+async function handleConfirmArchiveWithData(data: any) {
+    // ReviewingPanel 点"确认归档":先存,再调 archive 端点。
+    const saved = await editor.savePendingArchiveData(data)
+    if (!saved.success) return
+    const result = await editor.archiveChapter()
+    if (result.success) await handleBackToTree()
 }
 
 async function handleReprepareArchive() {
