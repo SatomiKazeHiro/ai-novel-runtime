@@ -112,18 +112,28 @@ function buildFullPrompt(input: ExtractPromptInput): string {
 本故事主角：${input.protagonistNames.join('、') || '无明确主角'}
 
 每条事件必须包含：
-- description: 简洁描述"有什么人做了什么"
-- importance: 事件在本章的重要性（4~7）。如果事件有主角参与，请自行+1，最终为5~8。
+- description: 简洁描述"有什么人做了什么"（主角身份隐式包含在描述里）
+- importance: 1-10 整数
 
-importance 评分标准：
+importance 评分标准（按事件本身在本章的相对重要性打分，与 mainEvents / sideEvents 分流是独立判断）：
 - 7: 本章核心转折/高潮，占大量篇幅
 - 6: 重要推进，占中等篇幅
 - 5: 有一定作用，占少量篇幅
 - 4: 过渡/铺垫，篇幅很短
 
-**严禁返回 0、-1 或其他负数作为 importance 占位符；不确定时按 5 处理。**
+**事件分流**（按"是否独立完整地概括本章的一个情节节点"分流）：
 
-主角参与且达到 8 分的事件视为"主要事件"，放入 mainEvents；其他放入 sideEvents。
+- **mainEvents = 章节剧情里程碑**（1-3 个）
+  - 必须是能用一句话讲清的"章节关键剧情转折"
+  - 包含"什么时候、谁、做了什么、结果/影响"
+  - 一句话能独立成为章节的一段剧情概括
+  - 多 mainEvents 之间必须独立完整，不能是同一个事件的展开
+
+- **sideEvents = 上述主事件展开过程中的具体动作、对话、反应、细节**
+  - 单看不能成为"读者会记住的章节节点"
+  - 是主事件的展开过程，不是新的里程碑
+
+**严禁 importance = 0、负数、null；不确定时按 5 处理。不确定属于 mainEvents 还是 sideEvents 时放 sideEvents。**
 
 **重要：mainEvents 和 sideEvents 数组的顺序必须和事件在文章中的出现顺序完全一致，不能打乱，更不能把结尾的事件放到数组开头。**
 
@@ -208,18 +218,28 @@ function buildSlimPrompt(input: ExtractPromptInput): string {
 本故事主角：${input.protagonistNames.join('、') || '无明确主角'}
 
 每条事件必须包含：
-- description: 简洁描述"有什么人做了什么"
-- importance: 事件在本章的重要性（4~7）。如果事件有主角参与，请自行+1，最终为5~8。
+- description: 简洁描述"有什么人做了什么"（主角身份隐式包含在描述里）
+- importance: 1-10 整数
 
-importance 评分标准：
+importance 评分标准（按事件本身在本章的相对重要性打分，与 mainEvents / sideEvents 分流是独立判断）：
 - 7: 本章核心转折/高潮，占大量篇幅
 - 6: 重要推进，占中等篇幅
 - 5: 有一定作用，占少量篇幅
 - 4: 过渡/铺垫，篇幅很短
 
-**严禁返回 0、-1 或其他负数作为 importance 占位符；不确定时按 5 处理。**
+**事件分流**（按"是否独立完整地概括本章的一个情节节点"分流）：
 
-主角参与且达到 8 分的事件视为"主要事件"，放入 mainEvents；其他放入 sideEvents。
+- **mainEvents = 章节剧情里程碑**（1-3 个）
+  - 必须是能用一句话讲清的"章节关键剧情转折"
+  - 包含"什么时候、谁、做了什么、结果/影响"
+  - 一句话能独立成为章节的一段剧情概括
+  - 多 mainEvents 之间必须独立完整，不能是同一个事件的展开
+
+- **sideEvents = 上述主事件展开过程中的具体动作、对话、反应、细节**
+  - 单看不能成为"读者会记住的章节节点"
+  - 是主事件的展开过程，不是新的里程碑
+
+**严禁 importance = 0、负数、null；不确定时按 5 处理。不确定属于 mainEvents 还是 sideEvents 时放 sideEvents。**
 
 **重要：mainEvents 和 sideEvents 数组的顺序必须和事件在文章中的出现顺序完全一致，不能打乱，更不能把结尾的事件放到数组开头。**
 
@@ -306,18 +326,28 @@ function buildMemoryOnlyPrompt(input: ExtractPromptInput): string {
 本故事主角：${input.protagonistNames.join('、') || '无明确主角'}
 
 每条事件必须包含：
-- description: 简洁描述"有什么人做了什么"
-- importance: 事件在本章的重要性（4~7）。如果事件有主角参与，请自行+1，最终为5~8。
+- description: 简洁描述"有什么人做了什么"（主角身份隐式包含在描述里）
+- importance: 1-10 整数
 
-importance 评分标准：
+importance 评分标准（按事件本身在本章的相对重要性打分，与 mainEvents / sideEvents 分流是独立判断）：
 - 7: 本章核心转折/高潮，占大量篇幅
 - 6: 重要推进，占中等篇幅
 - 5: 有一定作用，占少量篇幅
 - 4: 过渡/铺垫，篇幅很短
 
-**严禁返回 0、-1 或其他负数作为 importance 占位符；不确定时按 5 处理。**
+**事件分流**（按"是否独立完整地概括本章的一个情节节点"分流）：
 
-主角参与且达到 8 分的事件视为"主要事件"，放入 mainEvents；其他放入 sideEvents。
+- **mainEvents = 章节剧情里程碑**（1-3 个）
+  - 必须是能用一句话讲清的"章节关键剧情转折"
+  - 包含"什么时候、谁、做了什么、结果/影响"
+  - 一句话能独立成为章节的一段剧情概括
+  - 多 mainEvents 之间必须独立完整，不能是同一个事件的展开
+
+- **sideEvents = 上述主事件展开过程中的具体动作、对话、反应、细节**
+  - 单看不能成为"读者会记住的章节节点"
+  - 是主事件的展开过程，不是新的里程碑
+
+**严禁 importance = 0、负数、null；不确定时按 5 处理。不确定属于 mainEvents 还是 sideEvents 时放 sideEvents。**
 
 **重要：mainEvents 和 sideEvents 数组的顺序必须和事件在文章中的出现顺序完全一致，不能打乱，更不能把结尾的事件放到数组开头。**
 
