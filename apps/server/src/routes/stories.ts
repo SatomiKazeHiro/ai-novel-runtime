@@ -169,16 +169,6 @@ export async function storyRoutes(app: FastifyInstance) {
     }
   })
 
-  // GET /stories/:id/plot-arcs
-  app.get('/:id/plot-arcs', async (request, reply) => {
-    const { id } = request.params as any
-    const arcs = await app.prisma.plotArc.findMany({
-      where: { storyId: id },
-      orderBy: { firstChapterNumber: 'asc' }
-    })
-    return { success: true, data: arcs }
-  })
-
   // DELETE /stories/:id
   app.delete('/:id', async (request, reply) => {
     const { id } = request.params as { id: string }
