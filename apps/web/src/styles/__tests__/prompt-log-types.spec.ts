@@ -23,11 +23,13 @@ import {
 
 const PRISMA_CALL_TYPE_VALUES = [
   'generate',
-  'memory_extract',
-  'graph_extract',
-  'plot_extract',
-  'combined_extract',
-  'compress'
+  'character_stage',
+  'memory_stage',
+  'memory_optimize',
+  'graph_extract_stage',
+  'cumulative_dedup',
+  'plot_consolidate',
+  'score'
 ]
 
 const PRISMA_CALL_STATUS_VALUES = ['success', 'error']
@@ -106,8 +108,8 @@ describe('getCallType lookup', () => {
     expect(generate.tone).toBe('warm')
   })
 
-  it('combined_extract uses review tone (与 chapter reviewing 区分)', () => {
-    expect(getCallType('combined_extract').tone).toBe('review')
+  it('cumulative_dedup uses neutral tone', () => {
+    expect(getCallType('cumulative_dedup').tone).toBe('neutral')
   })
 
   it('returns neutral placeholder for unknown id (no throw)', () => {

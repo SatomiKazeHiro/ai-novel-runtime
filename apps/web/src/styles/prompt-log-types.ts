@@ -33,12 +33,14 @@ export interface CallStatusDef {
 }
 
 export const CALL_TYPES: CallTypeDef[] = [
-  { id: 'generate',         label: '章节生成', tone: 'warm',    order: 10 },
-  { id: 'memory_extract',   label: '记忆提取', tone: 'cool',    order: 20 },
-  { id: 'graph_extract',    label: '图谱提取', tone: 'cool',    order: 30 },
-  { id: 'plot_extract',     label: '弧线提取', tone: 'cool',    order: 40 },
-  { id: 'combined_extract', label: '合并提取', tone: 'review',  order: 50 },
-  { id: 'compress',         label: '记忆压缩', tone: 'neutral', order: 60 },
+  { id: 'generate',            label: '章节生成',     tone: 'warm',    order: 10 },
+  { id: 'character_stage',     label: '角色提取',     tone: 'cool',    order: 20 },
+  { id: 'memory_stage',        label: '记忆提取',     tone: 'cool',    order: 30 },
+  { id: 'memory_optimize',     label: '记忆融合',     tone: 'cool',    order: 40 },
+  { id: 'graph_extract_stage', label: '图谱提取',     tone: 'cool',    order: 50 },
+  { id: 'cumulative_dedup',    label: '累计图谱归一', tone: 'neutral', order: 60 },
+  { id: 'plot_consolidate',    label: '弧线合并',     tone: 'cool',    order: 70 },
+  { id: 'score',               label: '评分',         tone: 'warm',    order: 80 },
 ]
 
 export const CALL_STATUSES: CallStatusDef[] = [
