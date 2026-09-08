@@ -98,8 +98,6 @@ describe('memory-stage', () => {
         mainEvents: [], sideEvents: [], emotions: [], foreshadowing: [], relationshipChanges: [],
         scenes: [],
         characterStatusChanges: { 张三: { rank: '初级' } },
-        timelinePosition: 1.00106,
-        timelineEvents: [{ position: 1.00106, description: 'x' }],
         summary: 't'
       }
     }
@@ -115,7 +113,5 @@ describe('memory-stage', () => {
     // result 不应暴露被 v3 删除的字段
     const result: any = state.result
     expect(result?.characterStatusChanges).toBeUndefined()
-    expect(result?.timelinePosition).toBeUndefined()
-    expect(result?.timelineEvents).toBeUndefined()
   })
 })

@@ -110,9 +110,7 @@ describe('PUT /chapters/:chapterId — UpdateChapterRequestSchema', () => {
                      layer: 'chapter', content: 'edited content',
                      tags: '[]', importance: 9 }],
         characterStates: [],
-        timelineEvents: [{ storyId: 's1', fromChapterNumber: 1, position: 1.00106, events: '["x"]' }],
-        summary: 'edited summary',
-        timelinePosition: 1.00106
+        summary: 'edited summary'
       },
       graph: { mergedGraph: { nodes: [], edges: [], timestamp: '' }, chapterGraph: { nodes: [], edges: [], timestamp: '' } },
       plotArcs: [],
@@ -150,7 +148,6 @@ describe('POST /chapters/:chapterId/preview — PreviewRequestSchema', () => {
         findFirst: vi.fn().mockResolvedValue(null)
       },
       loreItem: { findMany: vi.fn().mockResolvedValue([]) },
-      timelineEvent: { findMany: vi.fn().mockResolvedValue([]) },
       plotArc: { findMany: vi.fn().mockResolvedValue([]) },
       memory: { findMany: vi.fn().mockResolvedValue([]) },
       character: { findMany: vi.fn().mockResolvedValue([]) },
@@ -207,7 +204,6 @@ describe('POST /chapters/:chapterId/generate — GenerateRequestSchema', () => {
       },
       draft: { count: vi.fn().mockResolvedValue(0), create: vi.fn().mockResolvedValue({ id: 'd1' }) },
       loreItem: { findMany: vi.fn().mockResolvedValue([]) },
-      timelineEvent: { findMany: vi.fn().mockResolvedValue([]) },
       plotArc: { findMany: vi.fn().mockResolvedValue([]) },
       memory: { findMany: vi.fn().mockResolvedValue([]) },
       character: { findMany: vi.fn().mockResolvedValue([]) },

@@ -8,7 +8,6 @@ describe('generate route — v2 orthogonal to chapter status (3-value enum)', ()
   beforeEach(async () => {
     mockPrisma = createMockPrisma({
       loreItem: { findMany: vi.fn().mockResolvedValue([]) },
-      timelineEvent: { findMany: vi.fn().mockResolvedValue([]) },
       plotArc: { findMany: vi.fn().mockResolvedValue([]) },
       characterBranchState: { findMany: vi.fn().mockResolvedValue([]) },
       memory: { findMany: vi.fn().mockResolvedValue([]) },

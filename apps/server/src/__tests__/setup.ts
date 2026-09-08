@@ -108,7 +108,6 @@ export function createMockPrisma(overrides: Record<string, any> = {}) {
     },
     story: { findUnique: vi.fn() },
     loreItem: { findMany: vi.fn() },
-    timelineEvent: { findMany: vi.fn() },
     plotArc: { findMany: vi.fn() },
     memory: { findMany: vi.fn(), create: vi.fn() },
     characterBranchState: { findMany: vi.fn(), create: vi.fn() },

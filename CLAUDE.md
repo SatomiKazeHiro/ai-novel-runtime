@@ -102,7 +102,7 @@ The prompt is built in fixed layers (bottom to top):
 
 ```
 System Message  ← Identity + Settings + Behavior + Jailbreak + Task
-User Message    ← Style → Story → Lore → Character → Scene → Memory → Timeline → PlotArc → Output
+User Message    ← Style → Story → Lore → Character → Scene → Memory → PlotArc → Output
 ```
 
 Each layer has a token budget. The budgets scale relative to the model's `contextLength` (default benchmark 64k tokens). Implementation is split across:
@@ -122,7 +122,7 @@ Archiving is the most complex flow. It is implemented in `apps/server/src/routes
 | 1.5. memoryOptimize | `memory-optimizer.ts` | `prepare-archive` (memoryExtract 完成后串行) | memoryExtract success 后串行调 optimizer,读现有 `layer='global'` + memoryExtract output,AI 融合产出 `stages.memoryOptimize.result.memories`(统一数组,每条 `{content, originUid, importance, type: 'event'\|'state'}`,后端落表时加 `'auto-extracted'` 前缀)。覆盖原 raw output,user review 时看到的是融合结果。**不再** post-commit 跑(原 v2 `archive` post-commit 触发已删除)。失败时该 stage 标记 failed,不影响 graph / character / plot-arc。 |
 | 2. Organize graph | (内嵌在 graph-extract stage 里读 `prevCumulativeGraph`) | `prepare-archive` | graph stage 读上一章归档的 `Chapter.cumulativeGraph` (parent 优先,主线回退) + 本章 chapterGraph,产出新的 `chapterGraph`。累计合成下个 user action 「生成累计图谱」时再走 `services/cumulative-graph.ts`。 |
 | 2.5. Human review | `ReviewingPanel.vue` (前端) | `chaptersApi.update({ pendingArchiveData })` | 用户在审查阶段编辑后点「保存调整」→ `composables/useChapterEditor.ts:savePendingArchiveData` → `PUT /api/chapters/:id` 把整份 `PendingArchiveDataV4` 写回 `Chapter.pendingArchiveData` (TEXT JSON)。累计图谱编辑后保存走同一条路(PATCH 端点已删除)。Cancel = `POST /prepare-archive/cancel`,只清 `pendingArchiveData`。 |
-| 3. Transaction write | `chapters-archive.ts` archive route | `archive` (confirm) | commit-only 端点,**不调 AI 不调 optimizer**。`prisma.$transaction` 内依次:① `tx.memory.create` 写三层(`chapter` from main/sideEvents/emotions/foreshadowing/relationshipChanges、`scene` from scenes、`global` from optimizer 融合 memories)② `tx.chapter.update({summary})` ③ `tx.chapter.update({chapterGraph, cumulativeGraph, cumulativeGraphGeneratedAt, status: 'archived', pendingArchiveData: null})`。④ `tx.plotArc` 写剧情弧线(commitPlotArcWrites) ⑤ `tx.characterBranchState` 写角色快照 + isNew 自动建档 Character(commitCharacterBranchStateWrites,slug+name 冲突则提前 409)。`TimelineEvent` 在 v3 删除,不再写。 |
+| 3. Transaction write | `chapters-archive.ts` archive route | `archive` (confirm) | commit-only 端点,**不调 AI 不调 optimizer**。`prisma.$transaction` 内依次:① `tx.memory.create` 写三层(`chapter` from main/sideEvents/emotions/foreshadowing/relationshipChanges、`scene` from scenes、`global` from optimizer 融合 memories)② `tx.chapter.update({summary})` ③ `tx.chapter.update({chapterGraph, cumulativeGraph, cumulativeGraphGeneratedAt, status: 'archived', pendingArchiveData: null})`。④ `tx.plotArc` 写剧情弧线(commitPlotArcWrites) ⑤ `tx.characterBranchState` 写角色快照 + isNew 自动建档 Character(commitCharacterBranchStateWrites,slug+name 冲突则提前 409)。 |
 
 **数据流硬规则(v3)**:reviewing 期间所有图谱数据只活 `pendingArchiveData` JSON;`Chapter` 三列(`chapterGraph` / `cumulativeGraph` / `cumulativeGraphGeneratedAt`)在 `archive` confirm 之前一直为 null。`GraphView.vue` 只查 `archived` 章节,读三列,读到的是用户终稿。详见 `docs/superpowers/specs/2026-07-29-graph-cleanup-design.md` + `docs/superpowers/specs/2026-07-29-graph-v2-deadcode-cleanup-design.md`。
 
@@ -173,12 +173,6 @@ During `reviewing` these three columns stay `null`; the working copies live in `
 - Main-line chapters form a strictly linear sequence (`1, 2, 3, ...`).
 - Side stories (`isSideStory = true`) are decimal chapters (`1.01`, `1.02`) and can branch from any archived chapter.
 - Deleting an archived chapter cascades: it removes derived data (memories, character branch states, plot arcs, prompt logs) that share the same `fromChapterNumber`. v3: no graph-table rebuild — the cumulative graph is per-chapter JSON (`Chapter.cumulativeGraph`), so earlier chapters keep their own snapshots.
-
-### Timeline Position Encoding
-
-`TimelineEvent.position` is stored as a single-decimal **Y.DDDHH** float where the integer part is the year (negative = pre-history) and the decimal part is exactly 5 digits `DDDHH` (day-of-year 1–365 + hour 0–23). Rendered through `formatTimelinePosition()` (currently in `apps/server/src/routes/chapters-generate.ts`); use the same encoding when inserting or comparing positions. Schema migration `20260626000000_timeline_position_encoding` introduced this; pre-migration rows should already be backfilled.
-
-> **TimelineEvent 在 v3 删除**（2026-07-24 标记）。强 Y.DDDHH 时间戳假设排除无时间/模糊时间类故事；`findMany` 全量注入与 Memory.semantic recall 重复。v3 实施见 `docs/DESIGN.md` 决策日志。v2 期间不要在新代码里依赖 TimelineEvent。
 
 ## Key Conventions
 
@@ -247,7 +241,7 @@ Import each Naive UI component explicitly. Table action columns are rendered wit
 - `Process.md` — narrative walkthrough of the chapter lifecycle and data flow
 - `README.md` — project intro, setup, and deployment notes
 - `docs/DESIGN.md` — design-level rationale and decisions
-- `docs/LOGIC.md` — domain logic notes (timeline encoding, scoring rules, etc.)
+- `docs/LOGIC.md` — domain logic notes (scoring rules, etc.)
 - `docs/ISSUES.md` — P0/P1 issue tracker with file:line citations and resolution commits
 - `docs/sql-reference.md` — SQL reference
 - `docs/superpowers/plans/` — implementation plans produced via superpowers:writing-plans
