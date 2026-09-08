@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createMockApp, callHandler, createMockPrisma } from '../setup.js'
 
 vi.mock('../../services/stages/cumulative-graph-build-service.js', () => ({
-  buildAndSaveCumulativeGraph: vi.fn()
+  buildCumulativeGraphWithTimestamp: vi.fn()
 }))
 
-import { buildAndSaveCumulativeGraph } from '../../services/stages/cumulative-graph-build-service.js'
+import { buildCumulativeGraphWithTimestamp } from '../../services/stages/cumulative-graph-build-service.js'
 
 describe('GET /api/chapters/:chapterId/cumulative-graph', () => {
   let mockPrisma: any
@@ -85,7 +85,7 @@ describe('POST /api/chapters/:chapterId/cumulative-graph/build', () => {
       edges: [],
       timestamp: '2026-07-27T10:00:00.000Z',
     }
-    ;(buildAndSaveCumulativeGraph as any).mockResolvedValueOnce({
+    ;(buildCumulativeGraphWithTimestamp as any).mockResolvedValueOnce({
       graph: generatedGraph,
       generatedAt: '2026-07-27T10:00:00.000Z',
       aiCalled: true,

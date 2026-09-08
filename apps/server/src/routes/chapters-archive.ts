@@ -8,7 +8,7 @@ import { runPlotArcStage } from '../services/stages/plot-arc-stage.js'
 import { runGraphExtractStage } from '../services/stages/graph-extract-stage.js'
 import { buildCumulativeGraph } from '../services/cumulative-graph.js'
 import type { GraphSnapshot } from '../services/graph-snapshot.js'
-import { buildAndSaveCumulativeGraph, type BuildAndSaveResult } from '../services/stages/cumulative-graph-build-service.js'
+import { buildCumulativeGraphWithTimestamp, type BuildAndSaveResult } from '../services/stages/cumulative-graph-build-service.js'
 
 /**
  * v3 archive 端点 — 3 端点:
@@ -380,7 +380,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
 
   // POST /api/chapters/:chapterId/cumulative-graph/build
   // 入参: { chapterGraph: GraphSnapshot }
-  // 调 buildAndSaveCumulativeGraph, 写 Chapter.cumulativeGraph + cumulativeGraphGeneratedAt。
+  // 调 buildCumulativeGraphWithTimestamp, 写 Chapter.cumulativeGraph + cumulativeGraphGeneratedAt。
   // 章节图谱的来源由前端 body 携带, 后端不回查 pendingArchiveData。
   app.post('/api/chapters/:chapterId/cumulative-graph/build', async (request, reply) => {
     const { chapterId } = request.params as any
@@ -422,7 +422,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
 
     let result: BuildAndSaveResult
     try {
-      result = await buildAndSaveCumulativeGraph(app, {
+      result = await buildCumulativeGraphWithTimestamp(app, {
         storyId: chapter.storyId, chapterId, chapterNumber: chapter.number,
         chapterGraph: body.chapterGraph,
         prevCumulativeGraph: prevCumulative,
