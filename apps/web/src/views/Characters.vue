@@ -469,9 +469,9 @@ onMounted(() => {
 /* 标题区: 姓名 + slug */
 .char-card__title {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
   margin-top: -4px;
 }
 .char-card__name {
@@ -484,26 +484,29 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
 }
-.char-card__protagonist {
+/* protagonist + slug 视觉高度对齐(同一 baseline 高度) */
+.char-card__protagonist,
+.char-card__slug {
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
   font-size: 11px;
+  line-height: 1.5;
+  border-radius: 4px;
+}
+.char-card__protagonist {
   background: var(--accent);
   color: var(--text-on-accent, #fff);
-  border-radius: 4px;
   letter-spacing: 1px;
   font-weight: var(--weight-medium);
 }
 .char-card__slug {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 10px;
-  letter-spacing: 1.2px;
+  letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--color-muted-ash);
-  padding: 2px 6px;
   background: var(--bg-section);
-  border-radius: 4px;
+  font-weight: var(--weight-regular);
 }
 
 /* section 通用 */
