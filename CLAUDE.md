@@ -66,23 +66,27 @@ Prisma generates the client to `node_modules/.prisma/client` at the repo root. A
 
 ### Chapter Lifecycle
 
-The system is organized around a chapter state machine (`prisma/schema.prisma` → `enum ChapterStatus`) that drives the entire creative workflow:
+The system is organized around a chapter state machine (`prisma/schema.prisma` → `enum ChapterStatus`) that drives the entire creative workflow. As of the **v2 refactor**, `ChapterStatus` is a **3-value enum** (`draft` / `reviewing` / `archived`); candidate generation lives entirely in `Draft.status` and is orthogonal to chapter state:
 
 ```
-Draft -> Generating -> Generated -> (Scored) -> Selected -> Reviewing -> Archived
-                                                                       \-> (cancel: deleted)
-                                                                                \-> (Rejected)
+draft ──┬─→ preparing-archive ─→ reviewing ─→ archived
+        │       (AI extraction)        ↑
+        └──── user re-edits / cancel ──┘ (rollback)
 ```
+
+(`preparing-archive` is the transient `prepare-archive` endpoint running, not a persisted enum value.)
 
 1. User creates a chapter (`draft`).
-2. User clicks **Generate**: the backend assembles a prompt and enqueues a job to create multiple `Draft` candidates. While running, the chapter is `generating`; once all drafts finish, it becomes `generated`.
-3. User may **Score** a candidate; AI scores across 7 dimensions, with a rule-based fallback. A scored chapter has the `scored` status.
-4. User **Selects** one candidate; its content is copied into the `Chapter` and its status becomes `selected`.
-5. User clicks **Prepare Archive**: the backend runs phase 1 + phase 2 of the archive pipeline, then parks the extracted payload in `Chapter.pendingArchiveData` (TEXT, JSON) and sets status to `reviewing`. No DB writes yet.
+2. User clicks **Generate**: backend enqueues a job creating N `Draft` candidates. Candidates run independently of chapter status — the chapter stays in `draft` while drafts progress through `Draft.status` (`generating` → `completed`/`failed`).
+3. User may **Score** a candidate; AI scores across 7 dimensions, with a rule-based fallback.
+4. User **Selects** one candidate: its content is copied into `Chapter.content` (overridable via the `overrideContent` flag, default true); the candidate is marked `Draft.status='selected'` and its siblings `rejected`. **Chapter status stays unchanged** — selection is a Draft-layer concept.
+5. User clicks **Prepare Archive**: the backend runs phase 1 + phase 2 of the archive pipeline, parks the extracted payload in `Chapter.pendingArchiveData` (TEXT, JSON) and sets status to `reviewing`. No DB writes to derived tables yet. On AI-extraction failure, status rolls back to `draft`.
 6. The `ReviewingPanel` lets the user edit memories, character states, timeline events, the chapter graph, and plot arcs. Edits are written back to `Chapter.pendingArchiveData` via `chaptersApi.savePendingArchiveData`. **Cancel = delete the chapter.**
 7. User clicks **Confirm Archive**: the persisted payload is replayed inside a `prisma.$transaction`, chapter status flips to `archived`, and phase 4 (memory optimization) runs after the transaction.
 
 Only `archived` chapters feed forward into the next chapter's prompt.
+
+**Candidate generation is orthogonal to chapter state.** A draft can be generated for any non-`archived` chapter (`generate` / `select` return 400 on an `archived` chapter). The worker respects `Draft.status` (skipping user-decided/completed/failed drafts) but never reads or writes `Chapter.status`.
 
 Frontend polling: after submitting generation, the UI polls `draftsApi.list` every 2 seconds (`useIntervalFn` in `useDraftManager.ts`) until all drafts are `completed` or `failed`. Both `generate` and `archive` API calls set `timeout: 0` because they may be long-running.
 
@@ -124,7 +128,7 @@ This design guarantees that phases 1 and 2 can fail without writing data, phase 
 
 The backend uses BullMQ when `REDIS_URL` is available, otherwise it falls back to an in-memory `MemoryQueue`. Only the `generateQueue` currently has a registered worker (`generate-processor.ts`). `scoreQueue` and `memoryQueue` exist but are placeholders.
 
-Drafts are generated **serially** inside `generate-processor.ts` to reduce instantaneous API pressure, even when multiple candidates are requested.
+Drafts are generated **serially** inside `generate-processor.ts` to reduce instantaneous API pressure, even when multiple candidates are requested. As of v2, the worker only reads/writes `Draft.status` (skipping the four user-decided/terminal statuses `selected`/`rejected`/`completed`/`failed`); it never touches `Chapter.status`.
 
 ### Memory Model
 

@@ -201,7 +201,7 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 | `characters.ts` | `/api/stories/:storyId/characters` + `/api/characters/:charId` | 角色 CRUD + `CharacterBranchState` 历史 |
 | `lore.ts` | `/api/stories/:storyId/lore` + `/api/lore/:itemId` | 世界观设定 CRUD |
 | `timeline.ts` | `/api/stories/:storyId/timeline` + `/api/timeline/:eventId` | 时间线事件 CRUD |
-| `chapters-{crud,generate,archive,tree}.ts` + `_helpers.ts` | `/api/stories/:storyId/chapters`, `/api/chapters/:chapterId/...` | **最复杂**(P3 拆分):crud(基础 CRUD) / generate(preview + generate + select + develop) / archive(prepare-archive + archive 确认 + 事务) / tree(chapter-tree) |
+| `chapters-{crud,generate,archive,tree}.ts` + `_helpers.ts` | `/api/stories/:storyId/chapters`, `/api/chapters/:chapterId/...` | **最复杂**(P3 拆分):crud(基础 CRUD) / generate(preview + generate + select + develop) / archive(prepare-archive + archive 确认 + 事务) / tree(chapter-tree)。**v2**:`ChapterStatus` 收口到 3 值(`draft`/`reviewing`/`archived`);generate/select **不再翻 `chapter.status`**(只写 `Draft.status`,`archived` 章节兜底 400);prepare-archive 的独占锁条件为 `status ∈ [draft, reviewing]`,AI 提取失败回退 `draft` |
 | `drafts.ts` | `/api/chapters/:chapterId/drafts`, `/api/drafts/:draftId` | 草稿 CRUD |
 | `graph.ts` | `/api/stories/:storyId/graph`, `/api/chapters/:chapterId/graph-snapshot` | 知识图谱查询 + 手动增删节点/边 |
 | `memories.ts` | `/api/stories/:storyId/memory` | 记忆查询 + 创建 |
@@ -221,7 +221,7 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 | `ai-call-logger.ts` | **统一 AI 调用封装**：自动记录 `promptLog`（成功/失败均异步写入），返回 content 或抛出错误 |
 | `runtime-loader.ts` | 加载 `RuntimeBase` 和 `WorkerTask`（按 Story → 全局默认 → 硬编码回退） |
 | `runtime-profile-init.ts` | 启动时扫描 `seeds/profiles/*.yaml` 导入 `runtimeProfile`(YAML 解析失败立即报错) |
-| `generate-processor.ts` | 队列处理器：循环为每个 draft 调用 AI，更新 `draft.content` 和状态 |
+| `generate-processor.ts` | 队列处理器：循环为每个 draft 调用 AI，更新 `draft.content` 和 `Draft.status`。**v2**：只读写 `Draft.status`（跳过 `selected`/`rejected`/`completed`/`failed` 四种用户决定/已完成态），**不读不写 `Chapter.status`**——候选生成与章节状态正交 |
 | `combined-extractor.ts` | **归档核心**：一次 AI 调用同时提取记忆 + 图谱 + 剧情弧线 |
 | `graph-extractor.ts` | 从章节提取图谱节点/边（`importance >= 6`），保存到 `graphNode`/`graphEdge` |
 | `graph-organizer.ts` | AI 合并上一章全局图谱 + 本章提取 → 生成新的 `mergedGraph` + `chapterGraph` |

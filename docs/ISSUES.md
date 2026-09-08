@@ -66,17 +66,16 @@
 - **Status:** [RESOLVED 2026-06-16 by dba2ba1]
 
 ### `prepare-archive` 路由无 try/catch 包裹 `prepareArchiveData`
-- **File:line:** `apps/server/src/routes/chapters.ts:585`
-- **Symptom:** `const pending = await prepareArchiveData(...)` 直接 throw。`organizeGraph` 抛错（line 119 `throw err`）会冒泡到 Fastify 全局错误处理 → 500。前端 `prepareArchive` 收到 500，但 `chapter.status` 仍为 `selected`（line 602-608 在抛错后不执行）。
+- **File:line:** `apps/server/src/routes/chapters-archive.ts:80-102`
+- **Symptom:** `const pending = await prepareArchiveData(...)` 直接 throw。`organizeGraph` 抛错会冒泡到 Fastify 全局错误处理 → 500。
 - **Repro:**
   1. 让 AI 返回 graph 整理结果但 JSON 格式损坏（修改 prompt 让 AI 输出 markdown 包裹的 JSON）
-  2. `organizeGraph` line 96 `JSON.parse` 抛错
-  3. 冒泡 → `prepare-archive` 路由 500
-  4. 前端 `useChapterEditor.ts:158` catch 错误，`currentChapter.value.status` 仍为 `selected`，message.error 提示
-  5. 用户可以重试（重新点"准备归档"），但每次都会重跑 `extractAll`（浪费 token）
-- **Root cause hypothesis:** 与同文件 `archive` 路由（line 657-704）有完整 try/catch 形成对比——`archive` 路由事务+`optimizeMemories` 都有保护。`prepare-archive` 路由作者**忘了**对 `prepareArchiveData` 加保护。
+  2. `organizeGraph` 内 `JSON.parse` 抛错
+  3. 冒泡 → `prepare-archive` 路由 catch
+  4. 用户可以重试（重新点"准备归档"），但每次都会重跑 `extractAll`（浪费 token）
+- **Root cause hypothesis:** 与同文件 `archive` 路由有完整 try/catch 形成对比。`prepare-archive` 路由早期**忘了**对 `prepareArchiveData` 加保护。
 - **Blast radius:** 任何 `organizeGraph` 抛错的章节。出现概率取决于 AI 输出格式稳定性。
-- **Status:** [RESOLVED 2026-06-16 by 09092ae]
+- **Status:** [RESOLVED 2026-06-16 by 09092ae] · **REVISIT 2026-07-24（v2）：** 现在 try/catch 内统一把 `chapter.status` 回退到 **`draft`**（不再回 `selected`，`selected` enum 值已删）+ 清 `pendingArchiveData`（`chapters-archive.ts:93-96`），让用户能再编辑大纲/正文后重试。
 
 ### `ai-provider.ts` GET 路由不排除 `apiKey` 字段 → 明文 Key 泄漏
 - **File:line:** `apps/server/src/routes/ai-provider.ts:6-11`（列表）+ `apps/server/src/routes/ai-provider.ts:14-22`（默认）
@@ -136,14 +135,14 @@
 
 | # | 议题 | 用户决策(2026-06-16) | 后续方向 | Status |
 |---|------|----------------------|----------|--------|
-| 1 | `ChapterStatus` shared const 缺 `generating` + `reviewing`；前端 `statusTagType` 缺 `scored` + `rejected` | 未明确表态；按整体接受态度处理 | 把 `generating` + `reviewing` 加到 `packages/shared/src/index.ts:3-10`；`apps/web/src/views/Chapters.vue:1057` `statusTagType` 同步补 `scored` + `rejected`；删除 `as any` / 硬编码字符串 | RESOLVED 2026-06-16 by d2034a6 |
+| 1 | `ChapterStatus` shared const 缺 `generating` + `reviewing`；前端 `statusTagType` 缺 `scored` + `rejected` | 未明确表态；按整体接受态度处理 | 把 `generating` + `reviewing` 加到 `packages/shared/src/index.ts:3-10`；`apps/web/src/views/Chapters.vue:1057` `statusTagType` 同步补 `scored` + `rejected`；删除 `as any` / 硬编码字符串 | RESOLVED 2026-06-16 by d2034a6 · **REVISIT 2026-07-24：v2 反方向收口到 3 值（`draft`/`reviewing`/`archived`），删掉 `generating`/`generated`/`scored`/`selected`/`rejected` 5 个值。三层定义（schema / shared / 前端 `chapter-status.ts`）现全部一致，Q1 彻底解决** |
 | 3 | `assertStatusTransition` helper 死代码（定义后无调用） | 从优化/可维护角度取舍 | 二选一：① 删除 helper（`chapters.ts:29-37`）和 `VALID_STATUS_TRANSITIONS` 表；② 改造为路由层统一接入（`chapters.ts:388, 517, 551, 630` 全部改用 helper）。倾向 ① 直至需要集中校验时再回填 | RESOLVED 2026-06-16 by f0bb424 + 6528301 |
 | 5 | 前端 `JSON.parse(res.data.data)` 二次解析（`useChapterEditor.ts:150`） | 统一就统一 | 后端统一返回对象（已经是）；前端 `useChapterEditor.ts:150` 改为 `res.data.data`；DB 字段读取路径（`useChapterEditor.ts:74-81`、`chapters.ts:646`）保留 `safeJsonParse`，因为 DB `String?` 列存的是 JSON 文本 | RESOLVED 2026-06-16 by dba2ba1 |
 | 6 | `PendingArchiveData` 前后端各定义一份 | 共享一份 | 把 interface 移到 `packages/shared/src/index.ts`（或新建 `packages/shared/src/archive.ts`）；前后端 import 同一份；加 `as const` 字段 | RESOLVED 2026-06-16 by d2034a6 (Q1 同 commit,共享 `PendingArchiveData` 在 `packages/shared/src/archive.ts:130`) |
-| 7 | `prepare-archive` 路由无 try/catch | 处理避免 UI 断片 | 加 try/catch 包裹 `prepareArchiveData`（`chapters.ts:585`）；catch 内把 `chapter.status` 改回 `selected`（撤销 line 605 的状态转换），返回明确错误信息；前端 `useChapterEditor.ts:158` catch 显示具体失败原因 | RESOLVED 2026-06-16 by 09092ae |
+| 7 | `prepare-archive` 路由无 try/catch | 处理避免 UI 断片 | 加 try/catch 包裹 `prepareArchiveData`（`chapters.ts:585`）；catch 内把 `chapter.status` 改回 `selected`（撤销 line 605 的状态转换），返回明确错误信息；前端 `useChapterEditor.ts:158` catch 显示具体失败原因 | RESOLVED 2026-06-16 by 09092ae · **REVISIT 2026-07-24（v2）：catch 内改为回退 `draft`（`selected` enum 已删），见上方 [P0 已修] 对应条目** |
 | 8 | `select` 路由不校验 `draft.chapterId === chapterId` | 严格优化 | `chapters.ts:524-527` 改 `where: { id: body.draftId, chapterId }`；事务内二次校验 `draft.chapterId === chapterId`；不匹配返回 404（不暴露 draft 是否存在） | RESOLVED 2026-06-16 by 116247c |
 | 9 | `generate` 路由接受 raw `compiledPrompt` 无 zod | 找稳健/易读/易扩展的方案 | 引入 zod：① `apps/web/src/api/chapters.ts` 出口用 `CompiledPromptSchema.parse()` 校验；② 后端 `chapters.ts:432` 入参 `CompiledPromptSchema.parse(body.compiledPrompt)`，失败返回 400 + 字段级错误。schema 定义在 `packages/shared/src/chapter-prompt.ts` | RESOLVED 2026-06-16 by 47e0d2c + 8ce9eaa (**SPEC 修正**：原 spec 误标 OPEN,实施时经 git log 校对确认已修) |
-| 10 | `generate` 路由并发无保护（`status === 'draft'` 时双击会创建 2 批 draft） | 优化避免脏数据 | 用 chapter 行状态机独占锁：`generate` 路由 `update: { where: { id: chapterId, status: 'draft' }, data: { status: 'generating' } }` 受影响行数 0 → 返回 409 Conflict；不加 schema 字段（用户选"状态机独占锁"） | RESOLVED 2026-06-16 by 510a656 + 5f80270 |
+| 10 | `generate` 路由并发无保护（`status === 'draft'` 时双击会创建 2 批 draft） | 优化避免脏数据 | 用 chapter 行状态机独占锁：`generate` 路由 `update: { where: { id: chapterId, status: 'draft' }, data: { status: 'generating' } }` 受影响行数 0 → 返回 409 Conflict；不加 schema 字段（用户选"状态机独占锁"） | RESOLVED 2026-06-16 by 510a656 + 5f80270 · **REVISIT 2026-07-24（v2）：RESOLVED-by-解锁，不再 RESOLVED-by-加锁。** v2 把候选生成与 `chapter.status` 解耦：`generate` 不再翻 chapter.status，也就没有跨字段独占锁。设计上接受双击并发产生 2 批 draft——用户看到候选数翻倍但**无脏状态**（`chapters-generate.ts:155-157` 注释固化）。锁只保留在 `prepare-archive`/`archive`。 |
 
 > Q2(importance 4-7 vs 1-10,保留现状不强制统一)是"行为漂移(接受)"类,无 commit 提交修复,不再列入 [Q 决策 - 已修],见文末说明。
 > Q4(`buildData` `user-edited` 移除)已并入 [P0 已修] #1(`c98d582` 同 commit),不重复列。

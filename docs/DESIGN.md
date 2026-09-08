@@ -398,3 +398,27 @@ Max-width 1200px centered container, light theme throughout except one dark deve
   --shadow-sm: rgba(0, 0, 0, 0.1) 0px 2px 8px 0px;
 }
 ```
+
+---
+
+## 决策日志
+
+## v2 状态机重构（2026-07-24, branch `v2/state-machine`）
+
+**Why**: 原 8 态枚举把"候选生成锁"和"章节业务状态"两个独立维度挤进同一个字段，导致 select/prepare-archive 失败时的回滚语义被迫引入 `preLockStatus` 等补丁字段。Worker 与路由相互等待对方写 status 的耦合让 archive 并发场景极易踩坑。
+
+**What**:
+- `ChapterStatus` 收口到 3 值：`draft` / `reviewing` / `archived`
+- 候选生成与章节状态正交：worker 不再 `updateMany` chapter.status
+- `select` 路由不再翻 chapter.status；改用 `Draft.status='selected'` 标记 + 可选覆盖 `chapter.content`（新增 `overrideContent` 参数，默认 true）
+- 失败的 prepare-archive 统一回退到 `draft`
+- archived 章节不可再生成新候选（UI 层隐藏按钮，路由层兜底 400）
+
+**Trade-off**:
+- 失去"章节正在生成中"的全局可见信号；UI 改用 Draft 层聚合判断
+- 单向 archived 让"取消归档"语义不存在 —— 取消 = 删章节 + 级联清快照
+- migration 单步：老 DB 必须先迁移；期间若有新写入按旧 enum 校验会失败
+
+**How to apply**: 未来新增章节相关功能时，候选相关问题去 Draft 层查，章节业务流转查 `ChapterStatus`，两者不要混用。
+
+实现细节：5 个 commit × 1 branch，spec 在 `docs/superpowers/specs/2026-07-24-v2-state-machine-design.md`，plan 在 `docs/superpowers/plans/2026-07-24-v2-state-machine.md`。
