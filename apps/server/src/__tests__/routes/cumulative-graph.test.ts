@@ -39,7 +39,7 @@ describe('GET /api/chapters/:chapterId/cumulative-graph', () => {
       routes, 'GET', '/api/chapters/:chapterId/cumulative-graph',
       undefined, { chapterId: 'ch-1' }
     )
-    expect(res.body).toEqual({ success: true, data: { generatedAt: null, graph: null } })
+    expect(res.body).toEqual({ success: true, data: { generatedAt: null, graph: null, chapterGraph: null } })
   })
 
   it('returns existing graph and generatedAt', async () => {

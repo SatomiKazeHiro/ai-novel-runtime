@@ -362,7 +362,9 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
   })
 
   // GET /api/chapters/:chapterId/cumulative-graph
-  // 拉取累计图谱草稿 + generatedAt; 未生成时返回 { generatedAt: null, graph: null }
+  // 拉取累计图谱 + generatedAt + 本章图谱; 任意字段未写入时回 null。
+  // chapterGraph 来自 Chapter.chapterGraph (archive confirm 阶段写入, 详见本文件 L179-188)。
+  // 前端 GraphView 用 chapterGraph 渲染「本章纯净」tab — 见 spec 2026-07-29-graphview-bugfix-design.md。
   app.get('/api/chapters/:chapterId/cumulative-graph', async (request, reply) => {
     const { chapterId } = request.params as any
     const prisma = app.prisma
@@ -375,8 +377,11 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     const graph = chapter.cumulativeGraph
       ? safeJsonParse<GraphSnapshot | null>(chapter.cumulativeGraph, null)
       : null
+    const chapterGraph = chapter.chapterGraph
+      ? safeJsonParse<GraphSnapshot | null>(chapter.chapterGraph, null)
+      : null
 
-    return { success: true, data: { generatedAt, graph } }
+    return { success: true, data: { generatedAt, graph, chapterGraph } }
   })
 
   // POST /api/chapters/:chapterId/cumulative-graph/build
