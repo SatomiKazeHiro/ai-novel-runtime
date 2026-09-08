@@ -131,10 +131,22 @@
 
 **设计要点**：
 - `content` 中可嵌入章节来源信息（如 `[第5章] 主线：张三突破`），由 `formatForPrompt` 统一格式化
-- **Scene 记忆**：`layer='scene'` 保存格式为 `【地点】描写 | 事件：事件概括`，由 `combined-extractor.ts` 在 archive 时提取，AI 自评 importance
-- 写入时通过 Jaccard 去重（`memory-extractor.ts`）
+- **Scene 记忆**：`layer='scene'` 保存格式为 `【地点】描写 | 事件：事件概括`，由 `stages/memory-stage.ts` 提取（prompt 要求 AI 输出 scenes 数组），AI 自评 importance 1-10
 - 检索时通过语义相似度 + 章节距离衰减 + 主线优先排序
-- `memory-organizer.ts` 在 archive 后对增量记忆做 AI 语义整理（merge/update/delete）
+
+**v3 layer 写入规则**（archive confirm commit-only 一次性写三层）：
+
+| 数据来源 | layer | tags | importance | 来源 |
+|---|---|---|---|---|
+| `mainEvents[]` | `chapter` | `['auto-extracted','main-plot']` | AI 给（4~7+1）| memory-stage 原始输出 |
+| `sideEvents[]` | `chapter` | `['auto-extracted']` | AI 给 | memory-stage 原始输出 |
+| `emotions[]` / `foreshadowing[]` / `relationshipChanges[]` | `chapter` | `['auto-extracted']` | 写死 5 | memory-stage 原始输出 |
+| `scenes[]` | `scene` | `['auto-extracted','scene-memory']` | AI 给 | memory-stage 原始输出 |
+| optimizer 融合 `memories[]` | `global` | `['auto-extracted','event'\|'state']` | AI 给 | memory-optimizer 覆盖 result 后 |
+
+`Chapter.summary` 写章节列,**不进 Memory 表**(语义是章节元数据,不是记忆)。
+
+**累加 vs 覆盖**：optimizer 每章归档对同 UID 产生新行 layer='global'(累加,不是 update by UID)。删章节(`chapters-crud.ts:179-194`)`deleteMany where fromChapterNumber=N`,前 N-1 章同 UID 版本保留。`memory-engine.searchRelevant` 加 originUid 分组取最新版本逻辑(仅 layer='global'),自然处理"删章节回退"。
 
 ---
 
@@ -145,7 +157,7 @@
 | `id` | String PK | |
 | `storyId` | String FK → Story | |
 | `chapterId` | String? FK → Chapter | 可选 |
-| `callType` | String | `generate` / `score` / `memory_extract` / `graph_extract` / `plot_extract` / `combined_extract` / `compress` / `memory_organize` |
+| `callType` | String | `generate` / `score` / `character_stage` / `memory_stage` / `graph_extract_stage` / `plot_consolidate` / `cumulative_dedup` / `memory_optimize` |
 | `aiProviderConfigId` | String FK → AiProviderConfig | 当时使用的模型配置 |
 | `providerName` | String | `deepseek` / `openai` |
 | `model` | String | 如 `deepseek-chat` |

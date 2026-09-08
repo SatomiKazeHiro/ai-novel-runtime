@@ -23,8 +23,9 @@
   6. AI 收到的 prompt 里没有本章原始记忆，全局融合实质空跑
 - **Root cause hypothesis:** **原 Agent 误解了用户原意**。用户的设计意图是"归档后数据应该沉寂，给下一章作为参考"（即所有 memory 平等进入 AI 融合），但原 Agent 自行决定加 `user-edited` tag 试图"保护用户改过的内容"——这与"沉寂"原则冲突。`buildData` 本身也缺 baseline 对比能力（line 224 `baselineChapterGraph` 只覆盖 graph 不覆盖 memory 列表），无法区分"用户实际改过"和"用户看过"，所以一刀切给所有 memory 加 tag。
 - **Blast radius:** 所有走过 reviewing 流程的章节。跨章积累。global 记忆层无法反映实际剧情进展，下一章 prompt 拿不到正确的"上一章发生了什么"。
-- **用户决策（2026-06-16）：** 彻底移除 `user-edited` 标记注入。删除 `ReviewingPanel.vue:458-463` 的 tag 循环；`memory-optimizer.ts:60-64` 的 `userEditedMemories` 分支保留但不触发。
-- **Status:** [RESOLVED 2026-06-16 by c98d582]
+- **用户决策（2026-06-16）：** 彻底移除 `ReviewingPanel` 的 `user-edited` 标记注入。
+- **二次拍板（2026-07-30）：** 连同 `memory-optimizer.ts` 中保留的 `userEditedMemories` 特殊分支一起删除；用户编辑后的记忆与 AI 输出平等进入融合。详见 `docs/superpowers/specs/2026-07-30-v3-memory-system-design.md` D6。
+- **Status:** [RESOLVED 2026-06-16 by c98d582; v3 设计收口 2026-07-30]
 
 ### 章节内容截断到 8000 字，AI 看不到后半部分
 - **File:line:** `apps/server/src/services/combined-extractor.ts:148`
@@ -275,7 +276,8 @@ SPEC 修正说明:Q9(zod 接入)在 spec「背景」节中误标 OPEN,实施时�
 **Resolution:**
 - `GraphView.vue` 已改读 v3 `cumulativeGraphApi`（commit adc7df9），只查 `archived` 章节的三列
 - `GraphNode` / `GraphEdge` 表已删（migration `20260729000000_drop_graph_node_edge`），`routes/graph.ts` / `api/graph.ts` 一并删除
-- `graph-snapshot.ts` 的 `saveGraphSnapshotAndDelta` / `rebuildGraphFromSnapshot` 已删，仅剩 `expandNeighborhood`
+- `graph-snapshot.ts` 收口后只剩 `GraphNodeSnapshot` / `GraphEdgeSnapshot` / `GraphSnapshot` 三个 interface（`expandNeighborhood` / `ExpandOptions` / `NeighborhoodResult` 已删）
+- v2 死代码 7 个源文件 + 7 个测试 + 2 份过时脚本于 2026-07-30 一次性清理
 
 ---
 

@@ -35,8 +35,11 @@ draft ──┬─→ reviewing ─→ archived
                             │   把图谱数据从 pendingArchiveData 拷到
                             │   Chapter 三列(chapterGraph/cumulativeGraph/
                             │   cumulativeGraphGeneratedAt), 清 pendingArchiveData
-                            └─  状态变 archived (衍生表事务写入与
-                                optimizeMemories 重接为后续工作)
+                            └─  prisma.$transaction 内依次写
+                                Memory 三层 (chapter / scene / global)
+                                + Chapter.summary + Chapter 三列
+                                + 翻 status='archived'
+                                (CharacterBranchState / PlotArc 写入另文档)
 ```
 
 **硬规则**: reviewing 期间图谱数据只活在 `pendingArchiveData` JSON, Chapter 三列全程不读写; archive confirm 才落列。
@@ -82,21 +85,20 @@ draft ──┬─→ reviewing ─→ archived
 
 | Service | 职责 | 状态 |
 |---------|------|------|
-| `combined-extractor.ts` | **一次 AI 调用同时提取** memory + graph + plotArc | 核心 |
-| `graph-organizer.ts` | AI 合并全局图谱 + 本章提取 → mergedGraph + chapterGraph | 核心 |
-| `memory-optimizer.ts` | 每章归档后**融合新旧 global 记忆** | 核心 |
+| `cumulative-graph.ts` | 用户主动触发累计图谱合并（relation 归一 + codeMerge 五元组去重） | 核心 |
+| `memory-optimizer.ts` | **v3 接入 prepare-archive 阶段**(4 stage `Promise.all` 完成后跑,覆盖 `stages.memory.result.memories`)。archive confirm **不调**(commit-only)。 | 核心 |
 | `generate-processor.ts` | 队列 worker，**串行**调用 AI 生成每个 draft | 核心 |
 | `ai-call-logger.ts` | **统一 AI 调用封装**，自动写 PromptLog（成功/失败都记） | 核心 |
 | `runtime-loader.ts` | 加载 `RuntimeBase` 和 `WorkerTask`（Story → 全局 → 硬编码回退） | 核心 |
-| `memory-extractor.ts` | 提取章节记忆 + 准备写入数据（`prepareMemoryWrites` / `commitMemoryWrites` 拆分） | 核心 |
-| `graph-extractor.ts` | 从章节文本提取图谱节点/边 | 辅助 |
-| `graph-snapshot.ts` | 图谱快照保存 + 重建（删除章节时用） | 辅助 |
+| `stages/character-stage.ts` | v3 角色状态提取（matchedCharacters → characterStates） | 核心 |
+| `stages/memory-stage.ts` | v3 章节记忆提取（mainEvents / sideEvents / scenes / emotions / foreshadowing / relationshipChanges / summary） | 核心 |
+| `stages/plot-arc-stage.ts` | v3 剧情弧线提取 / 更新 / 合并 | 核心 |
+| `stages/graph-extract-stage.ts` | v3 本章图谱提取（prevCumulativeGraph 复用 type:key） | 核心 |
+| `graph-snapshot.ts` | 图谱快照数据结构（GraphNodeSnapshot / GraphEdgeSnapshot / GraphSnapshot） | 辅助 |
 | `plot-extractor.ts` | 剧情弧线提取 + 状态推进 | 辅助 |
 | `ai-provider-init.ts` | 启动时从 `.env` 同步 DeepSeek 配置到 DB | 启动 |
 | `runtime-profile-init.ts` | 启动时扫描 `docs/profiles/*.json` 导入 Profile | 启动 |
 | `worker-task-init.ts` | 启动时初始化系统默认 WorkerTask | 启动 |
-| `memory-compressor.ts` | **@deprecated** — 旧版每 5 章压缩，已被 `memory-optimizer` 取代 | 死代码 |
-| `memory-organizer.ts` | **@deprecated** — 旧版每章整理，已被 `memory-optimizer` 取代 | 死代码 |
 
 ### 前端（`apps/web`）
 
@@ -154,14 +156,9 @@ draft ──┬─→ reviewing ─→ archived
 
 **锁机制**：
 
-只有 `prepare-archive` / `archive` 用 `updateMany where status: { in: [...] }` 做原子锁（防止双击触发 2× AI 调用 / 2× 事务写入）：
+v3 删除所有 `updateMany({where: {status: ...}})` 锁（v2 还在 `prepare-archive` / `archive` 两处用）。仅依赖 `ChapterStatus` 状态机自身（draft → reviewing → archived）+ UI 按钮 disabled 防双击。`generate` / `select` 不再翻 `chapter.status`（与 v3 一致），双击并发会产生 2 批 draft，用户最终看到候选数翻倍，但无脏状态（`chapters-generate.ts:155-157` 注释固化此语义）。
 
-- `prepare-archive`：`where status ∈ ['draft', 'reviewing']` → `reviewing`（`chapters-archive.ts:68`）
-- `archive`：`where status = 'reviewing'` → `archived`（`chapters-archive.ts:164`）
-
-`generate` / `select` **不再翻 `chapter.status`，没有跨字段锁**——双击并发会产生 2 批 draft，用户最终看到候选数翻倍，但无脏状态（`chapters-generate.ts:155-157` 注释固化此语义）。
-
-**注意**：`assertStatusTransition` / `VALID_STATUS_TRANSITIONS` / `preLockStatus` 等旧补丁已在 v2 前的重构中全部删除，无对应代码。状态转换靠 `updateMany` 模式 + Prisma enum 类型层兜底。
+**注意**：`assertStatusTransition` / `VALID_STATUS_TRANSITIONS` / `preLockStatus` 等旧补丁已在 v2 前的重构中全部删除，无对应代码。状态转换靠状态机自身 + Prisma enum 类型层兜底。
 
 ### Worker 写操作的不变量
 
@@ -193,27 +190,37 @@ if (!current || SKIP_STATUSES.includes(current.status)) continue
 | 1 提取 | `services/stages/{character,memory,plot-arc,graph-extract}-stage.ts` | `prepare-archive` | 4 次并行（每 stage 各 1 次） | **v3**：单 stage 失败落 `stages[name].status='failed'`，不影响其他 stage，章节仍进 `reviewing` |
 | 2 累计图谱 | `services/cumulative-graph.ts:buildCumulativeGraph` | `cumulative-graph/build`（用户点"生成累计图谱"） | 1 次 | 失败返回错误，可重试；成功写 `pendingArchiveData.cumulativeGraph` |
 | 2.5 人工审查 | `ReviewingPanel.vue` | `chaptersApi.update({ pendingArchiveData })`（用户点"保存调整"） | 0 次 | 用户编辑失败可重试 |
-| 3 落列 | `routes/chapters-archive.ts:archive` | `archive` | 0 次 | 校验失败返回 400，章节维持 `reviewing`；衍生表事务写入为后续工作（当前 gate stub） |
-| 4 优化 | `memory-optimizer.ts:optimizeMemories` | **当前无调用点** | — | v2 遗留：v3 gate stub 尚未接回，函数保留待后续重新接入 |
+| 3 落列 | `routes/chapters-archive.ts:archive` | `archive` | 0 次 | 校验失败返回 400，章节维持 `reviewing`；`prisma.$transaction` 内写 Memory 三层 + Chapter.summary + Chapter 三列 + 翻 status（CharacterBranchState / PlotArc 写入另文档） |
+| 4 优化 | `memory-optimizer.ts:optimizeMemories` | `prepare-archive` 阶段(4 stage 后) | memory-optimizer(无 caller 阶段已结束) | 详见 §v3 memory 集成 |
 
 > **v3 归档前置条件**: 累计图谱必须已生成（`Chapter.cumulativeGraphGeneratedAt != null`）。否则后端返回 400 `cumulative-graph-not-generated`，前端 ReviewingPanel 也会预先拦截。
 
-**阶段 3 当前实现（gate stub）**：单次 `chapter.update` 把 `pendingArchiveData` 里的图谱数据拷到 Chapter 三列 + `status = 'archived'` + `pendingArchiveData = null`。衍生表（Memory / CharacterBranchState / PlotArc）的事务写入尚未接入。
+**阶段 3 当前实现**：`prisma.$transaction` 内依次写：
+1. `tx.memory.create` 每条 mainEvent / sideEvent / emotion / foreshadowing / relationshipChange 写入 `layer='chapter'`（mainEvent 多带 `'main-plot'` tag）；每条 scene 写 `layer='scene'`；每条 optimizer 融合记忆写 `layer='global'`（tag 加 `event` / `state`）。
+2. `tx.chapter.update({ summary })` 写 Chapter 摘要（不进 Memory 表）。
+3. `tx.chapter.update({ chapterGraph, cumulativeGraph, cumulativeGraphGeneratedAt, status: 'archived', pendingArchiveData: null })`。
+
+CharacterBranchState / PlotArc 写入不在本端点（用户单独做）。`TimelineEvent` 在 v3 删除，不再写。
 
 **阶段 2.5 用户操作**：
 - "保存调整" → `chaptersApi.update({ pendingArchiveData: JSON.stringify(data) })`
 - "确认归档" → `chaptersApi.update({ pendingArchiveData })` → `chaptersApi.archive()`（双步串行）
 - "取消" → `chaptersApi.remove(chapterId)`（**删除章节本身**）
 
-### AI 调用全景表
+### AI 调用全景表（v3 — 4 stage 并行 + optimizer 追加融合）
 
 | callType | 温度 | maxTokens | 用途 | 关键参数 |
 |----------|------|-----------|------|---------|
 | `generate` | 0.6 / 0.75 / 0.9 | 用户定 | 章节正文生成 | 9 层 Pipeline 拼装 |
-| `combined_extract` | 0.3 | 4096 | 一次合并提取 | 章节内容截断 8000 字 |
-| `graph_organize` | 0.2 | 8192 | 图谱整理 | merged + chapter 双产物 |
-| `memory_optimize` | 0.3 | 4096 | 跨章 global 记忆融合 | 区分 user-edited vs auto |
+| `character_stage` | 0.3 | 4096 | 角色状态提取（matchedCharacters → characterStates） | 输入 = matchedCharacters（路由层 pre-stage 文本匹配） |
+| `memory_stage` | 0.3 | 4096 | 章节记忆 raw 提取（mainEvents/sideEvents/scenes/emotions/foreshadowing/relationshipChanges/summary） | 输入含 protagonistNames / existingNodeKeys / previousSnapshotNodes（跨章上下文） |
+| `plot_consolidate` | 0.3 | 4096 | 剧情弧线合并（plot-arc-stage） | 输入 = existingArcs + latestBranchStates |
+| `graph_extract_stage` | 0.3 | 4096 | 本章图谱提取（不复用 prev cumulative） | 输入含 prevCumulativeGraphNodes（type:key 复用约束） |
+| `cumulative_dedup` | 0.2 | 8192 | 累计图谱 relation 字面归一 + codeMerge | merged + chapter 双产物 |
+| `memory_optimize` | 0.3 | 4096 | 跨章 global 记忆融合（覆盖 stages.memory.result.memories） | 输入 = 当前 layer='global' + 当前 memory-stage output；无 user-edited 特殊分支 |
 | `score` | 0.5 | 4096 | 7 维度评分 | 失败时 fallback 到规则引擎 |
+
+> **v3 删除了 v2 时代的 `combined_extract` / `graph_organize` callType**（2026-07-30 死代码收口），由 4 个并行 stage + 累计图谱 dedup 替代。
 
 ---
 
@@ -239,26 +246,36 @@ POST /api/chapters/:id/select
   └─ prisma.$transaction (本地)
 
 POST /api/chapters/:id/prepare-archive
-  └─ prepareArchiveData (combined-extractor)
-       ├─ extractAll
-       ├─ organizeGraph (graph-organizer)
-       ├─ prepareMemoryWrites (memory-extractor)
-       └─ consolidatePlotArcs (plot-consolidator, 直接读章节 + existing arcs 做语义级判断)
+  └─ prepare-archive route (chapters-archive.ts)
+       ├─ runCharacterStage (stages/character-stage.ts)
+       ├─ runMemoryStage (stages/memory-stage.ts)
+       ├─ runPlotArcStage (stages/plot-arc-stage.ts)
+       └─ runGraphExtractStage (stages/graph-extract-stage.ts)
+       ↑ 4 个 stage 并行，结果落 pendingArchiveData.stages[name]
+
+POST /api/chapters/:id/prepare-archive/retry-stage/:name
+  └─ 复用 prepare-archive 的 pre-stage 数据加载
+  └─ 单 stage 重跑，结果合并回 pendingArchiveData
+
+POST /api/chapters/:id/cumulative-graph/build
+  └─ buildCumulativeGraph (cumulative-graph.ts)
+       ├─ relation 归一映射 (AI)
+       └─ codeMerge 五元组去重 (程序)
 
 POST /api/chapters/:id/archive
   └─ safeJsonParse (chapter.pendingArchiveData)
-  └─ prisma.$transaction
-       ├─ commitMemoryWrites (memory-extractor)
-       ├─ commitPlotArcWrites (plot-extractor)
-       └─ saveGraphSnapshotAndDelta (graph-snapshot)
-  └─ optimizeMemories (memory-optimizer, 事务外, try/catch)
+  └─ prisma.$transaction 内:
+       ├─ tx.memory.create (chapter / scene / global 三层)
+       ├─ tx.chapter.update({ summary })
+       └─ tx.chapter.update({ chapterGraph / cumulativeGraph / cumulativeGraphGeneratedAt,
+                              pendingArchiveData: null, status: 'archived' })
 ```
 
 ### service 间的依赖
 
-- `combined-extractor` 调 `graph-organizer`（phase 2）和 `memory-extractor` / `plot-extractor` 的 `prepare*` 函数
-- `memory-optimizer` **不调**其他 service（独立运行）
-- `generate-processor` 调 `ai-call-logger`（所有 AI 调用都过这一层）
+- `stages/*-stage.ts` 调 `runtime-loader` + `ai-call-logger`（所有 AI 调用都过这一层）
+- `cumulative-graph.ts` 调 `runtime-loader` + `ai-call-logger` + `stages/relation-mapping.prompt.ts`
+- `memory-optimizer.ts` **不调**其他 service（独立运行；v3 已接入 `prepare-archive` 端点，archive confirm 不调）
 
 ### 前后端共享的"契约"
 
@@ -277,10 +294,10 @@ POST /api/chapters/:id/archive
 `Memory.originUid` 形如 `3#A1B2`（章节号#hex）。同一事件可能有多条历史版本（不同章节的优化结果）。读取时按 `fromChapterNumber desc` 取最新一条。`@@unique([storyId, originUid])` 索引**没有**——靠应用层去重（`memory-optimizer.ts:36-45`）。
 
 ### 2. Jaccard 0.82 去重
-`shared/jaccardSimilarity` 基于 `js-tiktoken` 的 `cl100k_base` token Set 计算。**0.82** 是去重阈值（在 `memory-extractor.ts` 的某处 hardcode，但代码里我没找到具体数字——KNOW-ISSUES 说有，实际可能散落在 prompt 文案里）。
+`shared/jaccardSimilarity` 基于 `js-tiktoken` 的 `cl100k_base` token Set 计算。**0.82** 是去重阈值（具体在 `packages/shared/src/jaccard.ts` 中）。
 
 ### 3. JSON 字段手写序列化
-Prisma schema 把 `personality` / `metadata` / `params` / `settings` / `chapterGraph` / `cumulativeGraph` / `score` / `pendingArchiveData` / `compiledPrompt` 全部声明为 `String`。路由层手写 `JSON.stringify` / `JSON.parse`（`safeJsonParse` 存在但**只有 3 处用**：`combined-extractor.ts:220` / `chapters.ts:246` / `chapters.ts:646`）。**前后端契约不一致**：`prepare-archive` 路由返回的对象是 `data: pending`（已解析），前端 `useChapterEditor.ts:150` 又 `JSON.parse(res.data.data)` → 抛错 → 吞掉 → ReviewingPanel 进不去。
+Prisma schema 把 `personality` / `metadata` / `params` / `settings` / `chapterGraph` / `cumulativeGraph` / `score` / `pendingArchiveData` / `compiledPrompt` 全部声明为 `String`。路由层手写 `JSON.stringify` / `JSON.parse`（`safeJsonParse` 是主流选择，已收口到各路由统一用法）。
 
 ### 4. token 计数(2026-06-18 P1 收口后)
 - `@novel-runtime/ai-provider` 的 `countTokens`(`packages/ai-provider/src/token-counter.ts`)—— 基于 `cl100k_base`,**项目 token 计数唯一入口**(commit `5f0ba92` + 修复合并 `792b533`)。所有 `apps/*` + `packages/prompt-runtime` 全部采用。
@@ -289,8 +306,10 @@ Prisma schema 把 `personality` / `metadata` / `params` / `settings` / `chapterG
 
 `prompt-runtime` 已统一从 `ai-provider` 导入。`shared` 的启发式仅作无 tiktoken 环境的 fallback（实际项目用 `ai-provider` 那套）。**修改 prompt 拼装时不要新增"自己估 token"的分支**。
 
-### 5. `prepare*` / `commit*` 拆分
-归档流水线把"准备数据"和"事务写入"分开：`prepareMemoryWrites` / `commitMemoryWrites`、`prepareArchiveData`（合并准备）。剧情弧线由 `plot-consolidator` v2 直接读章节 + existing arcs 做语义判断后返回 `ConsolidatedArcWrite[]`，不需要再 prepare。这样路由层能控制事务边界——纯数据准备不进事务，事务只做 DB 写。
+### 5. `prepare*` / `commit*` 拆分（v2 遗留说明）
+v3 重构后 `prepareMemoryWrites` / `commitMemoryWrites` 已从主流程移除。归档流水线现在是 4 个 stage 并行提取 + memory-optimizer 追加融合 + 累计图谱,结果落 `pendingArchiveData.stages[name]` / `stages.memory.result.memories` / `cumulativeGraph`。`archive` 端点 commit 时 prisma.$transaction 写 Memory 表三层(`chapter` / `scene` / `global`)+ Chapter.summary + Chapter 三列 + 翻 status。**CharacterBranchState / PlotArc 写入另文档讨论**;`TimelineEvent` 在 v3 删除,不再写。
+
+详细 v3 memory system 设计见 `docs/superpowers/specs/2026-07-30-v3-memory-system-design.md`(layer 规则 / optimizer 触发点 / searchRelevant originUid 分组)。
 
 ### 6. `Chapter.compiledPrompt` / `pendingArchiveData`
 都是 `String?` 字段存 JSON 文本。`compiledPrompt` 在 generate 路由里写（line 487-490），回溯用。`pendingArchiveData` 在 prepare-archive 写，archive 路由读出来再事务写入——**关键数据通道**，是 reviewing 状态机的载体。
@@ -301,8 +320,8 @@ AI 调用失败时（`result` 为 null）的降级内容，**是 mock 章节文�
 ### 8. 4 个同名 `init` 迁移
 `prisma/migrations/` 下有 `20260602053226_init` / `20260602054702_init` / `20260602070943_init` / `20260602071708_init` 四个名字相同的迁移（10 分钟内连续），加上 `20260616044813_add_chapter_status_enum_and_pending_archive_data`。历史里有手工修复/重置 migration 的痕迹。
 
-### 9. `@deprecated` services 还在
-`memory-compressor.ts` / `memory-organizer.ts` 文件还在 repo 里没删，README 标 @deprecated。**未确认**有没有任何路由还在 import（grep 里有引用——但 import 不等于调用）。
+### 9. 已删除的 v2 服务
+2026-07-30 调查收口后删除了以下 v2 时代服务文件（无生产 import，仅被自己 / 死测试 import）：`combined-extractor.ts`、`graph-extractor.ts`、`graph-organizer.ts`、`memory-extractor.ts`、`memory-compressor.ts`、`memory-organizer.ts`、`stages/cumulative-graph-build-service.ts`。同步删除了对应的 7 个死测试文件。`graph-snapshot.ts` 的 `expandNeighborhood` 函数 + `ExpandOptions`/`NeighborhoodResult` 接口同步移除（无 caller）。
 
 ### 10. CORS / 监听 / 认证
 - CORS 在 `app.ts` 是 `origin: true`（允许所有来源）
@@ -341,7 +360,7 @@ stage.run() → StageState<{status, result, errorMessage, completedAt}>
 每个 stage 服务只调 AI + 解析，不写 DB。路由层负责持久化。
 
 - **character-stage**: 仅输出 `characterStates`；锚定 `matchedCharacters`（路由层 pre-stage 文本匹配）
-- **memory-stage**: 输出 `mainEvents` / `sideEvents` / `scenes` / `summary` / `timelinePosition`；**不输出** `characterStatusChanges`（归属 character-stage）
+- **memory-stage**: 输出 `mainEvents` / `sideEvents` / `scenes` / `emotions` / `foreshadowing` / `relationshipChanges` / `summary`；**不输出** `characterStatusChanges`（归属 character-stage）/ `timelinePosition` / `timelineEvents`（v3 已删）
 - **plot-arc-stage**: 输出 `plotArcs`（内部 `consolidatePlotArcs` 自己读章节 + existing arcs）
 - **graph-extract-stage**: 输出 `chapterGraph`（本章范围，**不与历史合并**）；累积去重在 archive 端点 `buildCumulativeGraph` 做
 

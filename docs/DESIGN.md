@@ -403,6 +403,25 @@ Max-width 1200px centered container, light theme throughout except one dark deve
 
 ## 决策日志
 
+## v3 记忆系统重设计（2026-07-30, branch `v2/state-machine`）
+
+**Why**: v3 stage 拆分后，记忆抽取、跨章融合、人工审查、归档写库和 prompt 检索之间没有形成闭环：`memory-optimizer.ts` 无调用方，archive confirm 只写 Chapter 图谱列，`searchRelevant` 又会把同一 `originUid` 的多个历史版本一起参与召回。
+
+**What**:
+- `memory-stage` 使用 `buildExtractPrompt(..., { mode: 'memory-only' })`（v3 新增 mode：保留 v2 详细记忆约束 + 跨章上下文 `previousEntitiesBlock`，但删除「任务2：实体与关系提取」段及对应 schema 字段），同时删除 `characterStatusChanges` / `timelinePosition` / `timelineEvents` 死字段，只输出分类 raw 结果与 `summary`。
+- 4 个 stage 并行完成后，在 `prepare-archive` 阶段运行 optimizer；融合结果覆盖 `stages.memory.result.memories`，让用户审查的是最终全局记忆。
+- optimizer 每条输出统一为 `{ content, originUid, importance, type: 'event' | 'state' }`；后端添加 `['auto-extracted', type]`，不再存在 `user-edited` 特殊分支。
+- archive confirm 只负责事务写库，不调用 AI：分类 raw 记忆写 `layer='chapter'`，关键地点写 `layer='scene'`，融合记忆写 `layer='global'`，摘要写 `Chapter.summary`。
+- global 记忆按章累加历史版本，不按 UID update；`searchRelevant` 仅对 `layer='global'` 按 `originUid` 取最新版本，chapter 层不参与 UID 收缩。
+- 删除章节继续按 `fromChapterNumber` 清理该章产生的行；此前版本仍在，检索因此自然回退到前一版本。
+
+**Trade-off**:
+- prepare-archive 多一次同步 AI 调用，进入 reviewing 的等待时间增加；换取用户能在归档前审阅融合结果，archive confirm 保持确定性的 commit-only 行为。
+- global 层保留历史版本会增加存储量；换取删章节无需重算或恢复快照，回退语义由现存版本自然实现。
+- scene 层只供 Memory UI 展示，不注入生成 prompt；chapter 与 global 层职责保持独立，不互相替代。
+
+**How to apply**: 后续修改记忆链路时，以“分类 raw 提取 → prepare 阶段融合 → 人工审查 → commit-only 三层写库 → global UID 最新版本检索”为固定顺序。完整字段、layer、tags 与测试规则见 `docs/superpowers/specs/2026-07-30-v3-memory-system-design.md`。
+
 ## v2 状态机重构（2026-07-24, branch `v2/state-machine`）
 
 **Why**: 原 8 态枚举把"候选生成锁"和"章节业务状态"两个独立维度挤进同一个字段，导致 select/prepare-archive 失败时的回滚语义被迫引入 `preLockStatus` 等补丁字段。Worker 与路由相互等待对方写 status 的耦合让 archive 并发场景极易踩坑。
