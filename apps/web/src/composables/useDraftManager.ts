@@ -9,12 +9,9 @@ export function useDraftManager() {
 
   const drafts = ref<any[]>([])
   const generating = ref(false)
-  const scoringDraftId = ref<string | null>(null)
   const showCustomModal = ref(false)
   const customTemp = ref(0.75)
   const customMaxTokens = ref(4096)
-  const showScoreModal = ref(false)
-  const scoreResult = ref<any>(null)
 
   const pollChapterId = ref<string>('')
 
@@ -113,21 +110,6 @@ export function useDraftManager() {
     }
   }
 
-  async function scoreDraft(draftId: string) {
-    if (scoringDraftId.value) return
-    scoringDraftId.value = draftId
-    try {
-      const res = await draftsApi.score(draftId)
-      scoreResult.value = res.data.data?.score || null
-      showScoreModal.value = true
-      message.success('评分完成')
-    } catch (e: any) {
-      message.error(e.response?.data?.error || '评分失败')
-    } finally {
-      scoringDraftId.value = null
-    }
-  }
-
   function confirmDeleteDraft(draftId: string, version?: string) {
     dialog.warning({
       title: '确认删除',
@@ -147,17 +129,13 @@ export function useDraftManager() {
   return reactive({
     drafts,
     generating,
-    scoringDraftId,
     showCustomModal,
     customTemp,
     customMaxTokens,
-    showScoreModal,
-    scoreResult,
     isPolling,
     loadDrafts,
     generate,
     selectDraft,
-    scoreDraft,
     confirmDeleteDraft,
     stopPolling
   })

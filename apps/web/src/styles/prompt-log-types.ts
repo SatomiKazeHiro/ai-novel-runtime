@@ -40,7 +40,6 @@ export const CALL_TYPES: CallTypeDef[] = [
   { id: 'graph_extract_stage', label: '图谱提取',     tone: 'cool',    order: 50 },
   { id: 'cumulative_dedup',    label: '累计图谱归一', tone: 'neutral', order: 60 },
   { id: 'plot_consolidate',    label: '弧线合并',     tone: 'cool',    order: 70 },
-  { id: 'score',               label: '评分',         tone: 'warm',    order: 80 },
 ]
 
 export const CALL_STATUSES: CallStatusDef[] = [

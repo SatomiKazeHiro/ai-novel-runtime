@@ -101,12 +101,6 @@
                         >采用此版本</n-button>
                         <n-button
                             size="small"
-                            @click="drafts.scoreDraft(draft.id)"
-                            :loading="drafts.scoringDraftId === draft.id"
-                            :disabled="!draft.content || (drafts.scoringDraftId !== null && drafts.scoringDraftId !== draft.id)"
-                        >评分</n-button>
-                        <n-button
-                            size="small"
                             @click="drafts.confirmDeleteDraft(draft.id, draft.version)"
                         >删除</n-button>
                     </n-space>
@@ -170,67 +164,6 @@
             </template>
         </n-modal>
 
-        <!-- ========== 弹窗:评分结果 ========== -->
-        <n-modal
-            :show="drafts.showScoreModal"
-            title="评分结果"
-            preset="card"
-            style="width: 520px"
-            @update:show="(v: boolean) => !v && (drafts.showScoreModal = false)"
-        >
-            <n-space v-if="drafts.scoreResult" vertical size="large">
-                <n-space
-                    justify="center"
-                    align="center"
-                    vertical
-                    style="padding: 8px 0"
-                >
-                    <n-text
-                        style="
-                            font-size: 48px;
-                            font-weight: 700;
-                            color: var(--color-cool-accent);
-                        "
-                        >{{ drafts.scoreResult.totalScore }}</n-text
-                    >
-                </n-space>
-                <n-divider />
-                <n-space vertical size="small">
-                    <n-space
-                        v-for="(label, key) in scoreLabels"
-                        :key="key"
-                        justify="space-between"
-                        align="center"
-                    >
-                        <n-text>{{ label }}</n-text>
-                        <n-progress
-                            :percentage="drafts.scoreResult[key]"
-                            :show-indicator="false"
-                            style="width: 200px"
-                        />
-                        <n-text strong>{{ drafts.scoreResult[key] }}</n-text>
-                    </n-space>
-                </n-space>
-                <n-divider />
-                <n-card
-                    v-if="drafts.scoreResult.comment"
-                    size="small"
-                    :bordered="false"
-                >
-                    <n-text depth="3" style="font-size: 13px">{{
-                        drafts.scoreResult.comment
-                    }}</n-text>
-                </n-card>
-            </n-space>
-            <n-empty v-else description="暂无评分数据" />
-            <template #footer>
-                <n-space justify="end">
-                    <n-button @click="drafts.showScoreModal = false"
-                        >关闭</n-button
-                    >
-                </n-space>
-            </template>
-        </n-modal>
     </div>
 </template>
 
@@ -251,8 +184,6 @@ import {
     NFormItem,
     NSlider,
     NInputNumber,
-    NProgress,
-    NCard,
 } from "naive-ui";
 
 defineProps<{
@@ -266,17 +197,6 @@ const emit = defineEmits<{
     (e: "generate-custom"): void;
     (e: "adopt-draft", draft: any): void;
 }>();
-
-// 7 维度评分标签(从原 Chapters.vue 搬到此处)
-const scoreLabels: Record<string, string> = {
-    styleSimilarity: "文风接近度",
-    outlineAdherence: "大纲符合度",
-    sceneMatch: "场景符合度",
-    profileConsistency: "写作人格一致性",
-    proseQuality: "文笔质量",
-    emotionalTension: "情感张力",
-    pacing: "节奏把控",
-};
 
 // 解析 draft.params(JSON 字符串 → 对象),兜底空对象
 function formatParams(p: string): any {

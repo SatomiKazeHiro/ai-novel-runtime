@@ -149,7 +149,6 @@ function statusLabel(status: string): string {
     draft: '草稿',
     generating: '生成中',
     generated: '已生成',
-    scored: '已评分',
     selected: '已选',
     reviewing: '审阅',
     archived: '已归档',

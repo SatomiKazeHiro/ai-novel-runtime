@@ -50,7 +50,6 @@ export const chaptersApi = {
 export const draftsApi = {
   list: (chapterId: string) => api.get(`/api/chapters/${chapterId}/drafts`),
   get: (draftId: string) => api.get(`/api/drafts/${draftId}`),
-  score: (draftId: string) => api.post(`/api/drafts/${draftId}/score`),
   update: (draftId: string, data: { content: string }) => api.put(`/api/drafts/${draftId}`, data),
   remove: (draftId: string) => api.delete(`/api/drafts/${draftId}`)
 }

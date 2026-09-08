@@ -28,8 +28,7 @@ const PRISMA_CALL_TYPE_VALUES = [
   'memory_optimize',
   'graph_extract_stage',
   'cumulative_dedup',
-  'plot_consolidate',
-  'score'
+  'plot_consolidate'
 ]
 
 const PRISMA_CALL_STATUS_VALUES = ['success', 'error']
