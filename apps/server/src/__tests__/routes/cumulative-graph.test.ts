@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createMockApp, callHandler, createMockPrisma } from '../setup.js'
 
+// 注意: 本文件中的测试不要使用全局 beforeEach, 各自维护隔离的 setup。
+
 vi.mock('../../services/stages/cumulative-graph-build-service.js', () => ({
   buildCumulativeGraphWithTimestamp: vi.fn()
 }))
@@ -110,5 +112,66 @@ describe('POST /api/chapters/:chapterId/cumulative-graph/build', () => {
     expect(updateArgs.data.cumulativeGraphGeneratedAt).toBeInstanceOf(Date)
     expect(res.body.success).toBe(true)
     expect(res.body.data.aiCalled).toBe(true)
+  })
+})
+
+describe('PATCH /api/chapters/:chapterId/cumulative-graph', () => {
+  let mockPrisma: ReturnType<typeof createMockPrisma>
+  let app: any
+  let routes: Record<string, any>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockPrisma = createMockPrisma()
+    const built = createMockApp(mockPrisma)
+    app = built.app
+    routes = built.routes
+    const { chapterArchiveRoutes } = await import('../../routes/chapters-archive.js')
+    await chapterArchiveRoutes(app)
+  })
+
+  it('rejects when cumulativeGraphGeneratedAt is null', async () => {
+    mockPrisma.chapter.findUnique.mockResolvedValueOnce({
+      id: 'ch-1', status: 'reviewing',
+      cumulativeGraph: null, cumulativeGraphGeneratedAt: null,
+    })
+    const res = await callHandler(
+      routes,
+      'PATCH',
+      '/api/chapters/:chapterId/cumulative-graph',
+      { graph: { nodes: [], edges: [], timestamp: '2026-07-27T10:00:00.000Z' } },
+      { chapterId: 'ch-1' },
+    )
+    expect(mockPrisma.chapter.update).not.toHaveBeenCalled()
+    expect(res.body.success).toBe(false)
+    expect(res.body.error).toBe('cumulative-graph-not-generated')
+  })
+
+  it('writes graph without touching generatedAt', async () => {
+    const fixedDate = new Date('2026-07-27T08:00:00.000Z')
+    mockPrisma.chapter.findUnique.mockResolvedValueOnce({
+      id: 'ch-1', status: 'reviewing',
+      cumulativeGraph: null, cumulativeGraphGeneratedAt: fixedDate,
+    })
+    mockPrisma.chapter.update.mockResolvedValueOnce({})
+    const editedGraph = {
+      nodes: [{ type: 'character', key: 'linfan', label: '林凡', data: {} }],
+      edges: [],
+      timestamp: '2026-07-27T10:00:00.000Z',
+    }
+    const res = await callHandler(
+      routes,
+      'PATCH',
+      '/api/chapters/:chapterId/cumulative-graph',
+      { graph: editedGraph },
+      { chapterId: 'ch-1' },
+    )
+    expect(res.body.success).toBe(true)
+    expect(mockPrisma.chapter.update).toHaveBeenCalledTimes(1)
+    const updateArgs = mockPrisma.chapter.update.mock.calls[0][0]
+    expect(updateArgs.data).not.toHaveProperty('cumulativeGraphGeneratedAt')
+    expect(JSON.parse(updateArgs.data.cumulativeGraph).nodes).toEqual([
+      { type: 'character', key: 'linfan', label: '林凡', data: {} },
+    ])
   })
 })

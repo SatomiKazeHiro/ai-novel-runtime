@@ -443,6 +443,35 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     return { success: true, data: { graph: result.graph, generatedAt: result.generatedAt, aiCalled: result.aiCalled } }
   })
 
+  // PATCH /api/chapters/:chapterId/cumulative-graph
+  // 保存用户编辑后的累计图谱。要求 cumulativeGraphGeneratedAt != null。
+  // 不动 cumulativeGraphGeneratedAt (那是"是否生成过"的标志)。
+  app.patch('/api/chapters/:chapterId/cumulative-graph', async (request, reply) => {
+    const { chapterId } = request.params as any
+    const body = request.body as { graph?: GraphSnapshot } | undefined
+    if (!body?.graph || !Array.isArray(body.graph.nodes) || !Array.isArray(body.graph.edges)) {
+      return reply.status(400).send({ success: false, error: '缺少 graph 字段' })
+    }
+
+    const prisma = app.prisma
+    const chapter = await getOrThrowChapter(prisma, chapterId, reply)
+    if (chapter === null) return
+
+    if (chapter.cumulativeGraphGeneratedAt == null) {
+      return reply.status(400).send({
+        success: false,
+        error: 'cumulative-graph-not-generated',
+      })
+    }
+
+    await prisma.chapter.update({
+      where: { id: chapterId },
+      data: { cumulativeGraph: JSON.stringify(body.graph) },
+    })
+
+    return { success: true }
+  })
+
   app.post('/api/chapters/:chapterId/archive', async (request, reply) => {
     const { chapterId } = request.params as any
     const prisma = app.prisma
