@@ -4,58 +4,62 @@ import type { CharacterStateRow } from '../../services/stages/character-stage.js
 
 describe('commitCharacterBranchStateWrites', () => {
   let tx: any
-  let log: { info: ReturnType<typeof vi.fn> }
+  let log: { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> }
 
   beforeEach(() => {
-    log = { info: vi.fn() }
+    log = { info: vi.fn(), warn: vi.fn() }
     tx = {
+      character: { create: vi.fn().mockResolvedValue({ id: 'new-char-id' }) },
       characterBranchState: { create: vi.fn().mockResolvedValue({ id: 'cbs-1' }) }
     }
   })
 
-  it('happy path: 只对 isNew=false + characterId 有效的条目 create', async () => {
+  it('happy path: 1 matched + 2 isNew → 3 branchState.create + 2 character.create', async () => {
     const writes: CharacterStateRow[] = [
       { characterId: 'char-1', name: '姜禾', key: 'jiang_he', status: '{"rank":"练气"}', relationships: '{}', costume: '', isNew: false },
       { characterId: null, name: '神秘女子', key: 'unknown', status: '{}', relationships: '{}', costume: '', isNew: true },
       { characterId: '', name: '路人甲', key: 'passerby', status: '{}', relationships: '{}', costume: '', isNew: true }
     ]
 
-    await commitCharacterBranchStateWrites(tx, 1, writes, log)
+    await commitCharacterBranchStateWrites(tx, 'story-1', 1, writes, log)
 
-    expect(tx.characterBranchState.create).toHaveBeenCalledTimes(1)
+    // 3 行 branchState 都入库 (1 matched + 2 自动建档后的)
+    expect(tx.characterBranchState.create).toHaveBeenCalledTimes(3)
+    // 2 个 isNew 角色自动建档
+    expect(tx.character.create).toHaveBeenCalledTimes(2)
     expect(tx.characterBranchState.create).toHaveBeenCalledWith({
-      data: {
+      data: expect.objectContaining({
         characterId: 'char-1',
         fromChapterNumber: 1,
         status: '{"rank":"练气"}',
-        relationships: '{}'
-      }
+        relationships: '{}',
+        costume: null
+      })
     })
-    // isNew 的两条都跳过 + log
-    expect(log.info).toHaveBeenCalledTimes(2)
   })
 
-  it('all isNew: create 不被调', async () => {
+  it('all isNew: 自动建档 2 character + 2 branchState', async () => {
     const writes: CharacterStateRow[] = [
       { characterId: null, name: 'X', key: 'x', status: '{}', relationships: '{}', costume: '', isNew: true },
       { characterId: null, name: 'Y', key: 'y', status: '{}', relationships: '{}', costume: '', isNew: true }
     ]
 
-    await commitCharacterBranchStateWrites(tx, 5, writes, log)
+    await commitCharacterBranchStateWrites(tx, 'story-1', 5, writes, log)
 
-    expect(tx.characterBranchState.create).not.toHaveBeenCalled()
-    expect(log.info).toHaveBeenCalledTimes(2)
+    expect(tx.character.create).toHaveBeenCalledTimes(2)
+    expect(tx.characterBranchState.create).toHaveBeenCalledTimes(2)
   })
 
-  it('mixed: 1 matched + 1 isNew → create 1 次', async () => {
+  it('mixed: 1 matched + 1 isNew → 2 branchState + 1 character.create', async () => {
     const writes: CharacterStateRow[] = [
       { characterId: 'char-2', name: '许青', key: 'xu_qing', status: '{"rank":"筑基"}', relationships: '{"姜禾":"朋友"}', costume: '', isNew: false },
       { characterId: null, name: 'Z', key: 'z', status: '{}', relationships: '{}', costume: '', isNew: true }
     ]
 
-    await commitCharacterBranchStateWrites(tx, 2, writes, log)
+    await commitCharacterBranchStateWrites(tx, 'story-1', 2, writes, log)
 
-    expect(tx.characterBranchState.create).toHaveBeenCalledTimes(1)
+    expect(tx.character.create).toHaveBeenCalledTimes(1)
+    expect(tx.characterBranchState.create).toHaveBeenCalledTimes(2)
     expect(tx.characterBranchState.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         characterId: 'char-2',
@@ -80,16 +84,17 @@ describe('commitCharacterBranchStateWrites', () => {
       }
     ]
 
-    await commitCharacterBranchStateWrites(tx, 2, writes, log)
+    await commitCharacterBranchStateWrites(tx, 'story-1', 2, writes, log)
 
     expect(tx.characterBranchState.create).toHaveBeenCalledTimes(1)
     expect(tx.characterBranchState.create).toHaveBeenCalledWith({
-      data: {
+      data: expect.objectContaining({
         characterId: 'char-3',
         fromChapterNumber: 2,
         status: JSON.stringify(writes[0].status),
-        relationships: JSON.stringify(writes[0].relationships)
-      }
+        relationships: JSON.stringify(writes[0].relationships),
+        costume: null
+      })
     })
   })
 
@@ -106,15 +111,81 @@ describe('commitCharacterBranchStateWrites', () => {
       }
     ]
 
-    await commitCharacterBranchStateWrites(tx, 3, writes, log)
+    await commitCharacterBranchStateWrites(tx, 'story-1', 3, writes, log)
 
     expect(tx.characterBranchState.create).toHaveBeenCalledWith({
-      data: {
+      data: expect.objectContaining({
         characterId: 'char-4',
         fromChapterNumber: 3,
         status: 'null',
-        relationships: 'null'
-      }
+        relationships: 'null',
+        costume: null
+      })
+    })
+  })
+})
+
+describe('commitCharacterBranchStateWrites - isNew auto-create', () => {
+  let tx: any
+  let log: { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> }
+
+  beforeEach(() => {
+    log = { info: vi.fn(), warn: vi.fn() }
+    tx = {
+      character: { create: vi.fn().mockResolvedValue({ id: 'new-char-id' }) },
+      characterBranchState: { create: vi.fn().mockResolvedValue({ id: 'cbs-new' }) }
+    }
+  })
+
+  it('isNew=true → 先 tx.character.create 再 tx.characterBranchState.create', async () => {
+    const writes: CharacterStateRow[] = [
+      { characterId: null, name: '神秘人', key: 'shenmi_ren', status: {}, relationships: {}, costume: '黑袍', isNew: true }
+    ]
+
+    await commitCharacterBranchStateWrites(tx, 'story-1', 5, writes, log)
+
+    expect(tx.character.create).toHaveBeenCalledTimes(1)
+    expect(tx.character.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        storyId: 'story-1',
+        slug: 'shenmi_ren',
+        name: '神秘人',
+        relationships: null,
+        status: null
+      })
+    })
+    expect(tx.characterBranchState.create).toHaveBeenCalledTimes(1)
+    expect(tx.characterBranchState.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        characterId: 'new-char-id',
+        fromChapterNumber: 5,
+        costume: '黑袍'
+      })
+    })
+  })
+
+  it('isNew=true + costume 空字符串 → costume: null', async () => {
+    const writes: CharacterStateRow[] = [
+      { characterId: null, name: '路人甲', key: 'passerby', status: {}, relationships: {}, costume: '', isNew: true }
+    ]
+
+    await commitCharacterBranchStateWrites(tx, 'story-1', 5, writes, log)
+
+    expect(tx.characterBranchState.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ costume: null })
+    })
+  })
+
+  it('isNew=false → 不调 character.create,沿用 characterId', async () => {
+    const writes: CharacterStateRow[] = [
+      { characterId: 'existing-id', name: '林凡', key: 'linfan', status: { rank: '筑基' }, relationships: {}, isNew: false }
+    ]
+
+    await commitCharacterBranchStateWrites(tx, 'story-1', 5, writes, log)
+
+    expect(tx.character.create).not.toHaveBeenCalled()
+    expect(tx.characterBranchState.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ characterId: 'existing-id' })
     })
   })
 })

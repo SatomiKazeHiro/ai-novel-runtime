@@ -84,7 +84,7 @@ describe('archive v3 — CharacterBranchState 写库 (P0 修复)', () => {
         findUnique: vi.fn(),
         update: vi.fn()
       },
-      character: { findMany: vi.fn().mockResolvedValue([]) },
+      character: { findMany: vi.fn().mockResolvedValue([]), create: vi.fn().mockResolvedValue({ id: 'new-char-id' }) },
       characterBranchState: { create: vi.fn().mockResolvedValue({ id: 'cbs-1' }) },
       plotArc: {
         findMany: vi.fn().mockResolvedValue([]),
@@ -108,8 +108,10 @@ describe('archive v3 — CharacterBranchState 写库 (P0 修复)', () => {
     )
 
     expect(result.body).toMatchObject({ success: true })
-    // 关键断言: tx.characterBranchState.create 被调 1 次 (只 matched 那条, isNew 跳过)
-    expect(mockPrisma.characterBranchState.create).toHaveBeenCalledTimes(1)
+    // matched 那条 → 1 branchState.create
+    // isNew 那条 → 自动建 character + branchState
+    expect(mockPrisma.characterBranchState.create).toHaveBeenCalledTimes(2)
+    expect(mockPrisma.character.create).toHaveBeenCalledTimes(1)
     expect(mockPrisma.characterBranchState.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         characterId: 'char-1',
@@ -123,10 +125,6 @@ describe('archive v3 — CharacterBranchState 写库 (P0 修复)', () => {
       expect.objectContaining({
         data: expect.objectContaining({ status: 'archived' })
       })
-    )
-    // isNew 跳过 log
-    expect(log.info).toHaveBeenCalledWith(
-      expect.stringContaining('神秘女子')
     )
   })
 
@@ -151,8 +149,9 @@ describe('archive v3 — CharacterBranchState 写库 (P0 修复)', () => {
     )
 
     expect(result.body).toMatchObject({ success: true })
-    expect(mockPrisma.characterBranchState.create).not.toHaveBeenCalled()
-    // 章节仍翻 archived (isNew skip 不阻塞归档)
+    expect(mockPrisma.character.create).toHaveBeenCalledTimes(1)
+    expect(mockPrisma.characterBranchState.create).toHaveBeenCalledTimes(1)
+    // 章节仍翻 archived
     expect(mockPrisma.chapter.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: 'archived' })

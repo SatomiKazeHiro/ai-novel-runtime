@@ -773,7 +773,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       await commitPlotArcWrites(tx, chapter.number, plotArcs)
       // 接通 v3 CharacterBranchState 写库 (修 P0 遗留): character-stage 输出 → CharacterBranchState 表
       // isNew=true / characterId=null 时 commitCharacterBranchStateWrites 内部静默跳过 + log
-      await commitCharacterBranchStateWrites(tx, chapter.number, characterStates, app.log)
+      await commitCharacterBranchStateWrites(tx, chapter.storyId, chapter.number, characterStates, app.log)
       await tx.chapter.update({
         where: { id: chapterId },
         data: {
