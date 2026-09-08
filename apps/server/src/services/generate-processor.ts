@@ -1,7 +1,7 @@
 import { PromptPipeline } from '@novel-runtime/prompt-runtime'
 import { MemoryManager } from '@novel-runtime/memory-engine'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
-import { formatCharacterSnapshot, generateFallbackContent, DEFAULT_PIPELINE_BUDGET, scaleBudget } from '@novel-runtime/shared'
+import { formatCharacterSnapshot, DEFAULT_PIPELINE_BUDGET, scaleBudget } from '@novel-runtime/shared'
 import { loadRuntimeBase } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
 import { getActivePlotArcs } from './plot-extractor.js'
@@ -66,8 +66,11 @@ export function createGenerateProcessor(app: FastifyInstance) {
           maxTokens
         })
 
-        const fallbackChapter = { title: chapterTitle, outline: chapterOutline }
-        const content = result ?? generateFallbackContent(fallbackChapter, i, '未配置 API Key')
+        if (result === null) {
+          // 无 provider（未配置 API Key）→ 抛错标 failed，不生成降级模拟内容误导用户
+          throw new Error('未配置可用的 AI Provider，请检查 API Key 配置')
+        }
+        const content = result
 
         // 乐观锁：仅当 draft 仍处于 pending/generating 时才写 completed。
         // 若 AI 调用期间被 select 置 rejected（用户已采用其他候选），count=0 → 放弃写回，不复活。

@@ -331,10 +331,7 @@ v3 重构后 `prepareMemoryWrites` / `commitMemoryWrites` 已从主流程移除,
 ### 6. `Chapter.compiledPrompt` / `pendingArchiveData`
 都是 `String?` 字段存 JSON 文本。`compiledPrompt` 在 generate 路由里写（line 487-490），回溯用。`pendingArchiveData` 在 prepare-archive 写，archive 路由读出来再事务写入——**关键数据通道**，是 reviewing 状态机的载体。
 
-### 7. `generateFallbackContent`（shared:148）
-AI 调用失败时（`result` 为 null）的降级内容，**是 mock 章节文本不是错误**。实际 `callAIWithLog` 失败时 throw 不会触发这个 fallback——只在"AI 返回空字符串"时触发。生成按钮的"未配置 API Key"提示与 fallback 内容中的 `（生成失败：未配置 API Key）` 前缀不一致：API Key 未配时 ai-call-logger 会直接 throw，根本走不到 fallback。
-
-### 8. 4 个同名 `init` 迁移
+### 7. 4 个同名 `init` 迁移
 `prisma/migrations/` 下有 `20260602053226_init` / `20260602054702_init` / `20260602070943_init` / `20260602071708_init` 四个名字相同的迁移（10 分钟内连续），加上 `20260616044813_add_chapter_status_enum_and_pending_archive_data`。历史里有手工修复/重置 migration 的痕迹。
 
 ### 9. 已删除的 v2 服务
