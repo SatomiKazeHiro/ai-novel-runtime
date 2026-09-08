@@ -29,7 +29,7 @@
         v-model:selected-model-id="editor.selectedModelId"
         :model-options="editor.modelOptions"
         :plot-arcs="editor.plotArcs"
-        :graph-delta="editor.graphDelta"
+        :chapter-graph="editor.chapterGraph"
         :pending-archive-data="editor.pendingArchiveData"
         :saving-content="editor.savingContent"
         :archiving="archiving"

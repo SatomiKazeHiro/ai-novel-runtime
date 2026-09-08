@@ -17,7 +17,7 @@ export function useChapterEditor(storyId: () => string | undefined) {
   const modelOptions = ref<any[]>([])
   const editForm = ref({ outline: '', content: '', sceneLocation: '', sceneMood: '', sceneGoal: '' })
   const plotArcs = ref<any[]>([])
-  const graphDelta = ref<any>(null)
+  const chapterGraph = ref<any>(null)
   const pendingArchiveData = ref<any>(null)
   const savingContent = ref(false)
 
@@ -62,9 +62,9 @@ export function useChapterEditor(storyId: () => string | undefined) {
     }
 
     // 加载图谱变化
-    graphDelta.value = null
-    if (row.status === 'archived' && row.graphDelta) {
-      try { graphDelta.value = JSON.parse(row.graphDelta) } catch { graphDelta.value = null }
+    chapterGraph.value = null
+    if (row.status === 'archived' && row.chapterGraph) {
+      try { chapterGraph.value = JSON.parse(row.chapterGraph) } catch { chapterGraph.value = null }
     }
 
     // 加载待归档数据
@@ -83,7 +83,7 @@ export function useChapterEditor(storyId: () => string | undefined) {
     editMode.value = false
     currentChapter.value = null
     plotArcs.value = []
-    graphDelta.value = null
+    chapterGraph.value = null
     pendingArchiveData.value = null
   }
 
@@ -218,7 +218,7 @@ export function useChapterEditor(storyId: () => string | undefined) {
     modelOptions,
     editForm,
     plotArcs,
-    graphDelta,
+    chapterGraph,
     pendingArchiveData,
     savingContent,
     loadProfiles,

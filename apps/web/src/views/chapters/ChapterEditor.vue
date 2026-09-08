@@ -304,17 +304,17 @@
         <n-card
             v-if="
                 chapter?.status === 'archived' &&
-                graphDelta
+                chapterGraph
             "
             title="Step 4：本章范围图谱"
             style="margin-top: 24px"
         >
             <n-space vertical>
-                <n-collapse v-if="graphDelta.nodes?.length > 0">
+                <n-collapse v-if="chapterGraph.nodes?.length > 0">
                     <n-collapse-item title="涉及节点">
                         <n-space>
                             <n-tag
-                                v-for="node in graphDelta.nodes"
+                                v-for="node in chapterGraph.nodes"
                                 :key="node.key"
                                 :type="
                                     node.type === 'character'
@@ -329,11 +329,11 @@
                         </n-space>
                     </n-collapse-item>
                 </n-collapse>
-                <n-collapse v-if="graphDelta.edges?.length > 0">
+                <n-collapse v-if="chapterGraph.edges?.length > 0">
                     <n-collapse-item title="关系">
                         <n-space vertical size="small">
                             <n-text
-                                v-for="edge in graphDelta.edges"
+                                v-for="edge in chapterGraph.edges"
                                 :key="`${edge.fromKey}-${edge.relation}-${edge.toKey}`"
                                 style="font-size: 12px"
                             >
@@ -346,8 +346,8 @@
                 </n-collapse>
                 <n-empty
                     v-if="
-                        !graphDelta.nodes?.length &&
-                        !graphDelta.edges?.length
+                        !chapterGraph.nodes?.length &&
+                        !chapterGraph.edges?.length
                     "
                     description="本章未提取到图谱关系"
                 />
@@ -402,7 +402,7 @@ const props = defineProps<{
     selectedModelId: string | null;
     modelOptions: any[];
     plotArcs: any[];
-    graphDelta: any;
+    chapterGraph: any;
     pendingArchiveData: any;
     savingContent: boolean;
     archiving: boolean;
