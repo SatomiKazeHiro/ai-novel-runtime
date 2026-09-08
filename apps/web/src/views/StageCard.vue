@@ -1,41 +1,35 @@
 <template>
-  <div class="stage-card" :data-status="state?.status || 'pending'">
-    <!-- 左侧色条:按 status 着色 (success=绿 / failed=红 / running=蓝图蓝 / pending=灰) -->
-    <span class="sc-bar" :data-status="state?.status || 'pending'" aria-hidden="true" />
-
+  <div class="stage-card" :data-status="status">
     <header class="sc-header">
-      <h3 class="sc-title">{{ title }}</h3>
-      <span class="sc-status" :data-status="state?.status || 'pending'">
-        {{ statusLabel }}
+      <div class="sc-heading">
+        <h3 class="sc-title">{{ title }}</h3>
+        <p v-if="caption" class="sc-caption">{{ caption }}</p>
+      </div>
+
+      <!-- 勘印章:平方双线外框 + 中心一字 -->
+      <span class="sc-seal" :data-status="status" :title="statusLabel" aria-hidden="true">
+        <span class="sc-seal-char">{{ sealChar }}</span>
       </span>
     </header>
 
-    <div v-if="state?.status === 'failed'" class="sc-body sc-body--failed">
-      <div class="sc-section">
-        <div class="sc-row">
-          <span class="sc-label">错误信息</span>
-          <span class="sc-error-text">{{ state?.errorMessage || '本次失败,请按"重新解析"重试' }}</span>
-        </div>
-        <div class="sc-row">
-          <span class="sc-label">建议操作</span>
-          <span class="sc-hint">点击右下"重新解析"重试本阶段</span>
-        </div>
-      </div>
+    <div v-if="status === 'failed'" class="sc-error">
+      <span class="sc-error-mark" aria-hidden="true">×</span>
+      <span class="sc-error-text">{{ state?.errorMessage || '本次解析未通过，点“再校”重试本阶段' }}</span>
     </div>
 
-    <div v-else-if="state?.status === 'running'" class="sc-body sc-body--running">
-      <n-spin />
-      <span class="sc-running-text">正在解析…</span>
+    <div v-else-if="status === 'running'" class="sc-state">
+      <n-spin :size="16" />
+      <span>正在解析…</span>
     </div>
 
-    <div v-else-if="state?.status === 'success'" class="sc-body sc-body--success">
+    <div v-else-if="status === 'success'" class="sc-body">
       <slot :result="state?.result">
-        <p class="sc-text-muted">提取完成</p>
+        <p class="sc-state">提取完成</p>
       </slot>
     </div>
 
-    <div v-else class="sc-body sc-body--pending">
-      <p class="sc-text-muted">等待开始...</p>
+    <div v-else class="sc-state">
+      <span>等待开始</span>
     </div>
   </div>
 </template>
@@ -46,8 +40,16 @@ import { NSpin } from 'naive-ui'
 
 const props = defineProps<{
   stageName: 'character' | 'memory' | 'plotArc' | 'graph'
-  state?: { status: string; result?: unknown; errorMessage?: string }
+  state?: {
+    status: string
+    result?: unknown
+    errorMessage?: string
+    extractedAt?: string
+    chapterNumber?: number | string
+  }
 }>()
+
+const status = computed(() => props.state?.status || 'pending')
 
 const title = computed(() => ({
   character: '角色状态',
@@ -57,151 +59,146 @@ const title = computed(() => ({
 }[props.stageName]))
 
 const statusLabel = computed(() => ({
-  pending: '等待中',
-  running: '运行中',
-  success: '完成',
-  failed: '失败'
-} as Record<string, string>)[(props.state?.status as string) || 'pending'])
+  pending: '待校',
+  running: '待校',
+  success: '已勘印',
+  failed: '驳回'
+} as Record<string, string>)[status.value])
+
+/** 勘印章中心字：印(通过) / 驳(失败) / 待(待校或进行中)。 */
+const sealChar = computed(() => ({
+  success: '印',
+  failed: '驳',
+  running: '待',
+  pending: '待'
+} as Record<string, string>)[status.value])
+
+/** header 右侧 caption：仅在 state 携带提取信息时渲染。 */
+const caption = computed(() => {
+  const at = props.state?.extractedAt
+  const n = props.state?.chapterNumber
+  if (!at && n === undefined) return ''
+  const parts: string[] = []
+  if (at) parts.push(`提取于 ${at}`)
+  if (n !== undefined) parts.push(`章节 #${n}`)
+  return parts.join(' · ')
+})
 </script>
 
 <style scoped>
-/* === Card shell: 左侧色条 + 描边 + 分块 === */
+/* 古籍校样终审：纯白纸面 + 单线细边，无色条、无装饰、无实心徽章。 */
 .stage-card {
   position: relative;
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--color-pebble-border);
   border-radius: var(--radius-card);
   background: var(--color-pure-white);
-  padding: var(--space-4) var(--space-4) var(--space-4) calc(var(--space-4) + 6px);
-  overflow: hidden;
+  padding: 20px;
 }
-
-/* 左侧 4px 色条:绝对定位,不抢布局空间 */
-.sc-bar {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 4px;
-  background: var(--color-stone-gray);
-}
-.sc-bar[data-status="success"] { background: var(--color-positive); }
-.sc-bar[data-status="failed"]  { background: var(--color-error); }
-.sc-bar[data-status="running"] { background: var(--color-cool-accent); }
-.sc-bar[data-status="pending"] { background: var(--color-stone-gray); }
-
-/* 卡片外圈描边按 status 轻染色 */
-.stage-card[data-status="failed"]  { border-color: var(--color-error); }
-.stage-card[data-status="success"] { border-color: var(--color-positive); }
-.stage-card[data-status="running"] { border-color: var(--color-cool-accent); }
 
 /* === Header === */
 .sc-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-3);
-  padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--border-default);
-  margin-bottom: var(--space-3);
+  gap: var(--space-4);
 }
+
+.sc-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 .sc-title {
   margin: 0;
-  font-size: 14px;
+  font-family: 'Songti SC', 'STSong', 'Noto Serif CJK SC', serif;
+  font-size: 16px;
   font-weight: var(--weight-semibold);
-  color: var(--text-primary);
+  color: var(--color-ink-black);
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+}
+
+.sc-caption {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-muted-ash);
   letter-spacing: 0.02em;
 }
 
-/* 状态徽章:实心色块 + 白字 */
-.sc-status {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 10px;
-  border-radius: var(--radius-badge);
-  background: var(--color-stone-gray);
-  color: var(--text-secondary);
-  letter-spacing: 0.04em;
-}
-.sc-status[data-status="success"] {
-  background: var(--color-positive);
-  color: #ffffff;
-}
-.sc-status[data-status="failed"] {
-  background: var(--color-error);
-  color: #ffffff;
-}
-.sc-status[data-status="running"] {
-  background: var(--color-cool-accent);
-  color: #ffffff;
-}
-.sc-status[data-status="pending"] {
-  background: var(--color-stone-gray);
-  color: var(--text-secondary);
-}
-
-/* === Body shared === */
-.sc-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-/* failed body: 带左侧色条的失败条 */
-.sc-body--failed {
-  padding: var(--space-3);
-  background: var(--color-error-tint);
-  border: 1px solid var(--color-error);
-  border-radius: var(--radius-card);
-}
-.sc-body--running {
-  display: flex;
-  flex-direction: column;
+/* === 勘印章 === */
+.sc-seal {
+  flex: 0 0 auto;
+  position: relative;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-3);
-  padding: var(--space-6) var(--space-4);
-  background: var(--color-cool-accent-tint);
-  border: 1px dashed var(--color-cool-accent);
-  border-radius: var(--radius-card);
+  /* 外粗线 */
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  color: var(--color-muted-ash);
 }
-.sc-running-text {
-  font-size: 12px;
-  color: var(--color-cool-accent);
-  letter-spacing: 0.04em;
+/* 内细线：靠 inset box-shadow 画第二道框，形成“双线外框” */
+.sc-seal::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border: 0.5px solid currentColor;
+  border-radius: 1px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.sc-seal-char {
+  font-family: 'Songti SC', 'STSong', 'Noto Serif CJK SC', serif;
+  font-size: 14px;
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  color: currentColor;
 }
 
-/* failed 分块:标签 + 值 */
-.sc-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+.sc-seal[data-status='success'] {
+  color: var(--color-ink-black);
+  /* 极淡外阴影模拟红泥沁染 */
+  box-shadow: 0 0 6px rgba(185, 76, 76, 0.10);
 }
-.sc-row {
+.sc-seal[data-status='failed'] { color: var(--color-error); }
+.sc-seal[data-status='running'] { color: var(--color-warm-accent); }
+.sc-seal[data-status='pending'] { color: var(--color-muted-ash); }
+
+/* === Body / states === */
+.sc-body {
+  margin-top: var(--space-4);
+}
+
+.sc-state {
+  margin: var(--space-4) 0 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--color-muted-ash);
+}
+
+/* 失败：一行错误文字，无背景 tint */
+.sc-error {
+  margin-top: var(--space-3);
   display: flex;
   align-items: flex-start;
-  gap: var(--space-3);
+  gap: 6px;
   font-size: 13px;
+  color: var(--color-error);
+  line-height: 1.5;
 }
-.sc-label {
-  flex: 0 0 80px;
-  font-weight: var(--weight-semibold);
-  color: var(--text-secondary);
-  font-size: 12px;
+.sc-error-mark {
+  flex: 0 0 auto;
+  font-weight: var(--weight-bold);
+  line-height: 1.5;
 }
 .sc-error-text {
-  color: var(--color-error);
-  font-weight: var(--weight-semibold);
   word-break: break-word;
-}
-.sc-hint {
-  color: var(--text-tertiary);
-  font-size: 12px;
-}
-
-.sc-text-muted {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-tertiary);
 }
 </style>

@@ -20,9 +20,9 @@
     </StageCard>
 
     <footer class="rp-footer">
-      <button class="cap-pill is-ghost" @click="emit('reprepare')">重新解析（全部）</button>
-      <button class="cap-pill is-ghost" @click="emit('cancel')">撤销审查，回到草稿</button>
-      <button class="cap-pill is-primary" :disabled="!allSuccess" @click="emit('archive')">确认归档</button>
+      <button class="cap-pill is-ghost" @click="emit('reprepare')">再校 · 重新解析</button>
+      <button class="cap-pill is-ghost" @click="emit('cancel')">撤 · 撤销审查</button>
+      <button class="cap-pill is-primary" :disabled="!allSuccess" @click="emit('archive')">定稿 · 确认归档</button>
     </footer>
   </div>
 </template>

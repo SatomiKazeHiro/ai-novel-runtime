@@ -6,50 +6,49 @@
       class="sc-section"
     >
       <header class="sc-section-header">
-        <h4 class="sc-section-title">角色状态</h4>
-        <span class="sc-count-badge">{{ result.characterStates.length }}</span>
+        <span class="sc-eyebrow">CHARACTER STATE</span>
+        <span class="sc-count">{{ result.characterStates.length }}</span>
       </header>
       <ul class="sc-list">
         <li
           v-for="(row, i) in result.characterStates"
           :key="i"
-          class="sc-list-item"
-          :data-accent="row.isNew ? 'new' : 'default'"
+          class="sc-item"
         >
-          <div class="sc-row-main">
-            <strong>{{ row.name }}</strong>
-            <code class="sc-key">{{ row.key }}</code>
-            <span v-if="row.isNew" class="sc-tag is-new">新增</span>
+          <div class="sc-line">
+            <span class="sc-name">{{ row.name }}</span>
+            <code class="sc-mono">{{ row.key }}</code>
+            <span v-if="row.isNew" class="sc-flag is-new">新增</span>
           </div>
-          <div class="sc-row-meta">
-            <span class="sc-meta-label">状态</span>
-            <code class="sc-json">{{ truncateJson(row.status) }}</code>
+          <div class="sc-meta">
+            <span class="sc-meta-key">状态</span>
+            <code class="sc-mono sc-mono--wrap">{{ truncateJson(row.status) }}</code>
           </div>
-          <div class="sc-row-meta">
-            <span class="sc-meta-label">关系</span>
-            <code class="sc-json">{{ truncateJson(row.relationships) }}</code>
+          <div class="sc-meta">
+            <span class="sc-meta-key">关系</span>
+            <code class="sc-mono sc-mono--wrap">{{ truncateJson(row.relationships) }}</code>
           </div>
         </li>
       </ul>
     </section>
-    <p v-else class="sc-text-muted">本次未抽到角色状态</p>
+    <p v-else class="sc-empty">本次未抽到角色状态</p>
   </div>
 
   <!-- memory -->
   <div v-else-if="stageName === 'memory'" class="sc-result">
     <section v-if="(result?.mainEvents?.length ?? 0) > 0" class="sc-section">
       <header class="sc-section-header">
-        <h4 class="sc-section-title">主要事件</h4>
-        <span class="sc-count-badge is-hot">{{ result.mainEvents.length }}</span>
+        <span class="sc-eyebrow">MAIN EVENTS</span>
+        <span class="sc-count">{{ result.mainEvents.length }}</span>
       </header>
       <ul class="sc-list">
-        <li v-for="(ev, i) in result.mainEvents" :key="`m${i}`" class="sc-list-item">
-          <div class="sc-row-main">
+        <li v-for="(ev, i) in result.mainEvents" :key="`m${i}`" class="sc-item">
+          <div class="sc-line">
             <span class="sc-imp" :data-imp="ev.importance">{{ ev.importance }}</span>
             <span>{{ ev.description }}</span>
           </div>
-          <div v-if="ev.participants?.length" class="sc-row-meta">
-            <span class="sc-meta-label">参与者</span>
+          <div v-if="ev.participants?.length" class="sc-meta">
+            <span class="sc-meta-key">参与者</span>
             <span class="sc-chip-row">
               <span v-for="p in ev.participants" :key="p" class="sc-chip">{{ p }}</span>
             </span>
@@ -60,17 +59,17 @@
 
     <section v-if="(result?.sideEvents?.length ?? 0) > 0" class="sc-section">
       <header class="sc-section-header">
-        <h4 class="sc-section-title">次要事件</h4>
-        <span class="sc-count-badge">{{ result.sideEvents.length }}</span>
+        <span class="sc-eyebrow">SIDE EVENTS</span>
+        <span class="sc-count">{{ result.sideEvents.length }}</span>
       </header>
       <ul class="sc-list">
-        <li v-for="(ev, i) in result.sideEvents" :key="`s${i}`" class="sc-list-item">
-          <div class="sc-row-main">
+        <li v-for="(ev, i) in result.sideEvents" :key="`s${i}`" class="sc-item">
+          <div class="sc-line">
             <span class="sc-imp" :data-imp="ev.importance">{{ ev.importance }}</span>
             <span>{{ ev.description }}</span>
           </div>
-          <div v-if="ev.participants?.length" class="sc-row-meta">
-            <span class="sc-meta-label">参与者</span>
+          <div v-if="ev.participants?.length" class="sc-meta">
+            <span class="sc-meta-key">参与者</span>
             <span class="sc-chip-row">
               <span v-for="p in ev.participants" :key="p" class="sc-chip">{{ p }}</span>
             </span>
@@ -81,17 +80,17 @@
 
     <section v-if="(result?.scenes?.length ?? 0) > 0" class="sc-section">
       <header class="sc-section-header">
-        <h4 class="sc-section-title">场景</h4>
-        <span class="sc-count-badge">{{ result.scenes.length }}</span>
+        <span class="sc-eyebrow">SCENES</span>
+        <span class="sc-count">{{ result.scenes.length }}</span>
       </header>
       <ul class="sc-list">
-        <li v-for="(sc, i) in result.scenes" :key="`sc${i}`" class="sc-list-item">
-          <div class="sc-row-main">
+        <li v-for="(sc, i) in result.scenes" :key="`sc${i}`" class="sc-item">
+          <div class="sc-line">
             <span class="sc-imp" :data-imp="sc.importance">{{ sc.importance }}</span>
-            <strong>{{ sc.location }}</strong>
+            <span class="sc-name">{{ sc.location }}</span>
           </div>
-          <div class="sc-row-meta">
-            <span class="sc-meta-label">事件</span>
+          <div class="sc-meta">
+            <span class="sc-meta-key">事件</span>
             <span>{{ sc.event }}</span>
           </div>
         </li>
@@ -100,7 +99,7 @@
 
     <section v-if="result?.summary" class="sc-section">
       <header class="sc-section-header">
-        <h4 class="sc-section-title">摘要</h4>
+        <span class="sc-eyebrow">SUMMARY</span>
       </header>
       <p class="sc-summary">{{ result.summary }}</p>
     </section>
@@ -112,7 +111,7 @@
         (result?.scenes?.length ?? 0) === 0 &&
         !result?.summary
       "
-      class="sc-text-muted"
+      class="sc-empty"
     >本次未抽到记忆</p>
   </div>
 
@@ -123,35 +122,34 @@
       class="sc-section"
     >
       <header class="sc-section-header">
-        <h4 class="sc-section-title">剧情弧线</h4>
-        <span class="sc-count-badge">{{ result.plotArcs.length }}</span>
+        <span class="sc-eyebrow">PLOT ARC</span>
+        <span class="sc-count">{{ result.plotArcs.length }}</span>
       </header>
       <ul class="sc-list">
         <li
           v-for="(arc, i) in result.plotArcs"
           :key="i"
-          class="sc-list-item"
-          :data-accent="arc.isNew ? 'new' : 'default'"
+          class="sc-item"
         >
-          <div class="sc-row-main">
-            <strong>{{ arc.name }}</strong>
-            <span v-if="arc.isNew" class="sc-tag is-new">新增</span>
-            <span class="sc-tag" :data-status="arc.status">{{ arc.status }}</span>
-            <span class="sc-tag is-type">{{ arc.type === 'main' ? '主线' : arc.type === 'side' ? '支线' : (arc.type || '?') }}</span>
+          <div class="sc-line">
+            <span class="sc-name">{{ arc.name }}</span>
+            <span v-if="arc.isNew" class="sc-flag is-new">新增</span>
+            <span class="sc-flag" :data-status="arc.status">{{ arc.status }}</span>
+            <span class="sc-flag is-type">{{ arc.type === 'main' ? '主线' : arc.type === 'side' ? '支线' : (arc.type || '?') }}</span>
           </div>
-          <div class="sc-row-meta">
-            <span class="sc-meta-label">进度</span>
+          <div class="sc-meta">
+            <span class="sc-meta-key">进度</span>
             <span class="sc-progress" :data-tone="progressTone(arc.progress)">
               <span class="sc-progress-bar" :style="{ width: `${arc.progress}%` }" />
               <span class="sc-progress-num">{{ arc.progress }}%</span>
             </span>
-            <span class="sc-meta-label">当前阶段</span>
+            <span class="sc-meta-key">当前阶段</span>
             <span>{{ arc.currentStage || '未知' }}</span>
           </div>
         </li>
       </ul>
     </section>
-    <p v-else class="sc-text-muted">本次未抽到剧情弧线</p>
+    <p v-else class="sc-empty">本次未抽到剧情弧线</p>
   </div>
 
   <!-- graph -->
@@ -159,11 +157,11 @@
     <template v-if="result?.chapterGraph">
       <section class="sc-section">
         <header class="sc-section-header">
-          <h4 class="sc-section-title">节点 / 边统计</h4>
-          <span class="sc-count-badge">{{ result.chapterGraph.nodes?.length ?? 0 }}</span>
-          <span class="sc-meta-label">节点</span>
-          <span class="sc-count-badge">{{ result.chapterGraph.edges?.length ?? 0 }}</span>
-          <span class="sc-meta-label">边</span>
+          <span class="sc-eyebrow">GRAPH</span>
+          <span class="sc-count">{{ result.chapterGraph.nodes?.length ?? 0 }}</span>
+          <span class="sc-meta-key">节点</span>
+          <span class="sc-count">{{ result.chapterGraph.edges?.length ?? 0 }}</span>
+          <span class="sc-meta-key">边</span>
         </header>
 
         <!-- 内联 SVG 力导向图 -->
@@ -238,18 +236,18 @@
 
       <section v-if="(result.chapterGraph.edges?.length ?? 0) > 0" class="sc-section">
         <header class="sc-section-header">
-          <h4 class="sc-section-title">关系列表</h4>
-          <span class="sc-count-badge">{{ result.chapterGraph.edges.length }}</span>
+          <span class="sc-eyebrow">RELATIONS</span>
+          <span class="sc-count">{{ result.chapterGraph.edges.length }}</span>
         </header>
-        <ul class="sc-list sc-list-compact">
+        <ul class="sc-list sc-list--compact">
           <li
             v-for="(e, i) in (result.chapterGraph.edges || [])"
             :key="`e${i}`"
-            class="sc-list-item"
+            class="sc-item sc-item--flat"
           >
             <code class="sc-edge">
               {{ e.fromType }}:{{ e.fromKey }} <span class="sc-arrow">→</span> {{ e.toType }}:{{ e.toKey }}
-              <span v-if="e.relation" class="sc-tag is-relation">{{ e.relation }}</span>
+              <span v-if="e.relation" class="sc-flag is-relation">{{ e.relation }}</span>
             </code>
           </li>
         </ul>
@@ -260,10 +258,10 @@
           (result.chapterGraph.nodes?.length ?? 0) === 0 &&
           (result.chapterGraph.edges?.length ?? 0) === 0
         "
-        class="sc-text-muted"
+        class="sc-empty"
       >本次未抽到本章图谱</p>
     </template>
-    <p v-else class="sc-text-muted">本次未抽到本章图谱</p>
+    <p v-else class="sc-empty">本次未抽到本章图谱</p>
   </div>
 </template>
 
@@ -614,198 +612,197 @@ const graphLegend = computed(() => {
 </script>
 
 <style scoped>
+/* 校样清样:eyebrow + 描边计数 chip + 虚线分隔，无左色条、无区块底色。 */
 .sc-result {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-5);
 }
 
-/* section 容器:左 border + 背景区分 */
+/* === Section:纯排版分区，无边框无底色 === */
 .sc-section {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  background: var(--bg-section, var(--color-stone-gray));
-  border: 1px solid var(--border-subtle);
-  border-left: 3px solid var(--color-cool-accent);
-  border-radius: var(--radius-card);
 }
 
-/* section 头部:左侧小标题 + 右侧计数 badge */
 .sc-section-header {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding-bottom: var(--space-2);
-  border-bottom: 1px dashed var(--border-default);
-}
-.sc-section-title {
-  margin: 0;
-  font-size: 12px;
-  font-weight: var(--weight-semibold);
-  color: var(--text-secondary);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--color-pebble-border);
 }
 
-/* 计数 badge:左侧小色块 */
-.sc-count-badge {
+.sc-eyebrow {
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted-ash);
+}
+
+/* 计数 chip:描边无填充 */
+.sc-count {
   font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 600;
-  padding: 1px 8px;
-  border-radius: var(--radius-pill, 9999px);
-  background: var(--color-stone-gray-pressed, #d4d4d2);
-  color: var(--text-secondary);
-}
-.sc-count-badge.is-hot {
-  background: var(--color-warm-accent-tint);
-  color: var(--color-warm-accent);
+  padding: 0 6px;
+  line-height: 16px;
+  border: 1px solid var(--color-pebble-border);
+  border-radius: var(--radius-badge);
+  color: var(--color-graphite);
 }
 
+/* === List === */
 .sc-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
+}
+.sc-list--compact {
+  gap: 6px;
 }
 
-.sc-list-compact {
-  gap: 4px;
-}
-
-.sc-list-item {
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-input, 6px);
-  background: var(--color-canvas);
+/* 列表项:无边框、无底色，仅靠行距分隔 */
+.sc-item {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  font-family: var(--font-sans);
   font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-graphite);
+}
+.sc-item--flat {
+  gap: 0;
 }
 
-/* 新增项用绿色左边框强调 */
-.sc-list-item[data-accent="new"] {
-  border-left: 3px solid var(--color-positive);
-}
-
-.sc-row-main {
+/* name 在前，meta 在右，inline flex */
+.sc-line {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--space-2);
   flex-wrap: wrap;
 }
+.sc-name {
+  font-family: 'Songti SC', 'STSong', 'Noto Serif CJK SC', serif;
+  font-weight: var(--weight-semibold);
+  color: var(--color-ink-black);
+}
 
-.sc-row-meta {
+.sc-meta {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
   font-size: 12px;
-  color: var(--text-tertiary);
+  color: var(--color-mid-gray);
   flex-wrap: wrap;
 }
-
-.sc-meta-label {
-  font-weight: var(--weight-semibold);
-  color: var(--text-secondary);
+.sc-meta-key {
+  color: var(--color-muted-ash);
 }
 
-.sc-key,
-.sc-json,
-.sc-node,
+/* mono 数据 */
+.sc-mono,
 .sc-edge {
   font-family: var(--font-mono);
   font-size: 12px;
-  background: var(--color-stone-gray);
-  padding: 1px 6px;
-  border-radius: 4px;
+  color: var(--color-graphite);
 }
-
-.sc-json {
+.sc-mono--wrap {
   word-break: break-all;
 }
 
-.sc-tag {
+/* 标记 flag：极淡 tint 底 + 同色文字，不用粗体大色块 */
+.sc-flag {
   font-size: 11px;
-  font-weight: 600;
-  padding: 1px 8px;
+  padding: 0 6px;
+  line-height: 16px;
   border-radius: var(--radius-badge);
-  background: var(--color-stone-gray);
-  color: var(--text-secondary);
+  color: var(--color-mid-gray);
+  background: transparent;
+  border: 1px solid var(--color-pebble-border);
   letter-spacing: 0.02em;
 }
-
-.sc-tag.is-new {
-  background: var(--color-positive);
-  color: #ffffff;
-}
-
-.sc-tag.is-type {
-  background: var(--color-cool-accent-tint);
-  color: var(--color-cool-accent);
-}
-
-.sc-tag.is-relation {
-  background: var(--color-warm-accent-tint);
-  color: var(--color-warm-accent);
-  font-family: var(--font-mono);
-  font-weight: 500;
-}
-
-.sc-tag[data-status="active"] {
-  background: var(--color-positive-tint);
+.sc-flag.is-new {
   color: var(--color-positive);
+  background: var(--color-positive-tint);
+  border-color: transparent;
 }
-.sc-tag[data-status="resolving"],
-.sc-tag[data-status="closed"] {
-  background: var(--color-warm-accent-tint);
-  color: var(--color-warm-accent);
-}
-.sc-tag[data-status="stale"] {
-  background: var(--color-cool-accent-tint);
+.sc-flag.is-type {
   color: var(--color-cool-accent);
+  background: var(--color-cool-accent-tint);
+  border-color: transparent;
+}
+.sc-flag.is-relation {
+  color: var(--color-cool-accent);
+  background: var(--color-cool-accent-tint);
+  border-color: transparent;
+  font-family: var(--font-mono);
+}
+.sc-flag[data-status='active'] {
+  color: var(--color-positive);
+  background: var(--color-positive-tint);
+  border-color: transparent;
+}
+.sc-flag[data-status='resolving'],
+.sc-flag[data-status='closed'] {
+  color: var(--color-warm-accent);
+  background: var(--color-warm-accent-tint);
+  border-color: transparent;
+}
+.sc-flag[data-status='stale'] {
+  color: var(--color-cool-accent);
+  background: var(--color-cool-accent-tint);
+  border-color: transparent;
 }
 
-/* 参与者 chip 列表 */
+/* 参与者 chip */
 .sc-chip-row {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 4px;
 }
 .sc-chip {
-  font-size: 11px;
-  padding: 1px 8px;
-  border-radius: var(--radius-badge);
-  background: var(--color-cool-accent-tint);
-  color: var(--color-cool-accent);
   font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 0 6px;
+  line-height: 16px;
+  border-radius: var(--radius-badge);
+  color: var(--color-cool-accent);
+  background: var(--color-cool-accent-tint);
 }
 
+/* 重要度:mono 小字 + 极淡 tint */
 .sc-imp {
   display: inline-block;
-  min-width: 22px;
+  min-width: 20px;
   text-align: center;
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: var(--weight-semibold);
-  padding: 1px 6px;
+  padding: 0 5px;
+  line-height: 16px;
   border-radius: var(--radius-badge);
-  background: var(--color-stone-gray);
+  color: var(--color-mid-gray);
+  background: transparent;
+  border: 1px solid var(--color-pebble-border);
 }
-.sc-imp[data-imp="8"],
-.sc-imp[data-imp="9"],
-.sc-imp[data-imp="10"] {
-  background: var(--color-positive-tint);
+.sc-imp[data-imp='8'],
+.sc-imp[data-imp='9'],
+.sc-imp[data-imp='10'] {
   color: var(--color-positive);
+  background: var(--color-positive-tint);
+  border-color: transparent;
 }
-.sc-imp[data-imp="6"],
-.sc-imp[data-imp="7"] {
-  background: var(--color-warm-accent-tint);
+.sc-imp[data-imp='6'],
+.sc-imp[data-imp='7'] {
   color: var(--color-warm-accent);
+  background: var(--color-warm-accent-tint);
+  border-color: transparent;
 }
 
 /* 进度条 */
@@ -817,7 +814,7 @@ const graphLegend = computed(() => {
   flex: 0 0 140px;
   height: 16px;
   padding: 0 6px;
-  border-radius: var(--radius-pill, 9999px);
+  border-radius: var(--radius-pill);
   background: var(--color-stone-gray);
   overflow: hidden;
 }
@@ -825,46 +822,42 @@ const graphLegend = computed(() => {
   position: absolute;
   inset: 0 auto 0 0;
   height: 100%;
-  border-radius: var(--radius-pill, 9999px);
+  border-radius: var(--radius-pill);
   transition: width 0.3s ease;
 }
-.sc-progress[data-tone="high"] .sc-progress-bar { background: var(--color-positive); }
-.sc-progress[data-tone="mid"]  .sc-progress-bar { background: var(--color-cool-accent); }
-.sc-progress[data-tone="low"]  .sc-progress-bar { background: var(--color-warm-accent); }
+.sc-progress[data-tone='high'] .sc-progress-bar { background: var(--color-positive); }
+.sc-progress[data-tone='mid']  .sc-progress-bar { background: var(--color-cool-accent); }
+.sc-progress[data-tone='low']  .sc-progress-bar { background: var(--color-warm-accent); }
 .sc-progress-num {
   position: relative;
   font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   color: var(--color-pure-white);
   mix-blend-mode: difference;
   z-index: 1;
 }
 
-/* 摘要:左侧粗 border */
+/* 摘要:段落，无边框无底色 */
 .sc-summary {
   margin: 0;
+  font-family: var(--font-sans);
   font-size: 13px;
-  color: var(--text-secondary);
-  border-left: 3px solid var(--color-cool-accent);
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-pure-white);
-  border-radius: 0 var(--radius-card) var(--radius-card) 0;
+  line-height: 1.6;
+  color: var(--color-graphite);
 }
 
-.sc-text-muted {
+.sc-empty {
   margin: 0;
   font-size: 13px;
-  color: var(--text-tertiary);
+  color: var(--color-muted-ash);
 }
 
-/* === 内联 SVG 力导向图 === */
+/* === 内联 SVG 力导向图:纯白底、无边框 === */
 .sc-graph-frame {
   position: relative;
   background: var(--color-pure-white);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-card);
-  padding: var(--space-2);
+  padding: var(--space-2) 0;
   overflow: hidden;
 }
 .sc-graph-svg {
@@ -876,14 +869,14 @@ const graphLegend = computed(() => {
 .sc-graph-node-label {
   font-family: var(--font-mono);
   font-size: 10px;
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   fill: var(--color-pure-white);
   pointer-events: none;
 }
 .sc-graph-edge-label {
   font-family: var(--font-mono);
   font-size: 9px;
-  fill: var(--text-tertiary);
+  fill: var(--color-mid-gray);
   paint-order: stroke;
   stroke: var(--color-pure-white);
   stroke-width: 3;
@@ -893,9 +886,9 @@ const graphLegend = computed(() => {
 .sc-graph-more {
   margin-top: var(--space-2);
   text-align: center;
-  font-size: 11px;
-  color: var(--text-tertiary);
   font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-muted-ash);
 }
 
 .sc-graph-legend {
@@ -903,8 +896,8 @@ const graphLegend = computed(() => {
   flex-wrap: wrap;
   gap: var(--space-3);
   font-size: 12px;
-  color: var(--text-secondary);
-  padding: var(--space-2) 0 0;
+  color: var(--color-graphite);
+  padding-top: var(--space-2);
 }
 .sc-legend-item {
   display: inline-flex;
@@ -916,18 +909,15 @@ const graphLegend = computed(() => {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  border: 2px solid var(--color-pure-white);
-  box-shadow: 0 0 0 1px var(--border-subtle);
 }
 .sc-legend-count {
   font-family: var(--font-mono);
-  color: var(--text-tertiary);
+  color: var(--color-muted-ash);
 }
 
-/* 边列表里的箭头 */
+/* 边列表箭头 */
 .sc-arrow {
   color: var(--color-cool-accent);
   margin: 0 4px;
-  font-weight: 700;
 }
 </style>
