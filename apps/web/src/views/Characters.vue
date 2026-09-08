@@ -383,7 +383,7 @@ function openEdit(row: CharacterDisplayRow) {
   editId.value = row.id
   editingCharacter.value = row
   snapshotCharacter.value = row
-  snapshotChapter.value = row.relationships?.sourceChapterNumber ?? row.status?.sourceChapterNumber ?? row.costume?.sourceChapterNumber ?? null
+  snapshotChapter.value = row.latestSnapshotChapter
   form.value = {
     slug: row.slug,
     name: row.name,

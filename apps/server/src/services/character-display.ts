@@ -20,6 +20,8 @@ export interface CharacterDisplayRow {
   baseRelationships: Record<string, any> | null
   baseStatus: Record<string, any> | null
   costume: FieldDisplay<string> | null
+  /** 角色级最新快照章（fromChapterNumber 最大），与 viewChapterNumber 无关 */
+  latestSnapshotChapter: number | null
 }
 
 interface PrismaLike {
@@ -109,7 +111,10 @@ export async function fetchCharacterDisplay(
       status: pickJson('status'),
       baseRelationships: safeJsonParse<Record<string, any> | null>(c.relationships, null),
       baseStatus: safeJsonParse<Record<string, any> | null>(c.status, null),
-      costume: pickText()
+      costume: pickText(),
+      // 角色级最新快照章：branchStates 已按 fromChapterNumber desc 排序，取第一个 fromChapterNumber 非 null 的行。
+      // 与 viewChapterNumber 无关；三字段 sourceChapterNumber 可能各自不同，此字段统一给「默认选章」用。
+      latestSnapshotChapter: states.find(s => s.fromChapterNumber !== null)?.fromChapterNumber ?? null
     }
   })
 }

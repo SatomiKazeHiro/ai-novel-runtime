@@ -45,6 +45,7 @@ export interface CharacterDisplayRow {
   baseRelationships: Record<string, any> | null
   baseStatus: Record<string, any> | null
   costume: FieldDisplay<string> | null
+  latestSnapshotChapter: number | null
 }
 
 export const charactersApi = {

@@ -110,4 +110,36 @@ describe('fetchCharacterDisplay', () => {
     expect(result[0].status).toBe(null)
     expect(result[0].relationships?.value).toEqual({ a: 1 })
   })
+
+  it('latestSnapshotChapter = 角色最新快照章, 与 viewChapterNumber 无关', async () => {
+    const prisma: any = {
+      character: { findMany: vi.fn().mockResolvedValue([{
+        id: 'c1', storyId: 's1', slug: 'linfan', name: '林凡', protagonist: false,
+        identity: '[]', appearance: '[]', temperament: '[]', personality: '[]', speechStyle: '[]',
+        relationships: null, status: null
+      }]) },
+      // Prisma orderBy fromChapterNumber desc 返回顺序: [7, 5, 3]
+      characterBranchState: { findMany: vi.fn().mockResolvedValue([
+        { characterId: 'c1', fromChapterNumber: 7, status: null, relationships: null, costume: '黑衣' },
+        { characterId: 'c1', fromChapterNumber: 5, status: '{"realm":"金丹"}', relationships: '{"李四":"好友"}', costume: '白袍' },
+        { characterId: 'c1', fromChapterNumber: 3, status: '{"realm":"筑基"}', relationships: '{"李四":"朋友"}', costume: null }
+      ]) }
+    }
+    // 默认模式: 最新快照章 = 7(desc 第一个), 即便 relationships 只在第 5 章有数据
+    expect((await fetchCharacterDisplay(prisma, 's1', null))[0].latestSnapshotChapter).toBe(7)
+    // 指定章模式: 也不受影响, 仍是角色级最新快照章
+    expect((await fetchCharacterDisplay(prisma, 's1', 3))[0].latestSnapshotChapter).toBe(7)
+  })
+
+  it('无 snapshot → latestSnapshotChapter = null', async () => {
+    const prisma: any = {
+      character: { findMany: vi.fn().mockResolvedValue([{
+        id: 'c1', storyId: 's1', slug: 'linfan', name: '林凡', protagonist: false,
+        identity: '[]', appearance: '[]', temperament: '[]', personality: '[]', speechStyle: '[]',
+        relationships: null, status: null
+      }]) },
+      characterBranchState: { findMany: vi.fn().mockResolvedValue([]) }
+    }
+    expect((await fetchCharacterDisplay(prisma, 's1', null))[0].latestSnapshotChapter).toBe(null)
+  })
 })
