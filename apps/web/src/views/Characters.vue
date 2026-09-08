@@ -11,11 +11,28 @@
       </div>
     </header>
 
+    <!-- 章节切换器 (v4: 三字段独立查快照) -->
+    <div class="cap-card" style="margin-bottom: 12px; padding: 12px 16px">
+      <n-space align="center" :wrap="false">
+        <n-text depth="3">查看章节快照:</n-text>
+        <n-select
+          v-model:value="viewChapter"
+          :options="chapterOptions"
+          placeholder="最新有数据(默认)"
+          clearable
+          style="width: 280px"
+        />
+        <n-text v-if="viewChapter !== null" depth="3" style="font-size: 12px">
+          切换后只显示该章节的快照数据,无字段则为 null
+        </n-text>
+      </n-space>
+    </div>
+
     <div class="cap-card" style="padding: 0; overflow: hidden">
       <n-data-table :columns="columns" :data="characters" :loading="loading" :bordered="false" />
     </div>
 
-    <!-- 新建/编辑角色弹窗 -->
+    <!-- 新建/编辑角色弹窗 (v4: 不再编辑关系/状态,走 PUT append snapshot) -->
     <n-modal v-model:show="showModal" :title="isEdit ? '编辑角色' : '新建角色'" preset="card" style="width: 640px">
       <n-form :model="form" label-placement="left" label-width="80">
         <n-form-item label="标识" required :disabled="isEdit">
@@ -42,12 +59,10 @@
         <n-form-item label="说话风格">
           <DynamicTags v-model="form.speechStyle" />
         </n-form-item>
-        <n-form-item label="关系">
-          <n-input v-model:value="relationshipsJson" type="textarea" :rows="3" placeholder='{"张三": "兄弟", "李四": "敌对"}' />
-        </n-form-item>
-        <n-form-item label="状态">
-          <n-input v-model:value="statusJson" type="textarea" :rows="3" placeholder='{"realm": "筑基", "location": "青云宗"}' />
-        </n-form-item>
+        <n-alert type="info" :show-icon="true" style="margin-top: 8px">
+          关系 / 状态 / 衣着 字段由归档时 AI 抽取并落入快照,不在此处编辑。
+          创建时可设置基础关系/状态;查看章节快照请使用上方章节切换器。
+        </n-alert>
       </n-form>
       <template #footer>
         <n-space justify="end">
@@ -60,22 +75,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, h, watch, computed } from 'vue'
+import { ref, onMounted, h, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NSpace, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NCheckbox,
+  NText, NSelect, NAlert, NTag,
   type DataTableColumns
 } from 'naive-ui'
-import { charactersApi } from '../api/characters'
-import { safeJsonParse } from '@novel-runtime/shared'
+import { charactersApi, type CharacterDisplayRow, type FieldDisplay } from '../api/characters'
+import { chaptersApi } from '../api/chapters'
 import DynamicTags from '../components/DynamicTags.vue'
 
 const route = useRoute()
-const characters = ref<any[]>([])
+const characters = ref<CharacterDisplayRow[]>([])
 const loading = ref(false)
 const showModal = ref(false)
 const isEdit = ref(false)
 const editId = ref('')
+const viewChapter = ref<number | null>(null)  // null = 默认(最新有数据)
+const chapterOptions = ref<Array<{ label: string; value: number }>>([])
 
 const form = ref({
   slug: '',
@@ -85,42 +103,71 @@ const form = ref({
   appearance: [] as string[],
   temperament: [] as string[],
   personality: [] as string[],
-  speechStyle: [] as string[],
-  relationships: {} as Record<string, any>,
-  status: {} as Record<string, any>
+  speechStyle: [] as string[]
+  // 关系/状态 不再在此编辑;基础值走 POST,快照由归档流程写入
 })
 
-const relationshipsJson = computed({
-  get: () => JSON.stringify(form.value.relationships, null, 2),
-  set: (v: string) => { try { form.value.relationships = JSON.parse(v) } catch {} }
-})
-
-const statusJson = computed({
-  get: () => JSON.stringify(form.value.status, null, 2),
-  set: (v: string) => { try { form.value.status = JSON.parse(v) } catch {} }
-})
-
-function formatTags(jsonStr: string): string {
-  const arr = safeJsonParse<string[]>(jsonStr, [])
+function formatTags(arr: string[]): string {
+  if (!Array.isArray(arr)) return ''
   return arr.join(', ')
 }
 
-function formatJson(jsonStr: string): string {
-  const obj = safeJsonParse<Record<string, any>>(jsonStr, {})
-  return Object.entries(obj).map(([k, v]) => `${k}:${v}`).join(', ')
+/** 格式化 Record<string, any> → "k:v, k:v" */
+function formatObject(obj: Record<string, any> | null | undefined): string {
+  if (!obj || typeof obj !== 'object') return '(无)'
+  const entries = Object.entries(obj)
+  if (entries.length === 0) return '(无)'
+  return entries.map(([k, v]) => {
+    if (typeof v === 'object' && v !== null) return `${k}: ${JSON.stringify(v)}`
+    return `${k}: ${v}`
+  }).join(', ')
 }
 
-const columns: DataTableColumns<any> = [
-  { title: '标识', key: 'slug', width: 100 },
-  { title: '姓名', key: 'name', width: 100 },
-  { title: '主角', key: 'protagonist', width: 60, render: (row) => row.protagonist ? h('span', { style: 'color: var(--color-protagonist)' }, '★') : '' },
+/** 渲染快照字段:值 + 来源标签 */
+function renderSnapshot(value: string | null, sourceChapter: number | null) {
+  return h('div', null, [
+    h('div', { style: 'word-break: break-word' }, value || '(无)'),
+    sourceChapter !== null
+      ? h(NTag, { size: 'tiny', type: 'info', style: 'margin-top: 4px' },
+          { default: () => `来源: 第 ${sourceChapter} 章` })
+      : h(NTag, { size: 'tiny', style: 'margin-top: 4px' },
+          { default: () => '来源: 基础' })
+  ])
+}
+
+function renderField(field: FieldDisplay<string> | null) {
+  return renderSnapshot(field?.value ?? null, field?.sourceChapterNumber ?? null)
+}
+
+function renderJsonField(field: FieldDisplay<Record<string, any>> | null) {
+  const formatted = formatObject(field?.value)
+  return renderSnapshot(formatted, field?.sourceChapterNumber ?? null)
+}
+
+const columns: DataTableColumns<CharacterDisplayRow> = [
+  { title: '标识', key: 'slug', width: 90 },
+  { title: '姓名', key: 'name', width: 90 },
+  { title: '主角', key: 'protagonist', width: 50, render: (row) => row.protagonist ? h('span', { style: 'color: var(--color-protagonist)' }, '★') : '' },
   { title: '身份', key: 'identity', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.identity) },
   { title: '外貌', key: 'appearance', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.appearance) },
   { title: '气质', key: 'temperament', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.temperament) },
   { title: '性格', key: 'personality', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.personality) },
   { title: '说话风格', key: 'speechStyle', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.speechStyle) },
-  { title: '关系', key: 'relationships', ellipsis: { tooltip: true }, width: 140, render: (row) => formatJson(row.branchStates?.[0]?.relationships ?? '{}') },
-  { title: '状态', key: 'status', ellipsis: { tooltip: true }, width: 140, render: (row) => formatJson(row.branchStates?.[0]?.status ?? '{}') },
+  {
+    title: () => h('span', null, ['关系', h(NTag, { size: 'tiny', type: 'info', style: 'margin-left: 4px' }, { default: '快照' })]),
+    key: 'relationships', width: 180,
+    render: (row) => renderJsonField(row.relationships)
+  },
+  {
+    title: () => h('span', null, ['状态', h(NTag, { size: 'tiny', type: 'info', style: 'margin-left: 4px' }, { default: '快照' })]),
+    key: 'status', width: 180,
+    render: (row) => renderJsonField(row.status)
+  },
+  {
+    title: () => h('span', null, ['衣着', h(NTag, { size: 'tiny', type: 'info', style: 'margin-left: 4px' }, { default: '快照' })]),
+    key: 'costume', width: 160,
+    render: (row) => renderField(row.costume)
+  },
   {
     title: '操作',
     key: 'actions',
@@ -144,10 +191,23 @@ async function loadCharacters() {
   }
   loading.value = true
   try {
-    const res = await charactersApi.list(route.params.storyId as string)
-    characters.value = res.data.data
+    const res = await charactersApi.display(route.params.storyId as string, viewChapter.value)
+    characters.value = res.data.data ?? []
   } finally {
     loading.value = false
+  }
+}
+
+async function loadChapterOptions() {
+  if (!route.params.storyId) return
+  try {
+    const res = await chaptersApi.list(route.params.storyId as string)
+    chapterOptions.value = (res.data?.data ?? [])
+      .filter((ch: any) => ch.status === 'archived')
+      .map((ch: any) => ({ label: `第 ${ch.number} 章: ${ch.title || ''}`, value: ch.number }))
+      .sort((a: { value: number }, b: { value: number }) => b.value - a.value)
+  } catch {
+    // 静默:章节列表失败不影响主表格
   }
 }
 
@@ -155,8 +215,7 @@ function resetForm() {
   form.value = {
     slug: '', name: '', protagonist: false,
     identity: [], appearance: [], temperament: [],
-    personality: [], speechStyle: [],
-    relationships: {}, status: {}
+    personality: [], speechStyle: []
   }
 }
 
@@ -167,20 +226,18 @@ function openCreate() {
   showModal.value = true
 }
 
-function openEdit(row: any) {
+function openEdit(row: CharacterDisplayRow) {
   isEdit.value = true
   editId.value = row.id
   form.value = {
     slug: row.slug,
     name: row.name,
     protagonist: row.protagonist ?? false,
-    identity: safeJsonParse<string[]>(row.identity, []),
-    appearance: safeJsonParse<string[]>(row.appearance, []),
-    temperament: safeJsonParse<string[]>(row.temperament, []),
-    personality: safeJsonParse<string[]>(row.personality, []),
-    speechStyle: safeJsonParse<string[]>(row.speechStyle, []),
-    relationships: safeJsonParse<Record<string, any>>(row.branchStates?.[0]?.relationships ?? '{}', {}),
-    status: safeJsonParse<Record<string, any>>(row.branchStates?.[0]?.status ?? '{}', {})
+    identity: Array.isArray(row.identity) ? row.identity : [],
+    appearance: Array.isArray(row.appearance) ? row.appearance : [],
+    temperament: Array.isArray(row.temperament) ? row.temperament : [],
+    personality: Array.isArray(row.personality) ? row.personality : [],
+    speechStyle: Array.isArray(row.speechStyle) ? row.speechStyle : []
   }
   showModal.value = true
 }
@@ -194,9 +251,7 @@ async function handleSubmit() {
     appearance: form.value.appearance,
     temperament: form.value.temperament,
     personality: form.value.personality,
-    speechStyle: form.value.speechStyle,
-    relationships: form.value.relationships,
-    status: form.value.status
+    speechStyle: form.value.speechStyle
   }
 
   if (isEdit.value && editId.value) {
@@ -219,13 +274,19 @@ async function handleDelete(id: string) {
   await loadCharacters()
 }
 
+watch(viewChapter, () => {
+  loadCharacters()
+})
+
 watch(() => route.params.storyId, () => {
   loadCharacters()
+  loadChapterOptions()
 })
 
 onMounted(() => {
   if (route.params.storyId) {
     loadCharacters()
+    loadChapterOptions()
   }
 })
 </script>
