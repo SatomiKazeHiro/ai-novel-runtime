@@ -214,6 +214,10 @@ async function handleAdoptDraft(draft: any) {
     if (content !== null) {
         editor.editForm.content = content;
         editor.currentChapter!.content = content;
+        // 审查中换正文：归档数据（记忆/图谱/弧线）仍是基于旧正文提取的，提醒用户重新解析
+        if (editor.currentChapter.status === 'reviewing') {
+            message.warning('正文已更换。归档数据仍基于旧正文，如需一致请取消审查后重新准备归档');
+        }
     }
 }
 
