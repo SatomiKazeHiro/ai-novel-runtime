@@ -179,7 +179,11 @@ describe('extractAll — content budget (integration with extractAll)', () => {
     const log = { info: vi.fn(), error: vi.fn(), warn: vi.fn() }
     const app: any = { prisma, log }
 
-    const content = 'a'.repeat(5000)  // well under 64608
+    // Natural text fixture: ~5000 chars with spaces and paragraph breaks.
+    // Avoids pathological tokenizer behavior on long runs of identical chars
+    // while remaining well under the 64608 default charBudget.
+    const sentence = 'The night was cold and the wind howled across the empty fields as the lone traveler pressed on. '
+    const content = (sentence + '\n\n').repeat(Math.ceil(5000 / (sentence.length + 2))).slice(0, 5000)
     const result = await extractAll(app, 'c1', 's1', content, 'outline', 1)
     expect(result).not.toBeNull()  // extraction should still complete
   })
