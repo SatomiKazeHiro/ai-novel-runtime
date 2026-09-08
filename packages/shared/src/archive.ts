@@ -266,3 +266,53 @@ export type PendingGraphSnapshotZ = z.infer<typeof PendingGraphSnapshotSchema>
 export type PendingPlotArcWriteZ = z.infer<typeof PendingPlotArcWriteSchema>
 export type PendingArchiveMetaZ = z.infer<typeof PendingArchiveMetaSchema>
 export type PendingArchiveDataZ = z.infer<typeof PendingArchiveDataSchema>
+
+// =================================================================
+// v3 shape (2026-07-25 引入)
+// 把单一 PendingArchiveData 拆为 4 个独立 stage 状态。
+// 老 v1/v2 blob 无 `version` 字段 → 前端检测为老 shape,提示用户重新 prepare-archive。
+// =================================================================
+
+export interface PendingStageState {
+  status: 'pending' | 'running' | 'success' | 'failed'
+  result?: unknown
+  errorMessage?: string
+  completedAt?: string
+}
+
+export interface PendingArchiveDataV3 {
+  version: 3
+  stages: {
+    character: PendingStageState
+    memory: PendingStageState
+    plotArc: PendingStageState
+    graph: PendingStageState
+  }
+  meta: {
+    extractedAt: string
+    chapterNumber: number
+  }
+}
+
+export const PendingStageStateSchema = z.object({
+  status: z.enum(['pending', 'running', 'success', 'failed']),
+  result: z.unknown().optional(),
+  errorMessage: z.string().optional(),
+  completedAt: z.string().optional()
+}).passthrough()
+
+export const PendingArchiveDataV3Schema = z.object({
+  version: z.literal(3),
+  stages: z.object({
+    character: PendingStageStateSchema,
+    memory: PendingStageStateSchema,
+    plotArc: PendingStageStateSchema,
+    graph: PendingStageStateSchema
+  }),
+  meta: z.object({
+    extractedAt: z.string(),
+    chapterNumber: z.number()
+  })
+}).passthrough()
+
+export type PendingArchiveDataV3Z = z.infer<typeof PendingArchiveDataV3Schema>
