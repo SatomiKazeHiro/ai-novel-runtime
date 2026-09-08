@@ -40,7 +40,7 @@
 - **主线**：只能从当前最新章节继续发展，序号严格递增（`1 → 2 → 3`），形成线性主线
 - **番外**：`isSideStory = true`，可从任意章节创建，序号为小数（如 `1.01`、`1.02`），形成支线效果
 - 根章节 `parentChapterId = null`
-- 删除 `archived` 章节会级联删除同 `fromChapterNumber` 的记忆、时间线、角色状态，并从上一章 snapshot 重建图谱
+- 删除 `archived` 章节会级联删除同 `fromChapterNumber` 的记忆、角色状态，并从上一章 snapshot 重建图谱
 
 ---
 
@@ -82,7 +82,7 @@
 | 开发 | SQLite（零配置启动，`file:./dev.db`） |
 | 生产 | PostgreSQL（切换仅需改 `.env` + `prisma/schema.prisma` 的 `provider`） |
 
-主要模型：`Story`、`Chapter`、`Draft`、`Character`、`CharacterBranchState`、`LoreItem`、`Memory`、`TimelineEvent`、`PlotArc`、`RuntimeProfile`、`WorkerTask`、`AiProviderConfig`、`PromptLog`。（`GraphNode`/`GraphEdge` 已在 v3 删除，图谱数据存 `Chapter.chapterGraph`/`cumulativeGraph` JSON 列。）
+主要模型：`Story`、`Chapter`、`Draft`、`Character`、`CharacterBranchState`、`LoreItem`、`Memory`、`PlotArc`、`RuntimeProfile`、`WorkerTask`、`AiProviderConfig`、`PromptLog`。（`GraphNode`/`GraphEdge` 已在 v3 删除，图谱数据存 `Chapter.chapterGraph`/`cumulativeGraph` JSON 列。）
 
 ### 2.4 共享包
 
@@ -198,7 +198,6 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 | `stories.ts` | `/api/stories` | CRUD + plot-arcs 查询 + chapter-tree |
 | `characters.ts` | `/api/stories/:storyId/characters` + `/api/characters/:charId` | 角色 CRUD + `CharacterBranchState` 历史 |
 | `lore.ts` | `/api/stories/:storyId/lore` + `/api/lore/:itemId` | 世界观设定 CRUD |
-| `timeline.ts` | `/api/stories/:storyId/timeline` + `/api/timeline/:eventId` | 时间线事件 CRUD |
 | `chapters-{crud,generate,archive,tree}.ts` + `_helpers.ts` | `/api/stories/:storyId/chapters`, `/api/chapters/:chapterId/...` | **最复杂**(P3 拆分):crud(基础 CRUD) / generate(preview + generate + select + develop) / archive(prepare-archive + archive 确认 + 事务) / tree(chapter-tree)。**v2**:`ChapterStatus` 收口到 3 值(`draft`/`reviewing`/`archived`);generate/select **不再翻 `chapter.status`**(只写 `Draft.status`,`archived` 章节兜底 400);prepare-archive 的独占锁条件为 `status ∈ [draft, reviewing]`,AI 提取失败回退 `draft` |
 | `drafts.ts` | `/api/chapters/:chapterId/drafts`, `/api/drafts/:draftId` | 草稿 CRUD |
 | `graph.ts` | `/api/stories/:storyId/graph`, `/api/chapters/:chapterId/graph-snapshot` | 知识图谱查询 + 手动增删节点/边 |
@@ -243,7 +242,7 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 | Layout | 路径示例 | 页面 |
 |--------|----------|------|
 | `SimpleLayout` | `/dashboard`、`/stories`、`/runtime-profiles`、`/worker-tasks`、`/model-manager` | 全局管理页 |
-| `NovelDesignLayout` | `/novel-design/:storyId/characters`、`.../chapters`、`.../graph`、`.../memory`、`.../timeline`、`.../prompt-logs` | 小说内页（带侧边栏） |
+| `NovelDesignLayout` | `/novel-design/:storyId/characters`、`.../chapters`、`.../graph`、`.../memory`、`.../prompt-logs` | 小说内页（带侧边栏） |
 
 旧路由已做重定向：`/characters` → `/stories` 等。
 
@@ -418,7 +417,6 @@ DEEPSEEK_CONTEXT_LENGTH=64000
 | 角色管理 | `apps/server/src/routes/characters.ts` | `apps/web/src/views/Characters.vue` |
 | 知识图谱 | `apps/server/src/routes/graph.ts` | `apps/web/src/views/Graph.vue` |
 | 记忆管理 | `apps/server/src/routes/memories.ts` | `apps/web/src/views/Memory.vue` |
-| 时间线 | `apps/server/src/routes/timeline.ts` | `apps/web/src/views/Timeline.vue` |
 | 写作人格 | `apps/server/src/routes/runtime-profile.ts` | `apps/web/src/views/RuntimeProfile.vue` |
 | 模型管理 | `apps/server/src/routes/ai-provider.ts` | `apps/web/src/views/ModelManager.vue` |
 | Prompt 日志 | `apps/server/src/routes/prompt-logs.ts` | `apps/web/src/views/PromptLogs.vue` |

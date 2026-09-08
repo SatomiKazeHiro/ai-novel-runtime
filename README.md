@@ -86,7 +86,6 @@ novel-runtime/
 │   │       │   ├── stories.ts
 │   │       │   ├── characters.ts
 │   │       │   ├── lore.ts
-│   │       │   ├── timeline.ts
 │   │       │   ├── chapters-crud.ts         # 章节 CRUD（基础）
 │   │       │   ├── chapters-generate.ts     # preview / generate / select / develop
 │   │       │   ├── chapters-archive.ts      # prepare-archive / archive 确认（含事务）
@@ -130,7 +129,6 @@ novel-runtime/
 │           │   ├── LoreBook.vue
 │           │   ├── Chapters.vue
 │           │   ├── ChapterReader.vue          # 章节独立阅读页（d253ac0）
-│           │   ├── Timeline.vue
 │           │   ├── Graph.vue                  # view shell（P5 拆为 GraphView + EditableGraph）
 │           │   ├── Memory.vue
 │           │   ├── ReviewingPanel.vue         # reviewing 状态的人工审查页
@@ -201,7 +199,6 @@ novel-runtime/
 | `CharacterBranchState` | 角色历史快照（按 `fromChapterNumber` 记录动态状态变化） |
 | `LoreItem` | 世界观条目（境界/地图/功法/势力/物品/规则） |
 | `Memory` | 记忆（global=每章优化后的状态快照/chapter=原始提取/scene/temporary） |
-| `TimelineEvent` | 时间线事件（按 `fromChapterNumber` 标记生命周期） |
 | `PlotArc` | 剧情弧线（全局） |
 | `Draft` | 候选（含 temperature/maxTokens/compiledPrompt） |
 | `AiProviderConfig` | AI 模型配置（contextLength / maxTokens） |
@@ -291,7 +288,6 @@ http://localhost:3000/documentation
 |------|------|------|
 | `/api/stories/:id/characters` | GET/POST | 角色管理 |
 | `/api/stories/:id/lore` | GET/POST | 世界观条目 |
-| `/api/stories/:id/timeline` | GET/POST | 时间线事件 |
 | `/api/stories/:id/graph` | GET | 知识图谱 |
 | `/api/stories/:id/memory` | GET/POST | 记忆管理 |
 | `/api/drafts/:id/score` | POST | AI 评分（7 维度） |
@@ -317,7 +313,7 @@ http://localhost:3000/documentation
 番外·1.01  番外·2.01（支线，可独立或并列发展）
 ```
 
-- 删除已归档章节时级联清理同 `fromChapterNumber` 的派生数据（记忆、时间线、角色状态）并从上一章 snapshot 重建图谱
+- 删除已归档章节时级联清理同 `fromChapterNumber` 的派生数据（记忆、角色状态）并从上一章 snapshot 重建图谱
 - `parentChapterId` 字段记录分支父节点；`ChapterBranchTree.vue` 渲染树形视图
 
 ### Prompt Pipeline
@@ -329,7 +325,7 @@ Prompt 分层组装（从下到上）：
 ```
 System Message  ← [Identity] + [Settings] + [Behavior] + [Jailbreak] + [Task]
   ↓
-User Message  ← Style → Story → Lore → Character → Scene → Memory → Timeline → PlotArc → Output
+User Message  ← Style → Story → Lore → Character → Scene → Memory → PlotArc → Output
 ```
 
 ### Context Budget

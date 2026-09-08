@@ -173,7 +173,7 @@ describe('prepare-archive route — v3 no updateMany lock, status pre-check only
     ;(runMemoryStage as any).mockResolvedValue({
       status: 'success', result: {
         mainEvents: [], sideEvents: [], emotions: [], foreshadowing: [],
-        relationshipChanges: [], scenes: [], timelinePosition: null, summary: ''
+        relationshipChanges: [], scenes: [], summary: ''
       }, completedAt: ts
     })
     ;(runPlotArcStage as any).mockResolvedValue({

@@ -47,7 +47,7 @@ function mockAllStagesSuccess() {
     status: 'success',
     result: {
       mainEvents: [], sideEvents: [], emotions: [], foreshadowing: [],
-      relationshipChanges: [], scenes: [], timelinePosition: null, summary: ''
+      relationshipChanges: [], scenes: [], summary: ''
     },
     completedAt: ts
   })

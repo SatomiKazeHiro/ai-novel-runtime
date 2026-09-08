@@ -97,7 +97,7 @@ describe('PUT /chapters/:chapterId — UpdateChapterRequestSchema', () => {
   })
 
   it('persists pendingArchiveData in reviewing state (regression: edit-then-archive)', async () => {
-    // 用户报告 bug: 在 reviewing 阶段编辑记忆重要度/时间线 → 点保存 → 归档,
+    // 用户报告 bug: 在 reviewing 阶段编辑记忆重要度 → 点保存 → 归档,
     // DB 仍是 prepare-archive 的旧值。根因: chapters-crud.ts PUT 处理函数在
     // constructing `data` 时漏掉了 pendingArchiveData, 写库时静默丢弃。
     mockPrisma.chapter.findUnique.mockResolvedValue({
@@ -390,7 +390,7 @@ describe('POST /chapters/:chapterId/prepare-archive — PrepareArchiveRequestSch
       status: 'success',
       result: {
         mainEvents: [], sideEvents: [], emotions: [], foreshadowing: [],
-        relationshipChanges: [], scenes: [], timelinePosition: null, summary: ''
+        relationshipChanges: [], scenes: [], summary: ''
       },
       completedAt: ts
     })
