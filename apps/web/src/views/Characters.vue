@@ -95,37 +95,43 @@
               <n-text v-else depth="3" style="font-size: 12px">(未填写)</n-text>
             </div>
 
-            <!-- 快照三列 -->
+            <!-- 快照 — 横排:每个字段一行,左标签右内容 -->
             <div class="char-card__section">
               <span class="char-card__label">章节快照</span>
-              <div class="char-card__snapshot-grid">
-                <div class="char-card__snapshot">
+              <div class="char-card__snapshot-list">
+                <div class="char-card__snapshot-row">
                   <span class="char-card__snapshot-label">关系</span>
-                  <div class="char-card__snapshot-value">{{ formatObject(char.relationships?.value) }}</div>
-                  <n-tag size="tiny" :type="sourceTagType(char.relationships?.sourceChapterNumber)">
-                    {{ sourceLabel(char.relationships?.sourceChapterNumber) }}
-                  </n-tag>
+                  <div class="char-card__snapshot-content">
+                    <div class="char-card__snapshot-value">{{ formatObject(char.relationships?.value) }}</div>
+                    <n-tag size="tiny" :type="sourceTagType(char.relationships?.sourceChapterNumber)">
+                      {{ sourceLabel(char.relationships?.sourceChapterNumber) }}
+                    </n-tag>
+                  </div>
                 </div>
-                <div class="char-card__snapshot">
+                <div class="char-card__snapshot-row">
                   <span class="char-card__snapshot-label">状态</span>
-                  <div class="char-card__snapshot-value">{{ formatObject(char.status?.value) }}</div>
-                  <n-tag size="tiny" :type="sourceTagType(char.status?.sourceChapterNumber)">
-                    {{ sourceLabel(char.status?.sourceChapterNumber) }}
-                  </n-tag>
+                  <div class="char-card__snapshot-content">
+                    <div class="char-card__snapshot-value">{{ formatObject(char.status?.value) }}</div>
+                    <n-tag size="tiny" :type="sourceTagType(char.status?.sourceChapterNumber)">
+                      {{ sourceLabel(char.status?.sourceChapterNumber) }}
+                    </n-tag>
+                  </div>
                 </div>
-                <div class="char-card__snapshot">
+                <div class="char-card__snapshot-row">
                   <span class="char-card__snapshot-label">衣着</span>
-                  <div class="char-card__snapshot-value">{{ char.costume?.value || '(无)' }}</div>
-                  <n-tag
-                    v-if="char.costume?.sourceChapterNumber !== null && char.costume?.sourceChapterNumber !== undefined"
-                    size="tiny"
-                    type="info"
-                  >来源: 第 {{ char.costume.sourceChapterNumber }} 章</n-tag>
-                  <n-text
-                    v-else
-                    depth="3"
-                    style="font-size: 11px"
-                  >(无快照)</n-text>
+                  <div class="char-card__snapshot-content">
+                    <div class="char-card__snapshot-value">{{ char.costume?.value || '(无)' }}</div>
+                    <n-tag
+                      v-if="char.costume?.sourceChapterNumber !== null && char.costume?.sourceChapterNumber !== undefined"
+                      size="tiny"
+                      type="info"
+                    >来源: 第 {{ char.costume.sourceChapterNumber }} 章</n-tag>
+                    <n-text
+                      v-else
+                      depth="3"
+                      style="font-size: 11px"
+                    >(无快照)</n-text>
+                  </div>
                 </div>
               </div>
             </div>
@@ -405,37 +411,36 @@ onMounted(() => {
   flex-wrap: wrap;
   gap: 4px;
 }
-.char-card__snapshot-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-}
-.char-card__snapshot {
+.char-card__snapshot-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
-  background: var(--bg-section);
-  border-radius: 8px;
-  min-height: 80px;
+  gap: 10px;
+}
+.char-card__snapshot-row {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
 }
 .char-card__snapshot-label {
+  flex: 0 0 48px;
   font-size: 11px;
   color: var(--color-muted-ash);
   letter-spacing: 0.5px;
   text-transform: uppercase;
   font-weight: var(--weight-semibold);
+  padding-top: 2px;
+}
+.char-card__snapshot-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .char-card__snapshot-value {
   font-size: 13px;
   line-height: 1.5;
   word-break: break-word;
   color: var(--text-primary);
-  flex: 1;
-}
-@media (max-width: 900px) {
-  .char-card__snapshot-grid {
-    grid-template-columns: 1fr;
-  }
 }
 </style>
