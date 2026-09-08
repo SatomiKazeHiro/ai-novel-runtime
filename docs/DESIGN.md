@@ -428,6 +428,43 @@ Max-width 1200px centered container, light theme throughout except one dark deve
 
 实现细节：5 个 commit × 1 branch，spec 在 `docs/superpowers/specs/2026-07-24-v2-state-machine-design.md`，plan 在 `docs/superpowers/plans/2026-07-24-v2-state-machine.md`。
 
+## v3 归档流水线拆 4 stage（2026-07-25, branch `v3/prepare-archive-stages`）
+
+**Why**: v2 的 `prepare-archive` 单路由串了 4 phase（extract → organize graph → human review → confirm），任一阶段失败都要整个 archive 流程回退。每个阶段是独立 AI 调用、独立的失败语义（AI 格式错误 vs 图谱 token 溢出 vs 用户编辑冲突），耦合在一个 handler 里导致错误提示粒度粗、retry 只能整段重来。
+
+**What**:
+- `Chapter.pendingArchiveData` v3 shape:
+  ```typescript
+  {
+    version: 3,
+    stages: {
+      character: StageState,
+      memory: StageState,
+      plotArc: StageState,
+      graph: StageState
+    },
+    meta: { extractedAt, chapterNumber }
+  }
+  ```
+- 4 stage 服务位于 `apps/server/src/services/stages/`,签名一致:
+  ```typescript
+  async function runXxxStage(app, input): Promise<StageState<XxxStageResult>>
+  ```
+  并行触发 (`Promise.all`),任一失败不影响其他。空结果 = success。
+- `Chapter.chapterGraph` (gacha, 单次 AI 抽取本章) 与 `Chapter.cumulativeGraph` (累计到本章, 经 N-1 去重) 两段式。
+- `buildCumulativeGraph` (`apps/server/src/services/cumulative-graph.ts`):
+  1. 空 chapterGraph → 继承 prev (no AI)
+  2. 首章 → chapterGraph 自身 (no AI)
+  3. 正常 → 2-hop BFS over prev 找与 chapterGraph 共享 type:key 的邻域 → AI dedup → code merge
+- v3 删除所有 `updateMany({where: {status: ...}})` 锁。仅依赖状态机自身 + UI 按钮 disabled 防双击。
+
+**Trade-off**:
+- 老的 1 次合并提取拆为 4 次 AI 调用，平均 AI 成本上升，但单 stage 失败可独立重试（前端"重新解析"按钮按 stage 触发）
+- `GraphNode` / `GraphEdge` 工作表过渡期仍写入；GraphView.vue 重写延后到下一个独立 commit
+- 老 v1/v2 blob 无 `version` 字段 → 前端检测后提示"数据格式过旧，请重新准备归档"
+
+详细 stage 边界与 `pendingArchiveData` v3 字段语义见 `docs/LOGIC.md` 中"Stage 边界 (v3)"章节。
+
 ## Y3 标记：TimelineEvent 废弃（2026-07-24，仅标记，不实施）
 
 **Why**: TimelineEvent 在当前实现里有两个不可调和的设计缺陷 —
