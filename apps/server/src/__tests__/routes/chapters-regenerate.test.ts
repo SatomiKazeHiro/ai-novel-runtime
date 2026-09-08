@@ -203,7 +203,7 @@ describe('prepare-archive route — v3 no updateMany lock, status pre-check only
   })
 })
 
-describe('archive route — v3 gate stub (no $transaction, no 409 lock)', () => {
+describe('archive route — v3 commit (single $transaction, no 409 lock)', () => {
   let mockPrisma: any
   let routes: Record<string, any>
 
@@ -215,7 +215,9 @@ describe('archive route — v3 gate stub (no $transaction, no 409 lock)', () => 
         findFirst: vi.fn().mockResolvedValue(null),
         update: vi.fn(),
         updateMany: vi.fn()
-      }
+      },
+      memory: { create: vi.fn() },
+      $transaction: vi.fn(async (fn: any) => fn(mockPrisma))
     }
     const { chapterRoutes } = await import('../../routes/chapters.js')
     const built = createMockApp(mockPrisma)
@@ -254,11 +256,11 @@ describe('archive route — v3 gate stub (no $transaction, no 409 lock)', () => 
     expect(mockPrisma.chapter.updateMany).not.toHaveBeenCalled()
   })
 
-  it('proceeds from reviewing with v3 pendingArchiveData (gate stub: no $transaction, no updateMany lock)', async () => {
-    // v3 archive (Task 3.2 commit 现状): reviewing + version=3 + all stages success
-    // + pendingArchiveData.cumulativeGraph != null → 直接 chapter.update(status=archived)
-    // 并把 pendingArchiveData 拷到 Chapter 三列(pendingArchiveData 清空)。
-    // 事务/锁在 Task 4.2 才接入, 此处不预期。
+  it('proceeds from reviewing with v3 pendingArchiveData (single $transaction, no updateMany lock)', async () => {
+    // v3 archive (Task 4.2): reviewing + version=3 + all stages success + cumulativeGraph
+    // → 单 prisma.$transaction 内依次: 写 Memory 三层 (chapter/scene/global) + 写
+    // Chapter.summary + 拷 pendingArchiveData 三列 + 翻 status=archived。
+    // v3 全程无 updateMany 锁 (UI 防双击)。
     mockPrisma.chapter.findUnique.mockResolvedValue({
       id: 'c1',
       storyId: 's1',
@@ -295,9 +297,9 @@ describe('archive route — v3 gate stub (no $transaction, no 409 lock)', () => 
 
     expect(result.status).not.toBe(400)
     expect(result.body).toEqual(expect.objectContaining({ success: true }))
-    // v3 gate stub 不调 $transaction (Task 4.2 才加)
-    expect(mockPrisma.$transaction).toBeUndefined()
-    // v3 也没有 updateMany 锁
+    // v3: archive 用单 $transaction 写 memory 三层 + chapter.update
+    expect(mockPrisma.$transaction).toHaveBeenCalled()
+    // v3 全程无 updateMany 锁
     expect(mockPrisma.chapter.updateMany).not.toHaveBeenCalled()
     // archive 路径应至少一次 chapter.update (翻 status → archived)
     expect(mockPrisma.chapter.update).toHaveBeenCalled()

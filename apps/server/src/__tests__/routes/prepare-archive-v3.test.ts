@@ -19,11 +19,16 @@ vi.mock('../../services/cumulative-graph.js', () => ({
   buildCumulativeGraph: vi.fn()
 }))
 
+vi.mock('../../services/memory-optimizer.js', () => ({
+  optimizeMemories: vi.fn().mockResolvedValue([])
+}))
+
 import { runCharacterStage } from '../../services/stages/character-stage.js'
 import { runMemoryStage } from '../../services/stages/memory-stage.js'
 import { runPlotArcStage } from '../../services/stages/plot-arc-stage.js'
 import { runGraphExtractStage } from '../../services/stages/graph-extract-stage.js'
 import { buildCumulativeGraph } from '../../services/cumulative-graph.js'
+import { optimizeMemories } from '../../services/memory-optimizer.js'
 
 const ts = '2026-07-25T00:00:00.000Z'
 
@@ -47,6 +52,7 @@ describe('prepare-archive v3 — 4 stage parallel + status field', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks()
+    ;(optimizeMemories as any).mockResolvedValue([])
     mockPrisma = {
       chapter: {
         findUnique: vi.fn(),
@@ -56,7 +62,9 @@ describe('prepare-archive v3 — 4 stage parallel + status field', () => {
       },
       character: { findMany: vi.fn().mockResolvedValue([]) },
       characterBranchState: { findMany: vi.fn().mockResolvedValue([]) },
-      plotArc: { findMany: vi.fn().mockResolvedValue([]) }
+      plotArc: { findMany: vi.fn().mockResolvedValue([]) },
+      memory: { create: vi.fn() },
+      $transaction: vi.fn(async (fn: any) => fn(mockPrisma))
     }
     const { chapterArchiveRoutes } = await import('../../routes/chapters-archive.js')
     const built = createMockApp(mockPrisma)
@@ -148,6 +156,7 @@ describe('archive v3 — cumulative graph build + transaction', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks()
+    ;(optimizeMemories as any).mockResolvedValue([])
     mockPrisma = {
       chapter: {
         findUnique: vi.fn(),
@@ -157,7 +166,9 @@ describe('archive v3 — cumulative graph build + transaction', () => {
       },
       character: { findMany: vi.fn().mockResolvedValue([]) },
       characterBranchState: { findMany: vi.fn().mockResolvedValue([]) },
-      plotArc: { findMany: vi.fn().mockResolvedValue([]) }
+      plotArc: { findMany: vi.fn().mockResolvedValue([]) },
+      memory: { create: vi.fn() },
+      $transaction: vi.fn(async (fn: any) => fn(mockPrisma))
     }
     const { chapterArchiveRoutes } = await import('../../routes/chapters-archive.js')
     const built = createMockApp(mockPrisma)

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import { randomBytes } from 'crypto'
 import { PrepareArchiveRequestSchema, safeJsonParse } from '@novel-runtime/shared'
 import type { PendingArchiveDataV3 } from '@novel-runtime/shared'
 import { parseBody, getOrThrowChapter } from './_helpers.js'
@@ -6,6 +7,7 @@ import { runCharacterStage } from '../services/stages/character-stage.js'
 import { runMemoryStage } from '../services/stages/memory-stage.js'
 import { runPlotArcStage } from '../services/stages/plot-arc-stage.js'
 import { runGraphExtractStage } from '../services/stages/graph-extract-stage.js'
+import { optimizeMemories, type OptimizedMemory } from '../services/memory-optimizer.js'
 import type { GraphSnapshot } from '../services/graph-snapshot.js'
 import { buildCumulativeGraph } from '../services/cumulative-graph.js'
 
@@ -143,6 +145,15 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       prevCumulativeGraphNodes = extractGraphNodes(prev?.cumulativeGraph)
     }
 
+    // memory-stage / memory-optimizer 跨章上下文
+    //   - protagonistNames: 主角名单,影响 mainEvents 评分粒度
+    //   - existingNodeKeys: N-1 节点 type:key,让 AI 复用已有实体
+    //   - previousSnapshotNodes: N-1 节点带 importance,按 desc 排序后取 top CAP
+    const protagonistNames = matchedCharacters.filter((c: any) => c.protagonist).map((c: any) => c.name)
+    const existingNodeKeys = prevCumulativeGraphNodes.map(n => `${n.type}:${n.key}`)
+    // prevCumulativeGraphNodes 不带 importance; 重要度统一视为 0,全量进 prompt 由 cap 截断
+    const previousSnapshotNodes = prevCumulativeGraphNodes.map(n => ({ ...n }))
+
     // 4 stage 并行
     const [characterState, memoryState, plotArcState, graphState] = await Promise.all([
       runCharacterStage(app, {
@@ -151,7 +162,9 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       }),
       runMemoryStage(app, {
         storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
-        chapterNumber: chapter.number, characterNames, characterKeys
+        chapterNumber: chapter.number,
+        protagonistNames, characterNames,
+        existingNodeKeys, previousSnapshotNodes
       }),
       runPlotArcStage(app, {
         storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
@@ -164,6 +177,27 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
         latestBranchStates: dedupedBranchStates
       })
     ])
+
+    // 1.5. Optimize memory(v3 spec D7):
+    //   memory-stage success 时, 跑 optimizer, 把融合结果覆盖到 stages.memory.result.memories。
+    //   optimizer 失败时该 stage 标记 failed, 不影响 graph / character / plot-arc。
+    //   备注: '未来探讨是否可以优化' — 失败时是否回退到 raw result 让用户 review? 暂不实现, 直接标记 failed。
+    if (memoryState.status === 'success' && memoryState.result) {
+      try {
+        const optimized = await optimizeMemories(
+          app, chapter.storyId, chapterId,
+          memoryState.result as any
+        )
+        ;(memoryState.result as any).memories = optimized
+        app.log.info(
+          `[PrepareArchive] optimizer: ${optimized.length} global memories for chapter ${chapter.number}`
+        )
+      } catch (err: any) {
+        app.log.error(`[PrepareArchive] memory-optimizer failed: ${err.message}`)
+        memoryState.status = 'failed'
+        memoryState.errorMessage = `memory-optimizer: ${err.message}`
+      }
+    }
 
     const pendingData: PendingArchiveDataV3 = {
       version: 3,
@@ -307,10 +341,31 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
           chapterNumber: chapter.number, matchedCharacters
         })
       } else if (stageName === 'memory') {
+        // memory-stage retry 也要补足跨章上下文; protagonistNames / existingNodeKeys / previousSnapshotNodes
+        // 与 prepare-archive 路由用同一组数据源。
+        const protagonistNames = matchedCharacters.filter((c: any) => c.protagonist).map((c: any) => c.name)
+        const existingNodeKeys = prevCumulativeGraphNodes.map(n => `${n.type}:${n.key}`)
+        const previousSnapshotNodes = prevCumulativeGraphNodes.map(n => ({ ...n }))
         newStage = await runMemoryStage(app, {
           storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
-          chapterNumber: chapter.number, characterNames, characterKeys
+          chapterNumber: chapter.number,
+          protagonistNames, characterNames,
+          existingNodeKeys, previousSnapshotNodes
         })
+        // 跑完 memory-stage 后追加 optimizer,与 prepare-archive 行为一致
+        if (newStage.status === 'success' && newStage.result) {
+          try {
+            const optimized = await optimizeMemories(
+              app, chapter.storyId, chapterId,
+              newStage.result as any
+            )
+            ;(newStage.result as any).memories = optimized
+          } catch (err: any) {
+            app.log.error(`[RetryStage:memory] optimizer failed: ${err.message}`)
+            newStage.status = 'failed'
+            newStage.errorMessage = `memory-optimizer: ${err.message}`
+          }
+        }
       } else if (stageName === 'plotArc') {
         newStage = await runPlotArcStage(app, {
           storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
@@ -530,17 +585,116 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       ? JSON.stringify((pending.stages.graph as any).result.chapterGraph)
       : null
 
-    await prisma.chapter.update({
-      where: { id: chapterId },
-      data: {
-        status: 'archived',
-        pendingArchiveData: null,
-        chapterGraph,
-        cumulativeGraph: JSON.stringify(pending.cumulativeGraph),
-        cumulativeGraphGeneratedAt: new Date(pending.cumulativeGraphGeneratedAt),
+    // 收集 memory-stage raw + optimizer 融合结果(都来自 memory stage)
+    // raw 来自 result 的 mainEvents / sideEvents / emotions / foreshadowing / relationshipChanges / scenes / summary
+    // 融合结果: prepare-archive 把 optimizer 输出写到 result.memories[]; 失败或缺省时为空数组(此时不写 global 层)
+    const memResult: any = (pending.stages.memory as any)?.result
+    const mainEvents: any[] = Array.isArray(memResult?.mainEvents) ? memResult.mainEvents : []
+    const sideEvents: any[] = Array.isArray(memResult?.sideEvents) ? memResult.sideEvents : []
+    const emotions: string[] = Array.isArray(memResult?.emotions) ? memResult.emotions : []
+    const foreshadowing: string[] = Array.isArray(memResult?.foreshadowing) ? memResult.foreshadowing : []
+    const relationshipChanges: string[] = Array.isArray(memResult?.relationshipChanges) ? memResult.relationshipChanges : []
+    const scenes: any[] = Array.isArray(memResult?.scenes) ? memResult.scenes : []
+    const summary: string = typeof memResult?.summary === 'string' ? memResult.summary : ''
+    const optimized: OptimizedMemory[] = Array.isArray(memResult?.memories) ? memResult.memories : []
+
+    // 把 'NEW' UID 替换成本章生成的实际 UID
+    const newUidHex = (): string => randomBytes(2).toString('hex').toUpperCase()
+    const fromChapterNumber = chapter.number
+
+    // 构造每条 Memory 行的写入数据(后端按 layer 规则打 tag, 备注: '未来探讨是否可以优化' — 是否让 raw 也由 AI 给 tag?)
+    type MemoryRowData = Parameters<typeof prisma.memory.create>[0]['data']
+    const chapterRows: MemoryRowData[] = []
+    for (const e of mainEvents) {
+      if (!e?.description) continue
+      chapterRows.push({
+        storyId: chapter.storyId,
+        chapterId,
+        fromChapterNumber,
+        layer: 'chapter',
+        content: e.description,
+        tags: JSON.stringify(['auto-extracted', 'main-plot']),
+        importance: typeof e.importance === 'number' ? e.importance : 5
+      })
+    }
+    for (const e of sideEvents) {
+      if (!e?.description) continue
+      chapterRows.push({
+        storyId: chapter.storyId,
+        chapterId,
+        fromChapterNumber,
+        layer: 'chapter',
+        content: e.description,
+        tags: JSON.stringify(['auto-extracted']),
+        importance: typeof e.importance === 'number' ? e.importance : 5
+      })
+    }
+    for (const e of emotions) {
+      if (typeof e !== 'string' || !e) continue
+      chapterRows.push({
+        storyId: chapter.storyId, chapterId, fromChapterNumber, layer: 'chapter',
+        content: e, tags: JSON.stringify(['auto-extracted']), importance: 5
+      })
+    }
+    for (const e of foreshadowing) {
+      if (typeof e !== 'string' || !e) continue
+      chapterRows.push({
+        storyId: chapter.storyId, chapterId, fromChapterNumber, layer: 'chapter',
+        content: e, tags: JSON.stringify(['auto-extracted']), importance: 5
+      })
+    }
+    for (const e of relationshipChanges) {
+      if (typeof e !== 'string' || !e) continue
+      chapterRows.push({
+        storyId: chapter.storyId, chapterId, fromChapterNumber, layer: 'chapter',
+        content: e, tags: JSON.stringify(['auto-extracted']), importance: 5
+      })
+    }
+    const sceneRows: MemoryRowData[] = scenes.filter(s => s?.location).map(s => ({
+      storyId: chapter.storyId, chapterId, fromChapterNumber, layer: 'scene',
+      content: `${s.location} | ${s.event || ''}`,
+      tags: JSON.stringify(['auto-extracted', 'scene-memory']),
+      importance: typeof s.importance === 'number' ? s.importance : 5
+    }))
+    const globalRows: MemoryRowData[] = optimized.filter(m => m?.content).map(m => ({
+      storyId: chapter.storyId, chapterId, fromChapterNumber, layer: 'global',
+      content: m.content,
+      tags: JSON.stringify(['auto-extracted', m.type === 'state' ? 'state' : 'event']),
+      importance: typeof m.importance === 'number' ? m.importance : 5,
+      originUid: m.originUid === 'NEW' ? `${fromChapterNumber}#${newUidHex()}` : m.originUid
+    }))
+
+    // commit-only: prisma.$transaction 内一次写完三层 + Chapter.summary + Chapter 三列 + 翻 status
+    // 备注: CharacterBranchState / PlotArc 写入另文档讨论,本端点不写
+    await prisma.$transaction(async (tx) => {
+      for (const data of [...chapterRows, ...sceneRows, ...globalRows]) {
+        await tx.memory.create({ data })
       }
+      await tx.chapter.update({
+        where: { id: chapterId },
+        data: {
+          summary,
+          status: 'archived',
+          pendingArchiveData: null,
+          chapterGraph,
+          cumulativeGraph: JSON.stringify(pending.cumulativeGraph),
+          cumulativeGraphGeneratedAt: pending.cumulativeGraphGeneratedAt
+            ? new Date(pending.cumulativeGraphGeneratedAt)
+            : null
+        }
+      })
     })
 
-    return { success: true, data: { cumulativeGraph: null, optimizedCount: 0 } }
+    return {
+      success: true,
+      data: {
+        archived: true,
+        memoryRows: {
+          chapter: chapterRows.length,
+          scene: sceneRows.length,
+          global: globalRows.length
+        }
+      }
+    }
   })
 }
