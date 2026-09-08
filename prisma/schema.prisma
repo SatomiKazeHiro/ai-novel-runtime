@@ -108,6 +108,9 @@ model Character {
   identity      String   @default("[]") // JSON string array: 身份标签
   appearance    String   @default("[]") // JSON string array: 外貌标签
   temperament   String   @default("[]") // JSON string array: 气质标签
+  // base 初始状态;第 1 章或番外无 snapshot 时作为 fallback
+  relationships String?
+  status        String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -124,6 +127,8 @@ model CharacterBranchState {
   fromChapterNumber Float?   // 来源章节序号，null 表示初始状态
   status            String   @default("{}") // JSON object: realm, location, etc.
   relationships     String   @default("{}") // JSON object
+  // 衣着快照;解耦实现,后续可整体移除
+  costume String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
