@@ -148,8 +148,9 @@ describe('prepare-archive route — v3 status pre-check (no updateMany lock)', (
   })
 
   it('clears stale pendingArchiveData via update (not updateMany) when re-preparing from reviewing', async () => {
-    // v3 re-prepare: status 预检通过, then 第一波 update 把 pendingArchiveData 清空 + chapterGraph 清空。
-    // 注意: 清理用的是 chapter.update (无锁), 不是 updateMany 锁。
+    // v3 re-prepare: status 预检通过, then 第一波 update 把 pendingArchiveData 清空。
+    // reviewing 期间 chapterGraph 列本身就不被写入, re-prepare 也无需清列。
+    // 清理用的是 chapter.update (无锁), 不是 updateMany 锁。
     mockAllStagesSuccess()
     mockPrisma.chapter.findUnique.mockResolvedValue({
       ...baseChapter,
@@ -162,14 +163,13 @@ describe('prepare-archive route — v3 status pre-check (no updateMany lock)', (
       undefined, { chapterId: 'c1' }
     )
 
-    // 第一波 update 应包含 pendingArchiveData: null + chapterGraph: null
+    // 第一波 update 应包含 pendingArchiveData: null + status: reviewing
     const clearCall = mockPrisma.chapter.update.mock.calls.find(
       (call: any[]) =>
         call[0]?.where?.id === 'c1' &&
         call[0]?.data?.pendingArchiveData === null
     )
     expect(clearCall).toBeDefined()
-    expect(clearCall[0].data.chapterGraph).toBeNull()
     expect(clearCall[0].data.status).toBe('reviewing')
 
     const finalUpdateCall = [...mockPrisma.chapter.update.mock.calls].reverse().find(

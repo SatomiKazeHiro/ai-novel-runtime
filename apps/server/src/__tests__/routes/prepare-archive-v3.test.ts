@@ -166,6 +166,9 @@ describe('archive v3 — cumulative graph build + transaction', () => {
   })
 
   it('commits archive when all stages success and cumulative graph is user-generated', async () => {
+    // v3: archive 从 pendingArchiveData.cumulativeGraph / cumulativeGraphGeneratedAt
+    // 拷到 Chapter 三列(pendingArchiveData 清空), 而不是再调 buildCumulativeGraph。
+    const generatedGraph = { nodes: [], edges: [], timestamp: ts }
     mockPrisma.chapter.findUnique.mockResolvedValue({
       id: 'c1', storyId: 's1', status: 'reviewing',
       isSideStory: false, content: 'x', outline: '', number: 1,
@@ -173,16 +176,18 @@ describe('archive v3 — cumulative graph build + transaction', () => {
       pendingArchiveData: JSON.stringify({
         version: 3,
         stages: {
-          character: { status: 'success' },
-          memory: { status: 'success' },
-          plotArc: { status: 'success' },
-          graph: { status: 'success' }
+          character: { status: 'success', result: { characterStates: [] }, completedAt: ts },
+          memory: { status: 'success', result: {}, completedAt: ts },
+          plotArc: { status: 'success', result: { plotArcs: [] }, completedAt: ts },
+          graph: { status: 'success', result: { chapterGraph: generatedGraph }, completedAt: ts },
         },
+        cumulativeGraph: generatedGraph,
+        cumulativeGraphGeneratedAt: ts,
         meta: { extractedAt: ts, chapterNumber: 1 }
       }),
-      chapterGraph: JSON.stringify({ nodes: [], edges: [], timestamp: ts }),
-      cumulativeGraph: JSON.stringify({ nodes: [], edges: [], timestamp: ts }),
-      cumulativeGraphGeneratedAt: new Date(ts),
+      chapterGraph: null,
+      cumulativeGraph: null,
+      cumulativeGraphGeneratedAt: null,
     })
 
     const result = await callHandler(
@@ -197,7 +202,10 @@ describe('archive v3 — cumulative graph build + transaction', () => {
       (c: any[]) => c[0]?.data?.status === 'archived'
     )
     expect(archivedUpdate).toBeDefined()
-    expect(archivedUpdate[0].data.cumulativeGraph).toBeDefined()
+    expect(archivedUpdate[0].data.pendingArchiveData).toBeNull()
+    expect(archivedUpdate[0].data.cumulativeGraph).toBe(JSON.stringify(generatedGraph))
+    expect(archivedUpdate[0].data.cumulativeGraphGeneratedAt).toBeInstanceOf(Date)
+    expect(archivedUpdate[0].data.chapterGraph).toBe(JSON.stringify(generatedGraph))
   })
 
   it('returns 400 cumulative-graph-not-generated when user has not generated cumulative graph yet', async () => {

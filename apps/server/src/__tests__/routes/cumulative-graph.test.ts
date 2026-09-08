@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createMockApp, callHandler, createMockPrisma } from '../setup.js'
+import { createMockApp, callHandler } from '../setup.js'
 
 // 全局 setup.ts 在每个 test 前 vi.resetAllMocks(), 各 describe 再自建 mockPrisma 保证隔离。
 
-vi.mock('../../services/stages/cumulative-graph-build-service.js', () => ({
-  buildCumulativeGraphWithTimestamp: vi.fn()
+// v3: route 用的是 services/cumulative-graph.js 里的 buildCumulativeGraph,
+// 不再走 stages/cumulative-graph-build-service.js 那个 wrapper。
+vi.mock('../../services/cumulative-graph.js', () => ({
+  buildCumulativeGraph: vi.fn()
 }))
 
-import { buildCumulativeGraphWithTimestamp } from '../../services/stages/cumulative-graph-build-service.js'
+import { buildCumulativeGraph } from '../../services/cumulative-graph.js'
 
 describe('GET /api/chapters/:chapterId/cumulative-graph', () => {
   let mockPrisma: any
@@ -67,13 +69,19 @@ describe('GET /api/chapters/:chapterId/cumulative-graph', () => {
 })
 
 describe('POST /api/chapters/:chapterId/cumulative-graph/build', () => {
-  let mockPrisma: ReturnType<typeof createMockPrisma>
+  let mockPrisma: any
   let app: any
   let routes: Record<string, any>
 
   beforeEach(async () => {
     vi.clearAllMocks()
-    mockPrisma = createMockPrisma()
+    mockPrisma = {
+      chapter: {
+        findUnique: vi.fn(),
+        findFirst: vi.fn(),
+        update: vi.fn()
+      }
+    }
     const built = createMockApp(mockPrisma)
     app = built.app
     routes = built.routes
@@ -81,21 +89,25 @@ describe('POST /api/chapters/:chapterId/cumulative-graph/build', () => {
     await chapterArchiveRoutes(app)
   })
 
-  it('writes both cumulativeGraph and cumulativeGraphGeneratedAt on success', async () => {
+  it('writes cumulativeGraph + generatedAt to pendingArchiveData only (not columns) on success', async () => {
     const generatedGraph = {
       nodes: [{ type: 'character', key: 'a', label: 'A', data: {} }],
       edges: [],
       timestamp: '2026-07-27T10:00:00.000Z',
     }
-    ;(buildCumulativeGraphWithTimestamp as any).mockResolvedValueOnce({
-      graph: generatedGraph,
-      generatedAt: '2026-07-27T10:00:00.000Z',
+    ;(buildCumulativeGraph as any).mockResolvedValueOnce({
+      cumulativeGraph: generatedGraph,
       aiCalled: true,
     })
     mockPrisma.chapter.findUnique.mockResolvedValueOnce({
       id: 'ch-1', storyId: 's1', number: 1, status: 'reviewing',
       cumulativeGraph: null, cumulativeGraphGeneratedAt: null,
       parentChapterId: null, isSideStory: false, content: 'x',
+      pendingArchiveData: JSON.stringify({
+        version: 3,
+        stages: { character: { status: 'success' }, memory: { status: 'success' }, plotArc: { status: 'success' }, graph: { status: 'success' } },
+        meta: { extractedAt: '2026-07-27T09:00:00.000Z', chapterNumber: 1 },
+      }),
     })
     mockPrisma.chapter.findFirst.mockResolvedValueOnce(null)
     mockPrisma.chapter.update.mockResolvedValueOnce({})
@@ -108,70 +120,20 @@ describe('POST /api/chapters/:chapterId/cumulative-graph/build', () => {
     )
     expect(mockPrisma.chapter.update).toHaveBeenCalledTimes(1)
     const updateArgs = mockPrisma.chapter.update.mock.calls[0][0]
-    expect(updateArgs.data.cumulativeGraph).toBe(JSON.stringify(generatedGraph))
-    expect(updateArgs.data.cumulativeGraphGeneratedAt).toBeInstanceOf(Date)
+    // reviewing 期间三列整个过程不被读写
+    expect(updateArgs.data).not.toHaveProperty('cumulativeGraph')
+    expect(updateArgs.data).not.toHaveProperty('cumulativeGraphGeneratedAt')
+    expect(updateArgs.data).not.toHaveProperty('chapterGraph')
+    // 数据落到 pendingArchiveData
+    const parsed = JSON.parse(updateArgs.data.pendingArchiveData)
+    expect(parsed.cumulativeGraph).toEqual(generatedGraph)
+    expect(typeof parsed.cumulativeGraphGeneratedAt).toBe('string')
     expect(res.body.success).toBe(true)
     expect(res.body.data.aiCalled).toBe(true)
   })
 })
 
-describe('PATCH /api/chapters/:chapterId/cumulative-graph', () => {
-  let mockPrisma: ReturnType<typeof createMockPrisma>
-  let app: any
-  let routes: Record<string, any>
-
-  beforeEach(async () => {
-    vi.clearAllMocks()
-    mockPrisma = createMockPrisma()
-    const built = createMockApp(mockPrisma)
-    app = built.app
-    routes = built.routes
-    const { chapterArchiveRoutes } = await import('../../routes/chapters-archive.js')
-    await chapterArchiveRoutes(app)
-  })
-
-  it('rejects when cumulativeGraphGeneratedAt is null', async () => {
-    mockPrisma.chapter.findUnique.mockResolvedValueOnce({
-      id: 'ch-1', status: 'reviewing',
-      cumulativeGraph: null, cumulativeGraphGeneratedAt: null,
-    })
-    const res = await callHandler(
-      routes,
-      'PATCH',
-      '/api/chapters/:chapterId/cumulative-graph',
-      { graph: { nodes: [], edges: [], timestamp: '2026-07-27T10:00:00.000Z' } },
-      { chapterId: 'ch-1' },
-    )
-    expect(mockPrisma.chapter.update).not.toHaveBeenCalled()
-    expect(res.body.success).toBe(false)
-    expect(res.body.error).toBe('cumulative-graph-not-generated')
-  })
-
-  it('writes graph without touching generatedAt', async () => {
-    const fixedDate = new Date('2026-07-27T08:00:00.000Z')
-    mockPrisma.chapter.findUnique.mockResolvedValueOnce({
-      id: 'ch-1', status: 'reviewing',
-      cumulativeGraph: null, cumulativeGraphGeneratedAt: fixedDate,
-    })
-    mockPrisma.chapter.update.mockResolvedValueOnce({})
-    const editedGraph = {
-      nodes: [{ type: 'character', key: 'linfan', label: '林凡', data: {} }],
-      edges: [],
-      timestamp: '2026-07-27T10:00:00.000Z',
-    }
-    const res = await callHandler(
-      routes,
-      'PATCH',
-      '/api/chapters/:chapterId/cumulative-graph',
-      { graph: editedGraph },
-      { chapterId: 'ch-1' },
-    )
-    expect(res.body.success).toBe(true)
-    expect(mockPrisma.chapter.update).toHaveBeenCalledTimes(1)
-    const updateArgs = mockPrisma.chapter.update.mock.calls[0][0]
-    expect(updateArgs.data).not.toHaveProperty('cumulativeGraphGeneratedAt')
-    expect(JSON.parse(updateArgs.data.cumulativeGraph).nodes).toEqual([
-      { type: 'character', key: 'linfan', label: '林凡', data: {} },
-    ])
-  })
-})
+// PATCH /api/chapters/:chapterId/cumulative-graph 端点已删除。
+// 用户编辑累计图谱后保存走 chaptersApi.update({ pendingArchiveData }) 通路
+// (ReviewingPanel.handleSave → emit('save') → editor.savePendingArchiveData)。
+// 见 chapters-archive.ts L467-470 的注释。

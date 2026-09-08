@@ -12,7 +12,7 @@
 
       <!-- 本章级常驻区: 摘要 (跨 tab 通用, 不藏在记忆tab 内) -->
 
-      <!-- 本章摘要 — 印刷感引文块: cap-eyebrow 副标 + 大字引号 + 内嵌 textarea + 字符计数 hint -->
+      <!-- 本章摘要: 卡片 + eyebrow + textarea(默认边框, 看着就知道能编辑) -->
       <n-card class="cap-summary-card" size="small">
         <template #header>
           <header class="cap-summary-card__head">
@@ -20,18 +20,14 @@
             <h3 class="cap-summary-card__title">一句话核心</h3>
           </header>
         </template>
-        <div class="cap-summary-card__body">
-          <span class="cap-summary-card__quote-mark" aria-hidden="true">"</span>
-          <n-input
-            v-model:value="summary"
-            type="textarea"
-            :rows="3"
-            placeholder="本章的核心冲突、转折或情感落点…"
-            class="cap-summary-card__input"
-          />
-        </div>
+        <n-input
+          v-model:value="summary"
+          type="textarea"
+          :rows="3"
+          placeholder="本章的核心冲突、转折或情感落点…"
+        />
         <footer class="cap-summary-card__foot">
-          <span class="cap-summary-card__hint">印在章节标题下方 · 一行说清本章发生了什么</span>
+          <span class="cap-summary-card__hint">显示在章节标题下方</span>
           <span class="cap-summary-card__count">{{ (summary || '').length }} 字</span>
         </footer>
       </n-card>
@@ -381,41 +377,31 @@
             />
           </n-card>
 
-          <!-- 累计图谱: 用户维护的草稿, 由 cumulative-graph 子路由独立读写 -->
+          <!-- 累计图谱: reviewing 期间数据活在 localData.cumulativeGraph + cumulativeGraphGeneratedAt,
+               与 chapterGraph 走同一个 localData 流。保存走全局「保存调整」按钮。
+               AI 生成后 Build 端点把数据写 pendingArchiveData, 前端同时灌回 localData。 -->
           <n-card title="累计图谱" size="small">
             <template #header-extra>
               <n-space>
                 <n-button
-                  v-if="!cumulativeGeneratedAt"
                   size="small"
                   type="primary"
                   :loading="buildingCumulative"
                   @click="handleBuildCumulative"
-                >生成累计图谱</n-button>
-                <template v-else>
-                  <n-button
-                    size="small"
-                    :loading="buildingCumulative"
-                    @click="handleBuildCumulative"
-                  >重新生成</n-button>
-                  <n-button
-                    size="small"
-                    type="primary"
-                    :loading="savingCumulative"
-                    @click="handleSaveCumulative"
-                  >保存调整</n-button>
-                </template>
+                >
+                  {{ localData.cumulativeGraphGeneratedAt ? '重新生成' : '生成累计图谱' }}
+                </n-button>
               </n-space>
             </template>
             <n-empty
-              v-if="!cumulativeGeneratedAt"
+              v-if="!localData.cumulativeGraphGeneratedAt"
               description="本章图谱编辑差不多后, 点上面「生成累计图谱」生成。"
               style="margin: 24px 0"
             />
             <EditableGraph
               v-else
               ref="cumulativeGraphRef"
-              :initial-graph-data="cumulativeGraphDraft"
+              :initial-graph-data="cumulativeGraphData"
             />
           </n-card>
         </n-tab-pane>
@@ -432,7 +418,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import {
   NCard, NSpace, NTabs, NTabPane, NCollapse, NCollapseItem,
   NInput, NInputNumber, NButton, NEmpty, NGrid, NGi, NText,
@@ -468,27 +454,9 @@ const saving = ref(false)
 const dialog = useDialog()
 const message = useMessage()
 const chapterGraphRef = ref<InstanceType<typeof EditableGraph> | null>(null)
-// 累计图谱: 独立于 pendingArchiveData, 由 cumulative-graph 子路由读写
+// 累计图谱 editor 自管草稿, save/confirm 时通过 getData() 拉回 localData
 const cumulativeGraphRef = ref<InstanceType<typeof EditableGraph> | null>(null)
-const cumulativeGraphDraft = ref<any>({ nodes: [], edges: [] })
-const cumulativeGeneratedAt = ref<string | null>(null)
 const buildingCumulative = ref(false)
-const savingCumulative = ref(false)
-
-async function loadCumulativeGraph() {
-  if (!props.chapterId) return
-  try {
-    const res: any = await cumulativeGraphApi.get(props.chapterId)
-    const data = res?.data?.data
-    cumulativeGeneratedAt.value = data?.generatedAt ?? null
-    cumulativeGraphDraft.value = data?.graph ?? { nodes: [], edges: [] }
-  } catch (err) {
-    // 静默; UI 仍会显示 "未生成" 状态
-  }
-}
-
-onMounted(() => { loadCumulativeGraph() })
-watch(() => props.chapterId, () => { loadCumulativeGraph() })
 
 const localData = ref<LocalData>(fromV3(props.pending))
 
@@ -592,6 +560,7 @@ const relationshipChanges = computed({
 const characterStates = computed(() => localData.value.memories.characterStates)
 const plotArcs = computed(() => localData.value.plotArcs)
 const graphData = computed(() => localData.value.graph.chapterGraph)
+const cumulativeGraphData = computed(() => localData.value.cumulativeGraph ?? { nodes: [], edges: [] })
 
 // === 各 tab 内的 add/remove 方法(照搬 v2,删除 timeline 相关) ===
 function addMainMemory() {
@@ -656,16 +625,24 @@ function pullGraphDraftIntoLocalData() {
   if (g) localData.value.graph.chapterGraph = g
 }
 
-// === 累计图谱: 生成 / 保存 ===
+function pullCumulativeDraftIntoLocalData() {
+  const g = cumulativeGraphRef.value?.getData()
+  if (g) localData.value.cumulativeGraph = g
+}
+
+// === 累计图谱: 生成 ===
 async function handleBuildCumulative() {
-  const chapterGraph = chapterGraphRef.value?.getData()
+  // 先把 chapterGraph editor 自管的草稿拉回 localData, 再用最新 chapterGraph 触发后端累计
+  pullGraphDraftIntoLocalData()
+  const chapterGraph = localData.value.graph.chapterGraph
   if (!chapterGraph) return
   buildingCumulative.value = true
   try {
     const res: any = await cumulativeGraphApi.build(props.chapterId, chapterGraph)
     const data = res?.data?.data
-    cumulativeGraphDraft.value = data?.graph ?? { nodes: [], edges: [] }
-    cumulativeGeneratedAt.value = data?.generatedAt ?? new Date().toISOString()
+    // AI 结果直接落 localData, 走 pendingArchiveData 流, 与 chapterGraph 同源
+    localData.value.cumulativeGraph = data?.graph ?? { nodes: [], edges: [] }
+    localData.value.cumulativeGraphGeneratedAt = data?.generatedAt ?? new Date().toISOString()
   } catch (err: any) {
     const msg = err?.response?.data?.error ?? err?.message ?? '累计图谱生成失败'
     message.error(msg)
@@ -674,35 +651,22 @@ async function handleBuildCumulative() {
   }
 }
 
-async function handleSaveCumulative() {
-  if (!cumulativeGraphRef.value) return
-  const graph = cumulativeGraphRef.value.getData()
-  savingCumulative.value = true
-  try {
-    await cumulativeGraphApi.save(props.chapterId, graph)
-    message.success('已保存')
-  } catch (err: any) {
-    const msg = err?.response?.data?.error ?? err?.message ?? '保存失败'
-    message.error(msg)
-  } finally {
-    savingCumulative.value = false
-  }
-}
-
 // === 底部三按钮 ===
 function handleSave() {
   pullGraphDraftIntoLocalData()
+  pullCumulativeDraftIntoLocalData()
   saving.value = true
   try { emit('save', toV3(localData.value, props.pending)) }
   finally { saving.value = false }
 }
 function handleConfirm() {
   // 前置软校验: 累计图谱未生成时拦截 emit, 弹 toast
-  if (!cumulativeGeneratedAt.value) {
+  if (!localData.value.cumulativeGraphGeneratedAt) {
     message.error('请先生成累计图谱再归档')
     return
   }
   pullGraphDraftIntoLocalData()
+  pullCumulativeDraftIntoLocalData()
   // 注意: 按钮 loading 由父组件 archiveRunning 控制, 这里不再 set confirming
   emit('confirm', toV3(localData.value, props.pending))
 }
@@ -966,13 +930,10 @@ function handleConfirm() {
 }
 
 /* =================================================================
-   本章摘要卡片 — 印刷感引文块
+   本章摘要卡片
    ----------------------------------------------------------------
-   设计意图 (2026-06-28 用户反馈 "不那么平淡也不那么炫酷"):
-     - banner 下常驻卡片原本是裸 n-card + n-input, 与其他 tab 内的
-       n-card 视觉完全一样, 没有层级区分, 显得"平淡"
-     - 这里用"引文 / 印刷感"语义包装: 巨号引号 + 内嵌 textarea + 字符
-       计数 hint, 让用户感觉是在"写一句给读者看的话"而非"填一个表单字段"
+   卡片 + eyebrow + 默认边框 textarea + 字符计数 hint。
+   不再做"印刷感引文"包装, 让"可编辑"是看出来的, 不是猜出来的。
    ================================================================= */
 .cap-summary-card {
   position: relative;
@@ -1005,60 +966,18 @@ function handleConfirm() {
   color: var(--text-primary);
   letter-spacing: -0.005em;
 }
-/* 引文块: 巨号引号 + 内嵌 textarea */
-.cap-summary-card__body {
-  position: relative;
-  padding: 4px 8px 4px 32px;
-}
-.cap-summary-card__quote-mark {
-  position: absolute;
-  left: 0;
-  top: -8px;
-  font-family: var(--font-sans);
-  font-size: 56px;
-  line-height: 1;
-  font-weight: var(--weight-bold);
-  color: var(--accent);
-  opacity: 0.55;
-  user-select: none;
-  pointer-events: none;
-}
-/* 内嵌 textarea: 去边框 + 透明底, 跟卡片白底融成"印在纸上"的感觉 */
-.cap-summary-card__input :deep(textarea) {
-  background: transparent !important;
-  border: none !important;
-  padding: 0 !important;
-  font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 1.65;
-  letter-spacing: 0.01em;
-  color: var(--text-primary);
-  font-weight: var(--weight-regular);
-  resize: vertical;
-  min-height: 60px;
-}
-.cap-summary-card__input :deep(textarea::placeholder) {
-  color: var(--color-placeholder);
-  font-style: italic;
-}
-.cap-summary-card__input :deep(.n-input__border),
-.cap-summary-card__input :deep(.n-input__state-border) {
-  display: none !important;
-}
 .cap-summary-card__foot {
-  margin-top: 4px;
-  padding: 8px 0 0;
+  margin-top: 8px;
+  padding-top: 8px;
   border-top: 1px dashed var(--border-subtle);
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
   font-size: var(--text-caption-size);
-  letter-spacing: 0.04em;
 }
 .cap-summary-card__hint {
   color: var(--text-tertiary);
-  font-style: italic;
 }
 .cap-summary-card__count {
   font-family: var(--font-mono);

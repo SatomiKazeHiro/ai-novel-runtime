@@ -256,7 +256,8 @@ describe('archive route — v3 gate stub (no $transaction, no 409 lock)', () => 
 
   it('proceeds from reviewing with v3 pendingArchiveData (gate stub: no $transaction, no updateMany lock)', async () => {
     // v3 archive (Task 3.2 commit 现状): reviewing + version=3 + all stages success
-    // + cumulativeGraphGeneratedAt != null → 直接 chapter.update(status=archived)。
+    // + pendingArchiveData.cumulativeGraph != null → 直接 chapter.update(status=archived)
+    // 并把 pendingArchiveData 拷到 Chapter 三列(pendingArchiveData 清空)。
     // 事务/锁在 Task 4.2 才接入, 此处不预期。
     mockPrisma.chapter.findUnique.mockResolvedValue({
       id: 'c1',
@@ -273,12 +274,13 @@ describe('archive route — v3 gate stub (no $transaction, no 409 lock)', () => 
           plotArc: { status: 'success', result: {}, completedAt: ts },
           graph: { status: 'success', result: { chapterGraph: { nodes: [], edges: [], timestamp: ts } }, completedAt: ts }
         },
+        cumulativeGraph: { nodes: [], edges: [], timestamp: ts },
+        cumulativeGraphGeneratedAt: ts,
         meta: { extractedAt: ts, chapterNumber: 1 }
       }),
       chapterGraph: null,
-      // v3: 累计图谱由用户在 ReviewingPanel 维护, archive 时消费
-      cumulativeGraph: JSON.stringify({ nodes: [], edges: [], timestamp: ts }),
-      cumulativeGraphGeneratedAt: new Date(ts),
+      cumulativeGraph: null,
+      cumulativeGraphGeneratedAt: null,
       story: { id: 's1' }
     })
     mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'archived' })
@@ -303,5 +305,9 @@ describe('archive route — v3 gate stub (no $transaction, no 409 lock)', () => 
       (c: any[]) => c[0]?.data?.status === 'archived'
     )
     expect(archiveUpdate).toBeDefined()
+    // archive 把 pendingArchiveData 数据拷到三列, 然后清 pendingArchiveData
+    expect(archiveUpdate[0].data.pendingArchiveData).toBeNull()
+    expect(archiveUpdate[0].data.cumulativeGraph).toBe(JSON.stringify({ nodes: [], edges: [], timestamp: ts }))
+    expect(archiveUpdate[0].data.cumulativeGraphGeneratedAt).toBeInstanceOf(Date)
   })
 })

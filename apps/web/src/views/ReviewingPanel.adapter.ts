@@ -12,6 +12,10 @@ export interface V3PendingArchiveData {
     plotArc?:   { status: string; result?: any; errorMessage?: string; completedAt?: string }
     graph?:     { status: string; result?: any; errorMessage?: string; completedAt?: string }
   }
+  // 累计图谱数据, reviewing 期间只活在 pendingArchiveData.cumulativeGraph。
+  // AI 生成时由后端 cumulative-graph/build 端点写入, 用户编辑后保存时由 toV3 写回。
+  cumulativeGraph?: { nodes: any[]; edges: any[]; timestamp?: string }
+  cumulativeGraphGeneratedAt?: string
   meta: { extractedAt?: string; chapterNumber?: number | string }
 }
 
@@ -44,6 +48,9 @@ export interface LocalData {
   graph: {
     chapterGraph: { nodes: any[]; edges: any[] }
   }
+  // 累计图谱, 与 chapterGraph 走同一个 localData 流, 不再独立 ref。
+  cumulativeGraph?: { nodes: any[]; edges: any[]; timestamp?: string }
+  cumulativeGraphGeneratedAt?: string
 }
 
 /**
@@ -101,7 +108,9 @@ export function fromV3(pending: V3PendingArchiveData | null | undefined): LocalD
     plotArcs: Array.isArray(plot.plotArcs) ? plot.plotArcs : [],
     graph: {
       chapterGraph: graph.chapterGraph ?? { nodes: [], edges: [] }
-    }
+    },
+    cumulativeGraph: pending?.cumulativeGraph ?? { nodes: [], edges: [] },
+    cumulativeGraphGeneratedAt: pending?.cumulativeGraphGeneratedAt
   }
 }
 
@@ -176,6 +185,8 @@ export function toV3(local: LocalData, original: V3PendingArchiveData): V3Pendin
   return {
     version: 3,
     stages,
+    cumulativeGraph: local.cumulativeGraph,
+    cumulativeGraphGeneratedAt: local.cumulativeGraphGeneratedAt,
     meta: original?.meta ?? {}
   }
 }

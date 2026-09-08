@@ -19,10 +19,12 @@ describe('prepare-archive/cancel route', () => {
     routes = built.routes
   })
 
-  it('reverts chapter to draft and clears pendingArchiveData + chapterGraph', async () => {
+  it('reverts chapter to draft and clears pendingArchiveData (chapterGraph column untouched during reviewing)', async () => {
+    // v3: reviewing 期间 chapterGraph 列本身就不被写入, cancel 也无需清列。
+    // 整个 cancel 周期只动 pendingArchiveData。
     mockPrisma.chapter.findUnique.mockResolvedValue({
       id: 'c1', storyId: 's1', status: 'reviewing',
-      pendingArchiveData: '{"version":3}', chapterGraph: '{"nodes":[]}'
+      pendingArchiveData: '{"version":3}', chapterGraph: null
     })
     mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'draft' })
 
@@ -36,7 +38,7 @@ describe('prepare-archive/cancel route', () => {
     const updateCall = mockPrisma.chapter.update.mock.calls[0]
     expect(updateCall[0].where).toEqual({ id: 'c1' })
     expect(updateCall[0].data).toMatchObject({
-      status: 'draft', pendingArchiveData: null, chapterGraph: null
+      status: 'draft', pendingArchiveData: null
     })
   })
 

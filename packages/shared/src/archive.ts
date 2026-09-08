@@ -288,6 +288,11 @@ export interface PendingArchiveDataV3 {
     plotArc: PendingStageState
     graph: PendingStageState
   }
+  // 累计图谱数据 (AI 生成 + 用户编辑) 在 reviewing 期间只活在 pendingArchiveData 这两个字段,
+  // Chapter.cumulativeGraph / cumulativeGraphGeneratedAt 列始终为 null,
+  // archive confirm 时从这俩字段拷到列。知识图谱页面只查 archived, 读列即可。
+  cumulativeGraph?: PendingGraphSnapshot
+  cumulativeGraphGeneratedAt?: string
   meta: {
     extractedAt: string
     chapterNumber: number
@@ -309,6 +314,8 @@ export const PendingArchiveDataV3Schema = z.object({
     plotArc: PendingStageStateSchema,
     graph: PendingStageStateSchema
   }),
+  cumulativeGraph: PendingGraphSnapshotSchema.optional(),
+  cumulativeGraphGeneratedAt: z.string().optional(),
   meta: z.object({
     extractedAt: z.string(),
     chapterNumber: z.number()
