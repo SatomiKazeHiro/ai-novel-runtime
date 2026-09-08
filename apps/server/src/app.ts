@@ -15,7 +15,6 @@ import { chapterRoutes } from './routes/chapters.js'
 import { promptLogRoutes } from './routes/prompt-logs.js'
 import { draftRoutes } from './routes/drafts.js'
 import { memoryRoutes } from './routes/memories.js'
-import { scoreRoutes } from './routes/scores.js'
 import { runtimeProfileRoutes } from './routes/runtime-profile.js'
 import { workerTaskRoutes } from './routes/worker-task.js'
 import { aiProviderRoutes } from './routes/ai-provider.js'
@@ -74,7 +73,6 @@ export async function buildApp() {
   await app.register(chapterRoutes)
   await app.register(draftRoutes)
   await app.register(memoryRoutes)
-  await app.register(scoreRoutes)
   await app.register(runtimeProfileRoutes)
   await app.register(workerTaskRoutes)
   await app.register(aiProviderRoutes)
