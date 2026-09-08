@@ -118,11 +118,8 @@ const props = defineProps<{
 }>()
 const themeStore = useThemeStore()
 
-const emit = defineEmits<{
-  'update:graphData': [data: GraphData<any, any>]
-}>()
-
-// draft 模式下的本地编辑数据
+// 自管 state, 不 emit: 父组件通过 ref.getData() 在 save/confirm 时拉回最新草稿。
+// 不再用 @update:graphData 回传, 避免形成 prop echo 循环触发 cytoscape.init() 重布局抖动。
 const draftGraphData = ref<GraphData<any, any>>({ nodes: [], edges: [] })
 const cyContainer = ref<HTMLDivElement>()
 
@@ -183,6 +180,18 @@ function loadDraftGraph(raw?: GraphData<any, any> | null) {
   draftGraphData.value = toGraphData(raw.nodes, raw.edges)
 }
 
+// 把视口中心 (像素) 转换成 cytoscape 模型坐标, 用于 addNode 时定位新节点
+function viewportCenterPosition(): { x: number; y: number } | undefined {
+  const container = cyContainer.value
+  const instance = cytoscape.getInstance()
+  if (!container || !instance) return undefined
+  const w = container.clientWidth
+  const h = container.clientHeight
+  const pan = instance.pan()
+  const zoom = instance.zoom()
+  return { x: (-pan.x + w / 2) / zoom, y: (-pan.y + h / 2) / zoom }
+}
+
 async function handleCreateNode() {
   const newNode = {
     id: `${nodeForm.value.type}:${nodeForm.value.key}`,
@@ -197,9 +206,7 @@ async function handleCreateNode() {
   }
   showNodeModal.value = false
   nodeForm.value = { type: 'character', key: '', label: '' }
-  emit('update:graphData', draftGraphData.value)
-  await nextTick()
-  cytoscape.init()
+  cytoscape.addNode(newNode, viewportCenterPosition())
 }
 
 function cancelEdge() {
@@ -231,9 +238,7 @@ async function handleCreateEdge() {
     edges: [...(draftGraphData.value?.edges || []), newEdge]
   }
   cancelEdge()
-  emit('update:graphData', draftGraphData.value)
-  await nextTick()
-  cytoscape.init()
+  cytoscape.addEdge(newEdge)
 }
 
 function openEditNode() {
@@ -284,9 +289,11 @@ async function handleUpdateNode() {
 
   showEditNodeModal.value = false
   selectedNode.value = null
-  emit('update:graphData', draftGraphData.value)
-  await nextTick()
-  cytoscape.init()
+  cytoscape.updateNode(oldId, {
+    type: editNodeForm.value.type,
+    key: editNodeForm.value.key,
+    label: editNodeForm.value.label
+  })
 }
 
 async function handleDelete() {
@@ -300,25 +307,28 @@ async function handleDelete() {
       edges: draftGraphData.value.edges.filter((e: any) => e.source !== nodeId && e.target !== nodeId)
     }
     selectedNode.value = null
+    cytoscape.removeNode(nodeId)
   } else if (edgeId) {
     draftGraphData.value = {
       ...draftGraphData.value,
       edges: draftGraphData.value.edges.filter((e: any) => `${e.source}-${e.relation}-${e.target}` !== edgeId)
     }
     selectedEdge.value = null
+    cytoscape.removeEdge(edgeId)
   } else {
     return
   }
-
-  emit('update:graphData', draftGraphData.value)
-  await nextTick()
-  cytoscape.init()
 }
 
 watch(() => props.initialGraphData, (val) => {
   loadDraftGraph(val)
   nextTick(() => cytoscape.init())
 }, { immediate: true, deep: true })
+
+// 父组件 save/confirm 时通过 ref 拉回本地草稿
+defineExpose({
+  getData: () => draftGraphData.value
+})
 </script>
 
 <style scoped>

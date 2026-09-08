@@ -59,6 +59,12 @@ export interface CytoscapeLifecycle {
   destroy(): void
   resetLayout(): void
   getInstance(): cytoscape.Core | null
+  // 增量 CRUD: 避免 destroy+rebuild + 重布局动画, 保留 cytoscape 实例和事件监听
+  addNode(node: GraphNode, position?: { x: number; y: number }): void
+  addEdge(edge: GraphEdge): void
+  updateNode(id: string, fields: { type: string; key: string; label: string }): void
+  removeNode(id: string): void
+  removeEdge(id: string): void
   /**
    * 聚焦模式: 将与 focusId 相关的元素(节点 1 跳邻居 / 边 + 两端)保持原样,
    * 其余元素加 .faded class 变半透明。重复点同一个焦点 = 取消聚焦。
@@ -251,7 +257,13 @@ export function useCytoscapeLifecycle(
     if (cy) {
       // 先摘所有事件,防止 destroy 后 mouseover 还在 in-flight（4def263 修复点）
       cy.removeAllListeners()
-      cy.destroy()
+      try {
+        cy.destroy()
+      } catch {
+        // COSE layout 跑到一半被 destroy 打断时, cytoscape 内部访问半销毁实例
+        // 的 isHeadless() 会抛 Cannot read properties of null。
+        // 实例反正要被丢弃,吞掉不影响。
+      }
       cy = null
     }
   }
@@ -261,7 +273,7 @@ export function useCytoscapeLifecycle(
     const data = options.getDisplayData()
     if (!data) return
     destroy() // 复用 unmount 路径,保证 destroy 行为一致
-    if (data.nodes.length === 0) return
+    // 不再 early-return 空数据: 空 cy 也创建, 让后续 addNode/addEdge 能找到容器
 
     const { newNodes = new Set<string>(), newEdges = new Set<string>() } =
       options.getNewIds?.() ?? {}
@@ -376,6 +388,65 @@ export function useCytoscapeLifecycle(
     return cy
   }
 
+  // ===== 增量 CRUD =====
+  // 设计原则: 每次本地 CRUD 都用 cytoscape 原生 add/remove/update,
+  // 不触发 destroy+rebuild 和 COSE 重布局, 避免画布抖动和半销毁状态抛错。
+
+  function ensureCy() {
+    if (!cy) init()
+  }
+
+  function addNode(node: GraphNode, position?: { x: number; y: number }) {
+    ensureCy()
+    if (!cy) return
+    const nodeId = `${node.type}:${node.key}`
+    if (cy.$id(nodeId).length > 0) return
+    const { newNodes = new Set<string>() } = options.getNewIds?.() ?? {}
+    cy.add({
+      group: 'nodes',
+      data: { id: nodeId, isNew: newNodes.has(nodeId), ...node },
+      position
+    })
+  }
+
+  function addEdge(edge: GraphEdge) {
+    ensureCy()
+    if (!cy) return
+    const sourceId = `${edge.fromType}:${edge.fromKey}`
+    const targetId = `${edge.toType}:${edge.toKey}`
+    if (cy.$id(sourceId).length === 0 || cy.$id(targetId).length === 0) return
+    const edgeId = `${sourceId}-${edge.relation}-${targetId}`
+    if (cy.$id(edgeId).length > 0) return
+    const { newEdges = new Set<string>() } = options.getNewIds?.() ?? {}
+    const newEdgeKey = `${edge.fromType}:${edge.fromKey}:${edge.relation}:${edge.toType}:${edge.toKey}`
+    cy.add({
+      group: 'edges',
+      data: { id: edgeId, source: sourceId, target: targetId, label: edge.relation, isNew: newEdges.has(newEdgeKey) }
+    })
+  }
+
+  function updateNode(id: string, fields: { type: string; key: string; label: string }) {
+    if (!cy) return
+    const node = cy.$id(id)
+    if (node.length === 0) return
+    node.data({ label: fields.label, type: fields.type, key: fields.key })
+  }
+
+  function removeNode(id: string) {
+    if (!cy) return
+    const node = cy.$id(id)
+    if (node.length === 0) return
+    // cytoscape 自动级联删: 删除节点时连接的边一并删
+    cy.remove(node)
+  }
+
+  function removeEdge(id: string) {
+    if (!cy) return
+    const edge = cy.$id(id)
+    if (edge.length === 0) return
+    cy.remove(edge)
+  }
+
   function clearFocus() {
     if (!cy) return
     cy.elements().removeClass('faded')
@@ -404,5 +475,5 @@ export function useCytoscapeLifecycle(
     destroy()
   })
 
-  return { init, destroy, resetLayout, getInstance, applyFocus, clearFocus }
+  return { init, destroy, resetLayout, getInstance, addNode, addEdge, updateNode, removeNode, removeEdge, applyFocus, clearFocus }
 }

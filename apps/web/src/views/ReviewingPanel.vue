@@ -372,10 +372,10 @@
               {{ isRetrying('graph') ? '重新解析中…' : '重新解析此阶段' }}
             </n-button>
           </div>
-          <!-- 图谱编辑器 (EditableGraph 自带 page-head, 不再包 n-card 避免重复标题) -->
+          <!-- 图谱编辑器自管 state, 不回传; save/confirm 时通过 graphRef.getData() 拉回 -->
           <EditableGraph
+            ref="graphRef"
             :initial-graph-data="graphData"
-            @update:graphData="onGraphUpdate"
           />
         </n-tab-pane>
       </n-tabs>
@@ -423,6 +423,7 @@ const emit = defineEmits<{
 const saving = ref(false)
 const confirming = ref(false)
 const dialog = useDialog()
+const graphRef = ref<InstanceType<typeof EditableGraph> | null>(null)
 
 const localData = ref<LocalData>(fromV3(props.pending))
 
@@ -584,17 +585,21 @@ function removePlotArc(idx: number) {
     localData.value.plotArcs.splice(idx, 1)
   })
 }
-function onGraphUpdate(next: { nodes: any[]; edges: any[] }) {
-  localData.value.graph.chapterGraph = next
+// 把 EditableGraph 自管的草稿拉回到 localData, 然后再 toV3 发送
+function pullGraphDraftIntoLocalData() {
+  const g = graphRef.value?.getData()
+  if (g) localData.value.graph.chapterGraph = g
 }
 
 // === 底部三按钮 ===
 function handleSave() {
+  pullGraphDraftIntoLocalData()
   saving.value = true
   try { emit('save', toV3(localData.value, props.pending)) }
   finally { setTimeout(() => { saving.value = false }, 200) }
 }
 function handleConfirm() {
+  pullGraphDraftIntoLocalData()
   confirming.value = true
   try { emit('confirm', toV3(localData.value, props.pending)) }
   finally { setTimeout(() => { confirming.value = false }, 200) }
