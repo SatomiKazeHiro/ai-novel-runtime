@@ -217,6 +217,12 @@ describe('archive route — v3 commit (single $transaction, no 409 lock)', () =>
         updateMany: vi.fn()
       },
       memory: { create: vi.fn() },
+      // v3 archive confirm 在 $transaction 内调 commitPlotArcWrites → 需要 plotArc 模型
+      plotArc: {
+        findMany: vi.fn().mockResolvedValue([]),
+        create: vi.fn(),
+        update: vi.fn()
+      },
       $transaction: vi.fn(async (fn: any) => fn(mockPrisma))
     }
     const { chapterRoutes } = await import('../../routes/chapters.js')
