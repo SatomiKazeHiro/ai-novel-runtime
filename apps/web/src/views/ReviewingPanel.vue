@@ -13,7 +13,11 @@
       :key="stageName"
       :stage-name="stageName"
       :state="pending.stages?.[stageName]"
-    />
+    >
+      <template #default="{ result }">
+        <StageResultView :stage-name="stageName" :result="result" />
+      </template>
+    </StageCard>
 
     <footer class="rp-footer">
       <button class="cap-pill is-ghost" @click="emit('reprepare')">重新解析（全部）</button>
@@ -26,6 +30,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import StageCard from './StageCard.vue'
+import StageResultView from './StageResultView.vue'
 
 const STAGE_ORDER = ['character', 'memory', 'plotArc', 'graph'] as const
 
