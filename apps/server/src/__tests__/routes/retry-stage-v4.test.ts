@@ -25,6 +25,7 @@ vi.mock('../../services/memory-optimizer.js', () => ({
 }))
 
 import { runMemoryStage } from '../../services/stages/memory-stage.js'
+import { runPlotArcStage } from '../../services/stages/plot-arc-stage.js'
 import { optimizeMemories } from '../../services/memory-optimizer.js'
 
 const ts = '2026-07-31T00:00:00.000Z'
@@ -187,5 +188,25 @@ describe('retry-stage v4 — memoryExtract / memoryOptimize', () => {
     expect(result.body.success).toBe(false)
     expect(result.body.error).toMatch(/memoryExtract/)
     expect(optimizeMemories).not.toHaveBeenCalled()
+  })
+
+  it('retry-stage:plotArc only feeds active/inactive arcs (not completed/closed)', async () => {
+    mockPrisma.chapter.findUnique.mockResolvedValue(
+      makeChapter(makePendingV4({ status: 'success', result: rawMemoryResult, completedAt: ts }))
+    )
+    ;(runPlotArcStage as any).mockResolvedValue({
+      status: 'success', result: { plotArcs: [] }, completedAt: ts
+    })
+
+    const result = await callHandler(
+      routes, 'POST', ROUTE, undefined, { chapterId: 'abc', stageName: 'plotArc' }
+    )
+
+    // 关键：不把 completed/closed 终态弧线喂给 AI（与 prepare-archive 对齐，防止复活）
+    expect(mockPrisma.plotArc.findMany).toHaveBeenCalledWith({
+      where: { storyId: 's1', status: { in: ['active', 'inactive'] } }
+    })
+    expect(runPlotArcStage).toHaveBeenCalled()
+    expect(result.body.success).toBe(true)
   })
 })

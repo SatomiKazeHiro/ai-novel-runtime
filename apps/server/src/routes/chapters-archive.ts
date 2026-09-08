@@ -357,7 +357,10 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     }
     const dedupedBranchStates = Array.from(latestPerChar.values())
 
-    const allExistingArcs = await prisma.plotArc.findMany({ where: { storyId: chapter.storyId } })
+    // 只送「激活 + 待激活」（完成/关闭终态不送 AI 分析，避免复活，与 prepare-archive 对齐）
+    const allExistingArcs = await prisma.plotArc.findMany({
+      where: { storyId: chapter.storyId, status: { in: ['active', 'inactive'] } }
+    })
 
     let prevCumulativeGraphNodes: Array<{ type: string; key: string; label: string }> = []
     let prevCumulativeGraphEdges: Array<{ fromType: string; fromKey: string; toType: string; toKey: string; relation: string }> = []
