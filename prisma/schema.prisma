@@ -174,9 +174,9 @@ model Memory {
 }
 
 // 知识图谱节点
-/// @deprecated v3 不再写入新数据;数据落 Chapter.chapterGraph/cumulativeGraph。
-/// 保留仅供 GraphView.vue 旧实现暂用。重写完成后删除本 model。
-/// 见 docs/ISSUES.md [P2 follow-up]。
+/// @deprecated v3 不写不读. v3 GraphView 已重写 (读 Chapter.cumulativeGraph JSON).
+/// 本表及 GraphEdge 计划在 v3 GraphView 稳定后删除 schema + 迁移.
+/// 详见 docs/superpowers/specs/2026-07-28-graph-code-quality-refactor-design.md.
 model GraphNode {
   id              String   @id @default(uuid())
   storyId         String
@@ -194,7 +194,8 @@ model GraphNode {
 }
 
 // 知识图谱边
-/// @deprecated 同 GraphNode。
+/// @deprecated v3 不写不读. 见 GraphNode 注释.
+/// 详见 docs/superpowers/specs/2026-07-28-graph-code-quality-refactor-design.md.
 model GraphEdge {
   id              String   @id @default(uuid())
   storyId         String
