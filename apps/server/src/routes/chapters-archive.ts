@@ -424,7 +424,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     let result: BuildAndSaveResult
     try {
       result = await buildCumulativeGraphWithTimestamp(app, {
-        storyId: chapter.storyId, chapterId, chapterNumber: chapter.number,
+        storyId: chapter.storyId, chapterId,
         chapterGraph: body.chapterGraph,
         prevCumulativeGraph: prevCumulative,
       })
