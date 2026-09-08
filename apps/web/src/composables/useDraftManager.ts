@@ -66,13 +66,7 @@ export function useDraftManager() {
       startPolling(chapterId)
       return { success: true, tokens: res.data.data.tokens || null, layers: res.data.data.layers || [] }
     } catch (e: any) {
-      // Q#10：后端状态机独占锁失败时返回 409。
-      // 用 warning 而非 error：双击是用户可恢复的并发条件，不是真正的失败。
-      if (e.response?.status === 409) {
-        message.warning('该章节正在生成中，请等待当前任务完成')
-      } else {
-        message.error(e.response?.data?.error || e.message || '生成失败')
-      }
+      message.error(e.response?.data?.error || e.message || '生成失败')
       return { success: false }
     } finally {
       generating.value = false
