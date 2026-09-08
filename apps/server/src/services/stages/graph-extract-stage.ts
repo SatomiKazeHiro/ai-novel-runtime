@@ -50,6 +50,13 @@ export async function runGraphExtractStage(
 5. relation 必须从以下词表选，不允许自由发挥：
    隶属 / 对抗 / 师徒 / 配偶 / 兄弟 / 朋友 / 敌对 / 亲属 / 师门 / 同门 / 敌师 / 盟友
 6. 同名实体必须复用已有 graph key，不允许另起 key
+7. weight 取 1 或 2（1=普通关系，2=紧密关系），其他值收敛到 1
+
+【典型丢弃示例（不要上 graph）】
+- 店小二 / 路人甲 / 某老妪（一次性无名配角，无具体关系链）
+- 某碗面 / 某壶酒 / 一把扫帚（一次性物品，无剧情作用）
+- 灵华宗大殿 / 山脚小镇（场景地名，不是独立实体）
+理由：只出现一次 + 无关系链 = 噪音节点，污染关系图。
 
 【已有 graph key 列表（必须复用）】
 ${keyList}
@@ -86,6 +93,13 @@ ${charList}
     const edges = Array.isArray(parsed.edges) ? parsed.edges : []
 
     const ALLOWED_TYPES = new Set(['character', 'faction', 'event', 'item'])
+    const ALLOWED_RELATIONS = new Set([
+      '隶属', '对抗', '师徒', '配偶', '兄弟',
+      '朋友', '敌对', '亲属', '师门', '同门',
+      '敌师', '盟友'
+    ])
+    const RELATION_FALLBACK = '关联'
+
     const normalized = nodes.map((n: any) => {
       const t = (n.type || '').toLowerCase()
       if (ALLOWED_TYPES.has(t)) return { ...n, type: t }
@@ -95,6 +109,28 @@ ${charList}
 
     const filtered = normalized.filter((n: any) => (n.importance ?? 0) >= 8)
 
+    const nodeKeySet = new Set(filtered.map((n: any) => `${n.type}:${n.key}`))
+
+    const cleanedEdges = edges
+      .filter((e: any) =>
+        nodeKeySet.has(`${e?.fromType}:${e?.fromKey}`) &&
+        nodeKeySet.has(`${e?.toType}:${e?.toKey}`)
+      )
+      .map((e: any) => {
+        const rel = typeof e.relation === 'string' ? e.relation : ''
+        const relation = ALLOWED_RELATIONS.has(rel) ? rel : RELATION_FALLBACK
+        const rawWeight = typeof e.weight === 'number' ? e.weight : 1
+        const weight = Math.min(Math.max(rawWeight, 1), 2)
+        return {
+          fromType: e.fromType,
+          fromKey: e.fromKey,
+          toType: e.toType,
+          toKey: e.toKey,
+          relation,
+          weight
+        }
+      })
+
     const chapterGraph: GraphSnapshot = {
       nodes: filtered.map((n: any) => ({
         type: n.type,
@@ -102,14 +138,7 @@ ${charList}
         label: n.label,
         data: n.data || {}
       })),
-      edges: edges.map((e: any) => ({
-        fromType: e.fromType,
-        fromKey: e.fromKey,
-        toType: e.toType,
-        toKey: e.toKey,
-        relation: e.relation,
-        weight: e.weight ?? 1
-      })),
+      edges: cleanedEdges,
       timestamp: new Date().toISOString()
     }
 

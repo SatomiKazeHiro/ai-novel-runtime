@@ -71,4 +71,62 @@ describe('graph-extract-stage filter (importance >= 8, type whitelist)', () => {
     const state = await runGraphExtractStage(mockApp, baseInput)
     expect(state.result?.chapterGraph.nodes).toHaveLength(1)
   })
+
+  it('falls back non-whitelisted relation to 关联', async () => {
+    const ai = {
+      nodes: [
+        { type: 'character', key: 'zhangsan', label: '张三', importance: 8 },
+        { type: 'character', key: 'lisi',     label: '李四', importance: 8 }
+      ],
+      edges: [
+        { fromType: 'character', fromKey: 'zhangsan', toType: 'character', toKey: 'lisi', relation: '隶属', weight: 1 },   // 保留
+        { fromType: 'character', fromKey: 'lisi',     toType: 'character', toKey: 'zhangsan', relation: '暧昧', weight: 1 } // → 关联
+      ]
+    }
+    ;(callAIWithLog as any).mockResolvedValueOnce(JSON.stringify(ai))
+
+    const state = await runGraphExtractStage(mockApp, baseInput)
+    const rels = state.result?.chapterGraph.edges.map((e: any) => e.relation).sort()
+    expect(rels).toEqual(['关联', '隶属'])
+  })
+
+  it('drops orphan edges whose endpoints are missing from nodes', async () => {
+    const ai = {
+      nodes: [
+        { type: 'character', key: 'zhangsan', label: '张三', importance: 8 },
+        { type: 'character', key: 'lisi',     label: '李四', importance: 8 }
+        // wangwu 不存在
+      ],
+      edges: [
+        { fromType: 'character', fromKey: 'zhangsan', toType: 'character', toKey: 'lisi',     relation: '朋友', weight: 1 }, // 保留
+        { fromType: 'character', fromKey: 'zhangsan', toType: 'character', toKey: 'wangwu',   relation: '朋友', weight: 1 }, // 孤儿 → 丢弃
+        { fromType: 'character', fromKey: 'wangwu',   toType: 'character', toKey: 'lisi',     relation: '朋友', weight: 1 }  // 孤儿 → 丢弃
+      ]
+    }
+    ;(callAIWithLog as any).mockResolvedValueOnce(JSON.stringify(ai))
+
+    const state = await runGraphExtractStage(mockApp, baseInput)
+    expect(state.result?.chapterGraph.edges).toHaveLength(1)
+    expect(state.result?.chapterGraph.edges[0].fromKey).toBe('zhangsan')
+    expect(state.result?.chapterGraph.edges[0].toKey).toBe('lisi')
+  })
+
+  it('clamps edge weight to 1..2 range', async () => {
+    const ai = {
+      nodes: [
+        { type: 'character', key: 'a', label: '甲', importance: 8 },
+        { type: 'character', key: 'b', label: '乙', importance: 8 }
+      ],
+      edges: [
+        { fromType: 'character', fromKey: 'a', toType: 'character', toKey: 'b', relation: '朋友', weight: 5 },   // → 2
+        { fromType: 'character', fromKey: 'b', toType: 'character', toKey: 'a', relation: '朋友', weight: 0 },   // → 1
+        { fromType: 'character', fromKey: 'a', toType: 'character', toKey: 'b', relation: '朋友', weight: 1.7 } // → 1.7 (保留)
+      ]
+    }
+    ;(callAIWithLog as any).mockResolvedValueOnce(JSON.stringify(ai))
+
+    const state = await runGraphExtractStage(mockApp, baseInput)
+    const weights = state.result?.chapterGraph.edges.map((e: any) => e.weight).sort()
+    expect(weights).toEqual([1, 1.7, 2])
+  })
 })
