@@ -34,6 +34,7 @@
         :archiving="archiving"
         :repreparing-archive="repreparingArchive"
         :retrying-stages="retryingStages"
+        :archive-running="archiveRunning"
         :prompt="prompt"
         :drafts="drafts"
         @back="handleBackToTree"
@@ -83,6 +84,8 @@ const debouncedSaveConfig = useDebounceFn(editor.saveConfig, 500);
 const archiving = ref(false);
 // 重新准备归档的 loading 状态(reviewing → reviewing 重试路径)
 const repreparingArchive = ref(false);
+// 归档提交 in-flight 状态(ChapterEditor → ReviewingPanel 确认按钮 loading)
+const archiveRunning = ref(false);
 // 单 stage 重跑 in-flight 标记(per stage 独立 key)
 const retryingStages = ref<Partial<Record<"character" | "memory" | "plotArc" | "graph", boolean>>>({});
 const dialog = useDialog();
@@ -292,11 +295,16 @@ async function handleSavePendingArchive(data: any) {
 }
 
 async function handleConfirmArchiveWithData(data: any) {
-    // ReviewingPanel 点"确认归档":先存,再调 archive 端点。
-    const saved = await editor.savePendingArchiveData(data)
-    if (!saved.success) return
-    const result = await editor.archiveChapter()
-    if (result.success) await handleBackToTree()
+    archiveRunning.value = true
+    try {
+        // v3: ReviewingPanel 只读,pendingArchiveData 在 prepareArchive 时已写入 DB。
+        const saved = await editor.savePendingArchiveData(data)
+        if (!saved.success) return
+        const result = await editor.archiveChapter()
+        if (result.success) await handleBackToTree()
+    } finally {
+        archiveRunning.value = false
+    }
 }
 
 async function handleReprepareArchive() {
