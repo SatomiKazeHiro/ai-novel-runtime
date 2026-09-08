@@ -137,7 +137,7 @@ export class ContextBudgetManager {
 
   compress(prompt: string, strategy: 'summary' | 'truncate' = 'truncate'): { prompt: string; compressed: string[] } {
     const compressed: string[] = []
-    const compressibleLayers = ['Memory', 'Lore', 'Timeline']
+    const compressibleLayers = ['Memory', 'Lore']
     let result = prompt
 
     for (const layerName of compressibleLayers) {

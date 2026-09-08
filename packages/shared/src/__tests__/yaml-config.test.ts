@@ -133,7 +133,7 @@ describe('WorkerTaskYamlSchema', () => {
     // 钉死枚举值, runtime-compiler 的 WorkerTask.workerType 改了这里也得改.
     expect(WORKER_TYPES).toEqual([
       'generation', 'scoring', 'memory', 'graph',
-      'timeline', 'rewrite', 'memory_organize'
+      'rewrite', 'memory_organize'
     ])
   })
 })
