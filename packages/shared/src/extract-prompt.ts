@@ -178,7 +178,7 @@ importance 评分标准（按事件本身在本章的相对重要性打分，与
 
 === 返回格式 ===
 {
-  "memories": { mainEvents, sideEvents, emotions, foreshadowing, relationshipChanges, characterStatusChanges, timelinePosition, timelineEvents, summary, scenes },
+  "memories": { mainEvents, sideEvents, emotions, foreshadowing, relationshipChanges, characterStatusChanges, summary, scenes },
   "graph": { "nodes": [...], "edges": [...] }
 }
 
@@ -282,7 +282,7 @@ importance 评分标准（按事件本身在本章的相对重要性打分，与
 
 === 返回格式 ===
 {
-  "memories": { mainEvents, sideEvents, emotions, foreshadowing, relationshipChanges, characterStatusChanges, timelinePosition, timelineEvents, summary, scenes },
+  "memories": { mainEvents, sideEvents, emotions, foreshadowing, relationshipChanges, characterStatusChanges, summary, scenes },
   "graph": { "nodes": [...], "edges": [...] }
 }
 

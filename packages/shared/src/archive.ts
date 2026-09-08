@@ -35,26 +35,13 @@ export interface PendingCharacterStateWrite {
 }
 
 /**
- * A timeline event write. `events` is a JSON-encoded string array.
- * `position` is the YYYY.MMDD.HH 实数编码 (整数位=年, 小数位依次为月/日/时).
- */
-export interface PendingTimelineEventWrite {
-  storyId: string
-  fromChapterNumber: number
-  position: number
-  events: string
-}
-
-/**
  * All memory-related writes bundled together. (Legacy v2 shape — v3 archive
  * routes results through `PendingArchiveDataV3.stages` instead.)
  */
 export interface PendingMemories {
   memories: PendingMemoryWrite[]
   characterStates: PendingCharacterStateWrite[]
-  timelineEvents: PendingTimelineEventWrite[]
   summary: string | null
-  timelinePosition: number | null
 }
 
 /**
@@ -188,19 +175,10 @@ export const PendingCharacterStateWriteSchema = z.object({
   relationships: z.string()
 })
 
-export const PendingTimelineEventWriteSchema = z.object({
-  storyId: z.string(),
-  fromChapterNumber: z.number(),
-  position: z.number(),
-  events: z.string()
-})
-
 export const PendingMemoriesSchema = z.object({
   memories: z.array(PendingMemoryWriteSchema),
   characterStates: z.array(PendingCharacterStateWriteSchema),
-  timelineEvents: z.array(PendingTimelineEventWriteSchema),
-  summary: z.string().nullable(),
-  timelinePosition: z.number().nullable()
+  summary: z.string().nullable()
 })
 
 export const PendingGraphNodeSchema = z.object({
@@ -258,7 +236,6 @@ export const PendingArchiveDataSchema = z.object({
 // TypeScript 类型(zod 推导),与上面 interface 平行
 export type PendingMemoryWriteZ = z.infer<typeof PendingMemoryWriteSchema>
 export type PendingCharacterStateWriteZ = z.infer<typeof PendingCharacterStateWriteSchema>
-export type PendingTimelineEventWriteZ = z.infer<typeof PendingTimelineEventWriteSchema>
 export type PendingMemoriesZ = z.infer<typeof PendingMemoriesSchema>
 export type PendingGraphNodeZ = z.infer<typeof PendingGraphNodeSchema>
 export type PendingGraphEdgeZ = z.infer<typeof PendingGraphEdgeSchema>
