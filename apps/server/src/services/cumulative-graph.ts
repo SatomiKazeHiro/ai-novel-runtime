@@ -141,7 +141,13 @@ function applyRelationMapping(snapshot: GraphSnapshot, mapping: Map<string, stri
     }
     return e
   })
-  return { ...snapshot, edges: rewrittenEdges }
+  // 深拷 nodes: 每个节点的 data 也拷一份, 避免与原 snapshot 共享引用
+  // (AI 调用一旦未来修改 node.data 就会污染输入)
+  return {
+    ...snapshot,
+    nodes: snapshot.nodes.map(n => ({ ...n, data: { ...(n.data || {}) } })),
+    edges: rewrittenEdges
+  }
 }
 
 function codeMerge(prev: GraphSnapshot, chapterGraph: GraphSnapshot, now: string): GraphSnapshot {
