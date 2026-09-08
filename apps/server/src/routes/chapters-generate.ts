@@ -11,8 +11,7 @@ import {
   safeJsonParse,
   PreviewRequestSchema,
   GenerateRequestSchema,
-  SelectDraftRequestSchema,
-  formatTimelinePosition
+  SelectDraftRequestSchema
 } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { parseBody, getLastChapter, getOrThrowChapter } from './_helpers.js'
@@ -81,7 +80,6 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     const charactersWithBranchState = await getCharactersWithLatestState(prisma, storyId)
 
     const loreItems = await prisma.loreItem.findMany({ where: { storyId } })
-    const timelineEvents = await prisma.timelineEvent.findMany({ where: { storyId }, orderBy: { position: 'asc' } })
 
     // 获取 checkpoint（最后一个归档章节号）
     const checkpointChapter = await prisma.chapter.findFirst({
@@ -116,7 +114,6 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
       lore: loreItems.map(l => `【${l.name}】${l.content}`).join('\n') || '无世界观设定信息',
       scene: `标题：${chapter.title || '未设定'}\n地点：${chapter.sceneLocation || '未设定'}\n氛围：${chapter.sceneMood || '未设定'}\n目标：${chapter.sceneGoal || '未设定'}`,
       memory: [memoryManager.formatForPrompt(relevantMemories), temporaryText].filter(Boolean).join('\n'),
-      timeline: timelineEvents.map(t => `[${formatTimelinePosition(t.position)}] ${safeJsonParse<string[]>(t.events, []).join('；')}`).join('\n'),
       plotArc: plotArcText || undefined,
       output: `请根据以下大纲生成本章正文：\n\n${chapter.outline || '无大纲'}`
     })
@@ -177,7 +174,6 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     const charactersWithBranchState = await getCharactersWithLatestState(prisma, storyId)
 
     const loreItems = await prisma.loreItem.findMany({ where: { storyId } })
-    const timelineEvents = await prisma.timelineEvent.findMany({ where: { storyId }, orderBy: { position: 'asc' } })
 
     const checkpointChapter = await prisma.chapter.findFirst({
       where: { storyId, status: 'archived' },
@@ -226,7 +222,6 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
         lore: loreItems.map(l => `【${l.name}】${l.content}`).join('\n') || '无世界观设定信息',
         scene: `标题：${chapter.title || '未设定'}\n地点：${chapter.sceneLocation || '未设定'}\n氛围：${chapter.sceneMood || '未设定'}\n目标：${chapter.sceneGoal || '未设定'}`,
         memory: [memoryManager.formatForPrompt(relevantMemories), temporaryText].filter(Boolean).join('\n'),
-        timeline: timelineEvents.map(t => `[${formatTimelinePosition(t.position)}] ${safeJsonParse<string[]>(t.events, []).join('；')}`).join('\n'),
         plotArc: plotArcText || undefined,
         output: `请根据以下大纲生成本章正文（约2000-4000字）：\n\n${chapter.outline || '无大纲'}`
       })
