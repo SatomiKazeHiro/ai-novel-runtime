@@ -165,7 +165,7 @@ describe('archive v3 — cumulative graph build + transaction', () => {
     routes = built.routes
   })
 
-  it('commits archive when all stages success and cumulative graph builds', async () => {
+  it('commits archive when all stages success and cumulative graph is user-generated', async () => {
     mockPrisma.chapter.findUnique.mockResolvedValue({
       id: 'c1', storyId: 's1', status: 'reviewing',
       isSideStory: false, content: 'x', outline: '', number: 1,
@@ -180,11 +180,9 @@ describe('archive v3 — cumulative graph build + transaction', () => {
         },
         meta: { extractedAt: ts, chapterNumber: 1 }
       }),
-      chapterGraph: JSON.stringify({ nodes: [], edges: [], timestamp: ts })
-    })
-    ;(buildCumulativeGraph as any).mockResolvedValue({
-      cumulativeGraph: { nodes: [], edges: [], timestamp: ts },
-      aiCalled: false
+      chapterGraph: JSON.stringify({ nodes: [], edges: [], timestamp: ts }),
+      cumulativeGraph: JSON.stringify({ nodes: [], edges: [], timestamp: ts }),
+      cumulativeGraphGeneratedAt: new Date(ts),
     })
 
     const result = await callHandler(
@@ -193,7 +191,8 @@ describe('archive v3 — cumulative graph build + transaction', () => {
     )
 
     expect(result.body).toEqual(expect.objectContaining({ success: true }))
-    expect(buildCumulativeGraph).toHaveBeenCalled()
+    // v3: archive 不再调 buildCumulativeGraph (用户已在 ReviewingPanel 维护过累计图谱)
+    expect(buildCumulativeGraph).not.toHaveBeenCalled()
     const archivedUpdate = mockPrisma.chapter.update.mock.calls.find(
       (c: any[]) => c[0]?.data?.status === 'archived'
     )
@@ -201,7 +200,9 @@ describe('archive v3 — cumulative graph build + transaction', () => {
     expect(archivedUpdate[0].data.cumulativeGraph).toBeDefined()
   })
 
-  it('returns 500 when cumulative graph build fails', async () => {
+  it('returns 400 cumulative-graph-not-generated when user has not generated cumulative graph yet', async () => {
+    // v3: archive 不再在内部调 AI 构建累计图谱; 必须先在 ReviewingPanel 点过
+    // "生成累计图谱" (即 cumulativeGraphGeneratedAt != null + cumulativeGraph != null)。
     mockPrisma.chapter.findUnique.mockResolvedValue({
       id: 'c1', storyId: 's1', status: 'reviewing',
       isSideStory: false, content: 'x', outline: '', number: 1,
@@ -216,17 +217,18 @@ describe('archive v3 — cumulative graph build + transaction', () => {
         },
         meta: { extractedAt: ts, chapterNumber: 1 }
       }),
-      chapterGraph: null
+      chapterGraph: null,
+      cumulativeGraph: null,
+      cumulativeGraphGeneratedAt: null,
     })
-    ;(buildCumulativeGraph as any).mockRejectedValue(new Error('AI 抽风'))
 
     const result = await callHandler(
       routes, 'POST', '/api/chapters/:chapterId/archive',
       undefined, { chapterId: 'c1' }
     )
 
-    expect(result.status).toBe(500)
-    expect(result.body.error).toContain('全局图谱构建失败')
+    expect(result.status).toBe(400)
+    expect(result.body.error).toBe('cumulative-graph-not-generated')
   })
 
   it('returns 400 when any stage is failed', async () => {

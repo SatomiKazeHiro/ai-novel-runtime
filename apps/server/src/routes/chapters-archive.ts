@@ -6,7 +6,6 @@ import { runCharacterStage } from '../services/stages/character-stage.js'
 import { runMemoryStage } from '../services/stages/memory-stage.js'
 import { runPlotArcStage } from '../services/stages/plot-arc-stage.js'
 import { runGraphExtractStage } from '../services/stages/graph-extract-stage.js'
-import { buildCumulativeGraph } from '../services/cumulative-graph.js'
 import type { GraphSnapshot } from '../services/graph-snapshot.js'
 import { buildCumulativeGraphWithTimestamp, type BuildAndSaveResult } from '../services/stages/cumulative-graph-build-service.js'
 
@@ -21,9 +20,10 @@ import { buildCumulativeGraphWithTimestamp, type BuildAndSaveResult } from '../s
  *     UI 按钮 disabled 防双击。
  *   - prepare-archive 调 4 stage 并行 (Promise.all), 各自结果写入
  *     pendingArchiveData.stages[name]。单 stage 失败不影响其他 stage。
- *   - archive 验证 pendingArchiveData.version === 3 + ∀ stage.status === 'success'。
- *     在 status='archived' update 之前调用 buildCumulativeGraph,
- *     把 JSON.stringify 后的 cumulativeGraph 一并写入 Chapter 行 (Task 4.2 接入)。
+ *   - archive 验证 pendingArchiveData.version === 3 + ∀ stage.status === 'success' +
+ *     Chapter.cumulativeGraphGeneratedAt != null (用户在审查阶段已点过 "生成累计图谱")。
+ *     累计图谱完全由 ReviewingPanel 维护, archive 不再 AI 构建, 只在 status='archived' update
+ *     时把 chapter.cumulativeGraph 字符串原值写回 (spec §5.2 幂等保证)。
  */
 export async function chapterArchiveRoutes(app: FastifyInstance) {
   app.post('/api/chapters/:chapterId/prepare-archive', async (request, reply) => {
@@ -526,47 +526,19 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       })
     }
 
-    // v3 build cumulativeGraph(在事务前;AI 调用不能在事务里)
-    const chapterGraphForArchive = chapter.chapterGraph
-      ? safeJsonParse<GraphSnapshot | null>(chapter.chapterGraph, null)
-      : null
-
-    // 查 prev cumulativeGraph
-    let prevCumulative: GraphSnapshot | null = null
-    if (chapter.parentChapterId) {
-      const parent = await prisma.chapter.findUnique({
-        where: { id: chapter.parentChapterId },
-        select: { cumulativeGraph: true }
-      })
-      if (parent?.cumulativeGraph) prevCumulative = safeJsonParse<GraphSnapshot | null>(parent.cumulativeGraph, null)
-    }
-    if (!prevCumulative) {
-      const prev = await prisma.chapter.findFirst({
-        where: { storyId: chapter.storyId, parentChapterId: null, number: chapter.number - 1, id: { not: chapterId } },
-        select: { cumulativeGraph: true }
-      })
-      if (prev?.cumulativeGraph) prevCumulative = safeJsonParse<GraphSnapshot | null>(prev.cumulativeGraph, null)
-    }
-
-    let cumulativeGraph: GraphSnapshot
-    try {
-      const result = await buildCumulativeGraph(app, {
-        storyId: chapter.storyId, chapterId, chapterNumber: chapter.number,
-        chapterGraph: chapterGraphForArchive, prevCumulativeGraph: prevCumulative
-      })
-      cumulativeGraph = result.cumulativeGraph
-    } catch (err: any) {
-      app.log.error(`[Archive] Cumulative graph build failed: ${err.message}`)
-      return reply.status(500).send({
+    // v3: 累计图谱不再由 archive 时 AI 构建, 改为消费用户在 ReviewingPanel 主动维护的草稿。
+    // 校验: 用户必须先在审查阶段点过 "生成累计图谱", 否则归档被拦下。
+    if (chapter.cumulativeGraphGeneratedAt == null || chapter.cumulativeGraph == null) {
+      return reply.status(400).send({
         success: false,
-        error: `归档失败：全局图谱构建失败（${err.message}）。请重试。`
+        error: 'cumulative-graph-not-generated',
       })
     }
 
     // 直接翻 status (无锁; UI 防双击)
     await prisma.chapter.update({
       where: { id: chapterId },
-      data: { status: 'archived', pendingArchiveData: null, cumulativeGraph: JSON.stringify(cumulativeGraph) }
+      data: { status: 'archived', pendingArchiveData: null, cumulativeGraph: chapter.cumulativeGraph }
     })
 
     return { success: true, data: { cumulativeGraph: null, optimizedCount: 0 } }
