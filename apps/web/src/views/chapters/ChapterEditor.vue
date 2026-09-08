@@ -23,7 +23,7 @@
             <n-tag
                 size="small"
                 :type="statusTagType(chapter?.status)"
-                >{{ chapter?.status }}</n-tag
+                >{{ getChapterStatus(chapter?.status).label }}</n-tag
             >
             <n-tag v-if="isReadonly" size="small" type="info">只读</n-tag>
         </n-space>
@@ -377,6 +377,7 @@ import {
     NEmpty,
 } from "naive-ui";
 import { ArrowBackOutline } from "@vicons/ionicons5";
+import { getChapterStatus } from "../../styles/chapter-status";
 import ReviewingPanel from "../ReviewingPanel.vue";
 import ChapterPreview from "./ChapterPreview.vue";
 import DraftList from "./DraftList.vue";
