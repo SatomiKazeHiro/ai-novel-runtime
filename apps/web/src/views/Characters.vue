@@ -363,6 +363,7 @@ function openCreate() {
   snapshotEditing.value = false
   snapshotForm.value = { relationshipsText: '{}', statusText: '{}', costume: '' }
   snapshotSaving.value = false
+  snapshotSession++
   isEdit.value = false
   editId.value = ''
   editingCharacter.value = null
@@ -377,6 +378,7 @@ function openEdit(row: CharacterDisplayRow) {
   snapshotEditing.value = false
   snapshotForm.value = { relationshipsText: '{}', statusText: '{}', costume: '' }
   snapshotSaving.value = false
+  snapshotSession++
   isEdit.value = true
   editId.value = row.id
   editingCharacter.value = row
@@ -452,6 +454,8 @@ watch(viewChapter, () => {
 const snapshotEditing = ref(false)
 const snapshotSaving = ref(false)
 const snapshotLoading = ref(false)
+/** 会话计数器: 每次打开弹窗 +1,用于识别「旧保存落到重开的新会话」竞态 */
+let snapshotSession = 0
 const snapshotForm = ref({ relationshipsText: '{}', statusText: '{}', costume: '' })
 /** 当前选中章无该角色快照(三个字段均缺失) → 编辑死胡同,禁用编辑入口 */
 const snapshotChapterEmpty = computed(() => {
@@ -478,10 +482,11 @@ async function saveSnapshot() {
     if (snapshotChapter.value === null) message.error('请先选择快照章节')
     return
   }
-  // 保存前捕获身份快照,await 之后据此判断会话是否已被用户切换
+  // 保存前捕获身份快照 + 会话号,await 之后据此判断会话是否已被用户切换/重开
   const charId = editingCharacter.value.id
   const chapter = snapshotChapter.value
   const storyId = route.params.storyId as string
+  const session = snapshotSession
   let status: Record<string, any>
   let relationships: Record<string, any>
   try {
@@ -501,24 +506,35 @@ async function saveSnapshot() {
     snapshotSaving.value = false
   }
   message.success('快照已更新')
-  // 保存期间弹窗被关/换角色 → 不再写共享 ref,避免污染新会话
-  if (editingCharacter.value?.id !== charId || !showModal.value) return
+  // 保存期间弹窗被关/重开/换角色 → 不再写共享 ref,避免污染新会话
+  if (snapshotSession !== session || editingCharacter.value?.id !== charId || !showModal.value) return
   snapshotEditing.value = false
+  snapshotLoading.value = true
   try {
     const res = await charactersApi.getSnapshot(storyId, charId, chapter)
-    if (editingCharacter.value?.id === charId) snapshotCharacter.value = res.data.data ?? null
+    // 重拉期间会话已切换 → 丢弃响应,不写共享 ref
+    if (snapshotSession === session && editingCharacter.value?.id === charId) snapshotCharacter.value = res.data.data ?? null
   } catch {
     message.error('快照已更新，但刷新失败，请重试')
+  } finally {
+    snapshotLoading.value = false
   }
   await loadCharacters()
 }
 
 watch(snapshotChapter, async (chapter) => {
   if (!editingHasSnapshot.value || !editingCharacter.value || chapter === null || !route.params.storyId) return
+  const charId = editingCharacter.value.id
+  const storyId = route.params.storyId as string
   snapshotLoading.value = true
   try {
-    const res = await charactersApi.getSnapshot(route.params.storyId as string, editingCharacter.value.id, chapter)
-    snapshotCharacter.value = res.data.data ?? null
+    const res = await charactersApi.getSnapshot(storyId, charId, chapter)
+    // 陈旧响应守卫: 取数期间角色已换/章节已切 → 丢弃本次响应
+    if (editingCharacter.value?.id === charId && snapshotChapter.value === chapter) {
+      snapshotCharacter.value = res.data.data ?? null
+    }
+  } catch {
+    message.error('快照加载失败，请重试')
   } finally {
     snapshotLoading.value = false
   }
