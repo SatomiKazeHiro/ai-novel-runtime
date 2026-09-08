@@ -190,6 +190,8 @@ if (!current || SKIP_STATUSES.includes(current.status)) continue
 | 3 事务 | `routes/chapters-archive.ts:archive` | `archive` | 0 次 | 事务回滚，章节维持 `reviewing` |
 | 4 优化 | `memory-optimizer.ts:optimizeMemories` | `archive`（事务后） | 1 次（temperature 0.3） | **不阻塞**归档（已 try/catch） |
 
+> **v3 归档前置条件**: 累计图谱必须已生成（`Chapter.cumulativeGraphGeneratedAt != null`）。否则后端返回 400 `cumulative-graph-not-generated`，前端 ReviewingPanel 也会预先拦截。
+
 **阶段 3 事务范围**：`commitMemoryWrites` + summary 更新 + `commitPlotArcWrites` + `saveGraphSnapshotAndDelta` + `chapter.status = 'archived'` + `pendingArchiveData = null`。**全部成功或全部回滚**。
 
 **阶段 2.5 用户操作**：
@@ -345,13 +347,20 @@ Stage 输入里的 `characterNames` / `characterKeys` / `latestBranchStates` / `
 - archive 端点预检：∀ `stages[*].status === 'success'` 才允许确认归档；否则 400 列出失败 stage 名
 - 失败 stage 用户可在 `ReviewingPanel` 点"重新解析（全部）"重试（v3 端点 v3 不提供 per-stage 重试，按整体 retry；未来可加）
 
-### Graph 两段式
+### Graph 两段式（v3 重新定义）
 
-- `Chapter.chapterGraph` = `graph-extract-stage` 的本章产出（gacha，单次 AI 抽取）
-- `Chapter.cumulativeGraph` = `buildCumulativeGraph` 产出（archive 端点在事务前调，AI 调用不能在事务里）
-  - 空 chapterGraph → 继承 prev（不调 AI）
-  - 首章 / prev=null → chapterGraph 自身（不调 AI）
-  - 正常 → 2-hop BFS over prev 找与 chapterGraph 共享 `type:key` 的邻域 → AI dedup（小范围子图）→ code merge 进 prev
+- `Chapter.chapterGraph` = `graph-extract-stage` 的本章产出（gacha，单次 AI 抽取；v3 起由用户主动编辑）
+- `Chapter.cumulativeGraph` (v3 重新定义) = **用户在 ReviewingPanel 主动生成 + 编辑的工作产物**,不再是 archive 时由后端 `buildCumulativeGraph` 派生的字段
+  - 首次生成：用户在 ReviewingPanel 点"生成累计图谱" → 后端调 AI dedup → 同时写入 `cumulativeGraph` JSON + `cumulativeGraphGeneratedAt` 时间戳
+  - 后续编辑：用户在累计图谱区块继续编辑 → 点"保存调整" → 仅写 graph JSON,不动 `cumulativeGraphGeneratedAt`
+  - 累计图谱的算法语义(merge 本章 + prev + AI dedup)与原 `buildCumulativeGraph` 等价
+  - v3 起不再走 archive 阶段的 AI 重建路径
+
+### 累计图谱归档前置条件（v3 新增）
+
+- 归档端点 `POST /api/chapters/:id/archive` 在 `Chapter.cumulativeGraphGeneratedAt == null || cumulativeGraph == null` 时返回 400 `cumulative-graph-not-generated`
+- 前端 `ReviewingPanel.handleConfirm` 在 `cumulativeGeneratedAt` 为空时拦截 emit,弹 toast 提示用户去生成
+- 数据流: 用户在 reviewing 阶段必须先点过"生成累计图谱"才能走"确认归档"
 
 ### 锁移除
 
