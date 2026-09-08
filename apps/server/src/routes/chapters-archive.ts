@@ -8,6 +8,7 @@ import { runPlotArcStage } from '../services/stages/plot-arc-stage.js'
 import { runGraphExtractStage } from '../services/stages/graph-extract-stage.js'
 import { buildCumulativeGraph } from '../services/cumulative-graph.js'
 import type { GraphSnapshot } from '../services/graph-snapshot.js'
+import { buildAndSaveCumulativeGraph, type BuildAndSaveResult } from '../services/stages/cumulative-graph-build-service.js'
 
 /**
  * v3 archive 端点 — 3 端点:
@@ -375,6 +376,71 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       : null
 
     return { success: true, data: { generatedAt, graph } }
+  })
+
+  // POST /api/chapters/:chapterId/cumulative-graph/build
+  // 入参: { chapterGraph: GraphSnapshot }
+  // 调 buildAndSaveCumulativeGraph, 写 Chapter.cumulativeGraph + cumulativeGraphGeneratedAt。
+  // 章节图谱的来源由前端 body 携带, 后端不回查 pendingArchiveData。
+  app.post('/api/chapters/:chapterId/cumulative-graph/build', async (request, reply) => {
+    const { chapterId } = request.params as any
+    const body = request.body as { chapterGraph?: GraphSnapshot } | undefined
+    if (!body?.chapterGraph || !Array.isArray(body.chapterGraph.nodes) || !Array.isArray(body.chapterGraph.edges)) {
+      return reply.status(400).send({ success: false, error: '缺少 chapterGraph 字段' })
+    }
+
+    const prisma = app.prisma
+    const chapter = await getOrThrowChapter(prisma, chapterId, reply)
+    if (chapter === null) return
+
+    if (chapter.status !== 'draft' && chapter.status !== 'reviewing') {
+      return reply.status(400).send({
+        success: false,
+        error: `章节当前状态为 ${chapter.status},不允许生成累计图谱`,
+      })
+    }
+
+    // 查 prev cumulativeGraph (parent 优先, 主线回退)
+    let prevCumulative: GraphSnapshot | null = null
+    if (chapter.parentChapterId) {
+      const parent = await prisma.chapter.findUnique({
+        where: { id: chapter.parentChapterId },
+        select: { cumulativeGraph: true },
+      })
+      if (parent?.cumulativeGraph) prevCumulative = safeJsonParse<GraphSnapshot | null>(parent.cumulativeGraph, null)
+    }
+    if (!prevCumulative) {
+      const prev = await prisma.chapter.findFirst({
+        where: {
+          storyId: chapter.storyId, parentChapterId: null,
+          number: chapter.number - 1, id: { not: chapterId },
+        },
+        select: { cumulativeGraph: true },
+      })
+      if (prev?.cumulativeGraph) prevCumulative = safeJsonParse<GraphSnapshot | null>(prev.cumulativeGraph, null)
+    }
+
+    let result: BuildAndSaveResult
+    try {
+      result = await buildAndSaveCumulativeGraph(app, {
+        storyId: chapter.storyId, chapterId, chapterNumber: chapter.number,
+        chapterGraph: body.chapterGraph,
+        prevCumulativeGraph: prevCumulative,
+      })
+    } catch (err: any) {
+      app.log.error(`[CumulativeGraphBuild] ${err.message}`)
+      return reply.status(500).send({ success: false, error: `累计图谱生成失败: ${err.message}` })
+    }
+
+    await prisma.chapter.update({
+      where: { id: chapterId },
+      data: {
+        cumulativeGraph: JSON.stringify(result.graph),
+        cumulativeGraphGeneratedAt: new Date(result.generatedAt),
+      },
+    })
+
+    return { success: true, data: { graph: result.graph, generatedAt: result.generatedAt, aiCalled: result.aiCalled } }
   })
 
   app.post('/api/chapters/:chapterId/archive', async (request, reply) => {

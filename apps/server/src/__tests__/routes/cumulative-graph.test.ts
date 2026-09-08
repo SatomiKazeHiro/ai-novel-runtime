@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createMockApp, callHandler } from '../setup.js'
+import { createMockApp, callHandler, createMockPrisma } from '../setup.js'
+
+vi.mock('../../services/stages/cumulative-graph-build-service.js', () => ({
+  buildAndSaveCumulativeGraph: vi.fn()
+}))
+
+import { buildAndSaveCumulativeGraph } from '../../services/stages/cumulative-graph-build-service.js'
 
 describe('GET /api/chapters/:chapterId/cumulative-graph', () => {
   let mockPrisma: any
@@ -55,5 +61,54 @@ describe('GET /api/chapters/:chapterId/cumulative-graph', () => {
     expect(res.body.success).toBe(true)
     expect(res.body.data.generatedAt).toBe(isoNow)
     expect(res.body.data.graph).toEqual(storedGraph)
+  })
+})
+
+describe('POST /api/chapters/:chapterId/cumulative-graph/build', () => {
+  let mockPrisma: ReturnType<typeof createMockPrisma>
+  let app: any
+  let routes: Record<string, any>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockPrisma = createMockPrisma()
+    const built = createMockApp(mockPrisma)
+    app = built.app
+    routes = built.routes
+    const { chapterArchiveRoutes } = await import('../../routes/chapters-archive.js')
+    await chapterArchiveRoutes(app)
+  })
+
+  it('writes both cumulativeGraph and cumulativeGraphGeneratedAt on success', async () => {
+    const generatedGraph = {
+      nodes: [{ type: 'character', key: 'a', label: 'A', data: {} }],
+      edges: [],
+      timestamp: '2026-07-27T10:00:00.000Z',
+    }
+    ;(buildAndSaveCumulativeGraph as any).mockResolvedValueOnce({
+      graph: generatedGraph,
+      generatedAt: '2026-07-27T10:00:00.000Z',
+      aiCalled: true,
+    })
+    mockPrisma.chapter.findUnique.mockResolvedValueOnce({
+      id: 'ch-1', storyId: 's1', number: 1, status: 'reviewing',
+      cumulativeGraph: null, cumulativeGraphGeneratedAt: null,
+      parentChapterId: null, isSideStory: false, content: 'x',
+    })
+    mockPrisma.chapter.findFirst.mockResolvedValueOnce(null)
+    mockPrisma.chapter.update.mockResolvedValueOnce({})
+    const res = await callHandler(
+      routes,
+      'POST',
+      '/api/chapters/:chapterId/cumulative-graph/build',
+      { chapterGraph: { nodes: [{ type: 'character', key: 'a' }], edges: [] } },
+      { chapterId: 'ch-1' },
+    )
+    expect(mockPrisma.chapter.update).toHaveBeenCalledTimes(1)
+    const updateArgs = mockPrisma.chapter.update.mock.calls[0][0]
+    expect(updateArgs.data.cumulativeGraph).toBe(JSON.stringify(generatedGraph))
+    expect(updateArgs.data.cumulativeGraphGeneratedAt).toBeInstanceOf(Date)
+    expect(res.body.success).toBe(true)
+    expect(res.body.data.aiCalled).toBe(true)
   })
 })
