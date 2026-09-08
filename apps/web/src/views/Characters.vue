@@ -154,17 +154,17 @@ const columns: DataTableColumns<CharacterDisplayRow> = [
   { title: '性格', key: 'personality', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.personality) },
   { title: '说话风格', key: 'speechStyle', ellipsis: { tooltip: true }, width: 120, render: (row) => formatTags(row.speechStyle) },
   {
-    title: () => h('span', null, ['关系', h(NTag, { size: 'tiny', type: 'info', style: 'margin-left: 4px' }, { default: '快照' })]),
+    title: () => h('span', null, ['关系', h(NTag, { size: 'tiny', type: 'info', style: 'margin-left: 4px' }, { default: () => '快照' })]),
     key: 'relationships', width: 180,
     render: (row) => renderJsonField(row.relationships)
   },
   {
-    title: () => h('span', null, ['状态', h(NTag, { size: 'tiny', type: 'info', style: 'margin-left: 4px' }, { default: '快照' })]),
+    title: () => h('span', null, ['状态', h(NTag, { size: 'tiny', type: 'info', style: 'margin-left: 4px' }, { default: () => '快照' })]),
     key: 'status', width: 180,
     render: (row) => renderJsonField(row.status)
   },
   {
-    title: () => h('span', null, ['衣着', h(NTag, { size: 'tiny', type: 'info', style: 'margin-left: 4px' }, { default: '快照' })]),
+    title: () => h('span', null, ['衣着', h(NTag, { size: 'tiny', type: 'info', style: 'margin-left: 4px' }, { default: () => '快照' })]),
     key: 'costume', width: 160,
     render: (row) => renderField(row.costume)
   },
