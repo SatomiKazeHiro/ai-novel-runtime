@@ -72,8 +72,8 @@ model Chapter {
   compiledPrompt    String?  // JSON: { systemMessage, userMessage, meta }
 
   // 图谱相关
-  graphDelta        String?  // JSON: 相对于上一章的图谱变化
-  graphSnapshot     String?  // JSON: 到当前章节的完整图谱快照
+  chapterGraph     String?  // JSON: 本章图谱（gacha 抽取，与累计全局图谱分离）
+  cumulativeGraph  String?  // JSON: 累计到本章的全局图谱（经 N-1 去重）
 
   // 归档审查：AI 预提取后、用户确认前的中间数据
   pendingArchiveData String?
@@ -173,6 +173,9 @@ model Memory {
 }
 
 // 知识图谱节点
+/// @deprecated v3 不再写入新数据;数据落 Chapter.chapterGraph/cumulativeGraph。
+/// 保留仅供 GraphView.vue 旧实现暂用。重写完成后删除本 model。
+/// 见 docs/ISSUES.md [P2 follow-up]。
 model GraphNode {
   id              String   @id @default(uuid())
   storyId         String
@@ -190,6 +193,7 @@ model GraphNode {
 }
 
 // 知识图谱边
+/// @deprecated 同 GraphNode。
 model GraphEdge {
   id              String   @id @default(uuid())
   storyId         String
