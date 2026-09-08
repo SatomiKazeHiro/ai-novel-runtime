@@ -304,6 +304,14 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     })
     if (!draft) return reply.status(404).send({ success: false, error: 'Draft not found' })
 
+    // 只能采用已生成完成且内容非空的候选：误选空文会导致候选集全灭 + 正文不变
+    if (draft.status !== 'completed' || !draft.content) {
+      return reply.status(400).send({
+        success: false,
+        error: '只能选择已生成完成的候选'
+      })
+    }
+
     await prisma.$transaction(async (tx) => {
       await tx.draft.updateMany({ where: { chapterId }, data: { status: 'rejected' } })
       // 2026-07-24: 不再 set Draft.status='selected' —— chapter.content 才是"哪个候选被采用"的唯一真相源。

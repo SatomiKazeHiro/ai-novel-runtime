@@ -255,7 +255,7 @@ describe('POST /chapters/:chapterId/select — SelectDraftRequestSchema', () => 
       },
       draft: {
         ...createMockPrisma().draft,
-        findUnique: vi.fn().mockResolvedValue({ id: 'd1', chapterId: 'c1', content: 'c' }),
+        findUnique: vi.fn().mockResolvedValue({ id: 'd1', chapterId: 'c1', content: 'c', status: 'completed' }),
         updateMany: vi.fn().mockResolvedValue({ count: 1 })
       },
       $transaction: vi.fn(async (fn: any) => fn(mockPrisma))

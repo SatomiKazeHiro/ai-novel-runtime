@@ -145,7 +145,7 @@ describe('select route — v2 orthogonal to chapter status (3-value enum)', () =
       id: 'c1', status: 'draft', content: 'old'
     })
     mockPrisma.draft.findUnique.mockResolvedValue({
-      id: 'd_new', chapterId: 'c1', content: 'new content'
+      id: 'd_new', chapterId: 'c1', content: 'new content', status: 'completed'
     })
     mockPrisma.draft.updateMany.mockResolvedValue({ count: 1 })
     mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'draft' })
@@ -164,7 +164,7 @@ describe('select route — v2 orthogonal to chapter status (3-value enum)', () =
       id: 'c1', status: 'reviewing', content: 'old'
     })
     mockPrisma.draft.findUnique.mockResolvedValue({
-      id: 'd_new', chapterId: 'c1', content: 'new content'
+      id: 'd_new', chapterId: 'c1', content: 'new content', status: 'completed'
     })
     mockPrisma.draft.updateMany.mockResolvedValue({ count: 1 })
     mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'reviewing' })
@@ -197,7 +197,7 @@ describe('select route — v2 orthogonal to chapter status (3-value enum)', () =
       id: 'c1', status: 'draft', content: 'old'
     })
     mockPrisma.draft.findUnique.mockResolvedValue({
-      id: 'd_new', chapterId: 'c1', content: 'new content'
+      id: 'd_new', chapterId: 'c1', content: 'new content', status: 'completed'
     })
     mockPrisma.draft.updateMany.mockResolvedValue({ count: 1 })
     mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'draft' })

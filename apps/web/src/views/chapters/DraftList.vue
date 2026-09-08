@@ -97,7 +97,7 @@
                             size="small"
                             type="primary"
                             @click="emit('adopt-draft', draft)"
-                            :disabled="draft.status === 'generating' || !draft.content"
+                            :disabled="draft.status !== 'completed' || !draft.content"
                         >采用此版本</n-button>
                         <n-button
                             size="small"

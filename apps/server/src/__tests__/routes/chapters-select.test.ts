@@ -65,7 +65,7 @@ describe('chapters select route — chapterId isolation', () => {
       id: 'chapterA', status: 'draft'
     })
     mockPrisma.draft.findUnique.mockResolvedValue({
-      id: 'draft_1', chapterId: 'chapterA', content: 'hello'
+      id: 'draft_1', chapterId: 'chapterA', content: 'hello', status: 'completed'
     })
     mockPrisma.draft.updateMany.mockResolvedValue({ count: 2 })
     mockPrisma.chapter.update.mockResolvedValue({ id: 'chapterA', status: 'draft' })
