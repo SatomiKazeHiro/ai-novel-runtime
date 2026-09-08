@@ -63,6 +63,7 @@ export interface CytoscapeLifecycle {
   addNode(node: GraphNode, position?: { x: number; y: number }): void
   addEdge(edge: GraphEdge): void
   updateNode(id: string, fields: { type: string; key: string; label: string }): void
+  updateEdge(id: string, relation: string): void
   removeNode(id: string): void
   removeEdge(id: string): void
   /**
@@ -432,6 +433,21 @@ export function useCytoscapeLifecycle(
     node.data({ label: fields.label, type: fields.type, key: fields.key })
   }
 
+  function updateEdge(id: string, relation: string) {
+    if (!cy) return
+    const edge = cy.$id(id)
+    if (edge.length === 0) return
+    const sourceId = edge.data('source')
+    const targetId = edge.data('target')
+    // 关系的 cytoscape id 是 source-relation-target, 改 relation 时连 id 一起重命名,
+    // 保持 draftGraphData 里的 edge id 计算与 cytoscape 实例 id 一致。
+    const newId = `${sourceId}-${relation}-${targetId}`
+    if (newId !== id) {
+      edge.data('id', newId)
+    }
+    edge.data('label', relation)
+  }
+
   function removeNode(id: string) {
     if (!cy) return
     const node = cy.$id(id)
@@ -475,5 +491,5 @@ export function useCytoscapeLifecycle(
     destroy()
   })
 
-  return { init, destroy, resetLayout, getInstance, addNode, addEdge, updateNode, removeNode, removeEdge, applyFocus, clearFocus }
+  return { init, destroy, resetLayout, getInstance, addNode, addEdge, updateNode, updateEdge, removeNode, removeEdge, applyFocus, clearFocus }
 }

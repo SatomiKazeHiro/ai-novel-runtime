@@ -16,6 +16,13 @@
         编辑节点
       </button>
       <button
+        class="cap-pill is-sm"
+        :disabled="!selectedEdge"
+        @click="openEditEdge"
+      >
+        编辑关系
+      </button>
+      <button
         class="cap-pill is-sm is-primary"
         @click="showNodeModal = true"
       >
@@ -97,6 +104,27 @@
         </n-space>
       </template>
     </n-modal>
+
+    <!-- 编辑关系弹窗 -->
+    <n-modal v-model:show="showEditEdgeModal" title="编辑关系" preset="card" style="width: 500px">
+      <n-form :model="editEdgeForm" label-placement="left" label-width="80">
+        <n-form-item label="源节点">
+          <n-input :value="editEdgeForm.sourceLabel" disabled />
+        </n-form-item>
+        <n-form-item label="目标节点">
+          <n-input :value="editEdgeForm.targetLabel" disabled />
+        </n-form-item>
+        <n-form-item label="关系" required>
+          <n-input v-model:value="editEdgeForm.relation" placeholder="如：隶属、对抗、师徒、配偶" />
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showEditEdgeModal = false">取消</n-button>
+          <n-button type="primary" @click="handleUpdateEdge">保存</n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -126,12 +154,14 @@ const cyContainer = ref<HTMLDivElement>()
 const showNodeModal = ref(false)
 const showEdgeModal = ref(false)
 const showEditNodeModal = ref(false)
+const showEditEdgeModal = ref(false)
 const selectedNode = ref<{ id: string; label: string; key: string; type: string } | null>(null)
 const selectedEdge = ref<{ id: string; source: string; target: string; relation: string } | null>(null)
 
 const nodeForm = ref({ type: 'character', key: '', label: '' })
 const edgeForm = ref({ targetId: '', relation: '' })
 const editNodeForm = ref({ id: '', type: 'character', key: '', label: '' })
+const editEdgeForm = ref({ sourceLabel: '', targetLabel: '', relation: '' })
 
 const nodeTypeOptions = [
   { label: '角色', value: 'character' },
@@ -252,6 +282,22 @@ function openEditNode() {
   showEditNodeModal.value = true
 }
 
+function openEditEdge() {
+  if (!selectedEdge.value) return
+  const src = draftGraphData.value?.nodes.find((n: any) =>
+    `${n.type}:${n.key}` === selectedEdge.value!.source
+  )
+  const tgt = draftGraphData.value?.nodes.find((n: any) =>
+    `${n.type}:${n.key}` === selectedEdge.value!.target
+  )
+  editEdgeForm.value = {
+    sourceLabel: src?.label || selectedEdge.value!.source,
+    targetLabel: tgt?.label || selectedEdge.value!.target,
+    relation: selectedEdge.value!.relation
+  }
+  showEditEdgeModal.value = true
+}
+
 async function handleUpdateNode() {
   if (!draftGraphData.value) return
   const oldId = editNodeForm.value.id
@@ -294,6 +340,26 @@ async function handleUpdateNode() {
     key: editNodeForm.value.key,
     label: editNodeForm.value.label
   })
+}
+
+async function handleUpdateEdge() {
+  if (!selectedEdge.value || !draftGraphData.value) return
+  const oldId = selectedEdge.value.id
+  const newRelation = editEdgeForm.value.relation.trim()
+  if (!newRelation) return
+
+  draftGraphData.value = {
+    ...draftGraphData.value,
+    edges: draftGraphData.value.edges.map((e: any) => {
+      if (`${e.source}-${e.relation}-${e.target}` !== oldId) return e
+      return { ...e, relation: newRelation }
+    })
+  }
+
+  showEditEdgeModal.value = false
+  selectedEdge.value = null
+  editEdgeForm.value = { sourceLabel: '', targetLabel: '', relation: '' }
+  cytoscape.updateEdge(oldId, newRelation)
 }
 
 async function handleDelete() {
