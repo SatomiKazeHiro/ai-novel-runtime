@@ -6,6 +6,7 @@ import {
   DevelopRequestSchema
 } from '@novel-runtime/shared'
 import { parseBody, getOrThrowChapter, getLastChapter } from './_helpers.js'
+import { derivePlotArcStatus } from '../services/plot-arc-status.js'
 
 /**
  * CRUD 流:list / one / create / update / delete / develop(side story)。
@@ -188,7 +189,32 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
         const { count: bsCount } = await prisma.characterBranchState.deleteMany({
           where: { fromChapterNumber: chapter.number }
         })
-        app.log.info(`[Delete] Cascade cleanup for chapter ${chapter.number}: memory=${memCount}, timeline=${teCount}, branchState=${bsCount}`)
+        // 剧情弧线级联：firstChapterNumber 相等 → 整条删（级联推进点）；否则删该章的推进点
+        const { count: arcCount } = await prisma.plotArc.deleteMany({
+          where: { storyId: chapter.storyId, firstChapterNumber: chapter.number }
+        })
+        await prisma.plotArcProgressPoint.deleteMany({
+          where: { arc: { storyId: chapter.storyId }, chapterNumber: chapter.number }
+        })
+        // 重推导受影响弧线的状态（删了 isEnd 推进点 → 完成回退为激活/待激活）
+        const affectedArcs = await prisma.plotArc.findMany({
+          where: { storyId: chapter.storyId },
+          include: { progressPoints: { orderBy: { chapterNumber: 'desc' } } }
+        })
+        for (const arc of affectedArcs) {
+          if (arc.closedBy) continue
+          const latest = arc.progressPoints[0]
+          const status = derivePlotArcStatus({
+            closedBy: arc.closedBy,
+            latestPoint: latest ? { chapterNumber: latest.chapterNumber, isEnd: latest.isEnd } : null,
+            firstChapterNumber: arc.firstChapterNumber,
+            currentChapter: chapter.number
+          })
+          if (status !== arc.status) {
+            await prisma.plotArc.update({ where: { id: arc.id }, data: { status } })
+          }
+        }
+        app.log.info(`[Delete] Cascade cleanup for chapter ${chapter.number}: memory=${memCount}, timeline=${teCount}, branchState=${bsCount}, plotArc=${arcCount}`)
       } catch (err: any) {
         app.log.error(`[Delete] Cascade cleanup failed: ${err.message}`)
       }
