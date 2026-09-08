@@ -74,7 +74,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
-import { graphApi } from '../../api/graph'
+import { cumulativeGraphApi } from '../../api/cumulative-graph'
 import { chaptersApi } from '../../api/chapters'
 import {
   useCytoscapeLifecycle,
@@ -229,11 +229,13 @@ async function selectChapter(chapterId: string) {
 }
 
 async function loadChapterGraph(chapterId: string) {
-  const res = await graphApi.getSnapshot(chapterId)
+  const res = await cumulativeGraphApi.get(chapterId)
   const data = res.data.data
 
-  currentSnapshot.value = toGraphData(data.snapshot?.nodes, data.snapshot?.edges)
-  currentDelta.value = toGraphData(data.delta?.nodes, data.delta?.edges)
+  // v3 接口: { graph: { nodes, edges, timestamp }, chapterGraph?: {...} }
+  // graph = 累计图 (snapshot 视图), chapterGraph = 本章纯净 (delta 视图)
+  currentSnapshot.value = toGraphData(data.graph?.nodes, data.graph?.edges)
+  currentDelta.value = toGraphData(data.chapterGraph?.nodes, data.chapterGraph?.edges)
 
   await loadPrevSnapshot(chapterId)
 
@@ -254,8 +256,8 @@ async function loadPrevSnapshot(currentChapterId: string) {
     return
   }
   try {
-    const res = await graphApi.getSnapshot(prevChapter.id)
-    prevSnapshot.value = res.data.data.snapshot
+    const res = await cumulativeGraphApi.get(prevChapter.id)
+    prevSnapshot.value = res.data.data.graph
   } catch {
     prevSnapshot.value = null
   }
