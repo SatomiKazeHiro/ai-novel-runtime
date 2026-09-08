@@ -44,16 +44,18 @@ export function createGenerateProcessor(app: FastifyInstance) {
       // 所以 worker 不能用 `status !== 'pending'` 来过滤, 否则永远跳过自己刚派出去的任务。
       // 应当处理 pending + generating, 跳过其他三种 (用户决定 + 已完成)。
       const SKIP_STATUSES = ['rejected', 'completed', 'failed']
-      const current = await prisma.draft.findUnique({
-        where: { id: draftId },
-        select: { status: true }
-      })
-      if (!current || SKIP_STATUSES.includes(current.status)) {
-        app.log.info(`[Generate] Skipping draft ${draftId} (status=${current?.status ?? 'missing'}, user-decided or terminal)`)
-        continue
-      }
-
+      // 查状态也放进 try：单张卡的任何失败（查状态/调 AI/写库）只影响它自己，
+      // 不崩整个 job 连累同批剩余的 draft。
       try {
+        const current = await prisma.draft.findUnique({
+          where: { id: draftId },
+          select: { status: true }
+        })
+        if (!current || SKIP_STATUSES.includes(current.status)) {
+          app.log.info(`[Generate] Skipping draft ${draftId} (status=${current?.status ?? 'missing'}, user-decided or terminal)`)
+          continue
+        }
+
         app.log.info(`[Generate] Calling AI for draft ${draftId}, temp=${temperature}`)
         const result = await callAIWithLog(app, {
           storyId,
@@ -85,13 +87,18 @@ export function createGenerateProcessor(app: FastifyInstance) {
         app.log.info(`[Generate] Draft ${draftId} completed, ${content.length} chars`)
       } catch (err: any) {
         app.log.error(`[Generate] Draft ${draftId} failed: ${err.message}`)
-        await prisma.draft.update({
-          where: { id: draftId },
-          data: {
-            status: 'failed',
-            errorMessage: err.message
-          }
-        })
+        // 标 failed 也失败（DB 仍故障）时不崩整个 job
+        try {
+          await prisma.draft.update({
+            where: { id: draftId },
+            data: {
+              status: 'failed',
+              errorMessage: err.message
+            }
+          })
+        } catch (markErr: any) {
+          app.log.error(`[Generate] Failed to mark draft ${draftId} as failed: ${markErr.message}`)
+        }
         failCount++
       }
     }
