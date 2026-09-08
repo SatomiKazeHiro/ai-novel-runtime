@@ -3,10 +3,10 @@ import { randomBytes } from 'crypto'
 import { PrepareArchiveRequestSchema, safeJsonParse } from '@novel-runtime/shared'
 import type { PendingArchiveDataV3, PendingArchiveDataV4, PendingStageState, RetryStageName } from '@novel-runtime/shared'
 import { parseBody, getOrThrowChapter } from './_helpers.js'
-import { runCharacterStage } from '../services/stages/character-stage.js'
-import { runMemoryStage } from '../services/stages/memory-stage.js'
-import { runPlotArcStage } from '../services/stages/plot-arc-stage.js'
-import { runGraphExtractStage } from '../services/stages/graph-extract-stage.js'
+import { runCharacterStage, type CharacterStageResult } from '../services/stages/character-stage.js'
+import { runMemoryStage, type MemoryStageResult } from '../services/stages/memory-stage.js'
+import { runPlotArcStage, type PlotArcStageResult } from '../services/stages/plot-arc-stage.js'
+import { runGraphExtractStage, type GraphExtractStageResult } from '../services/stages/graph-extract-stage.js'
 import { commitPlotArcWrites } from '../services/plot-extractor.js'
 import { commitCharacterBranchStateWrites } from '../services/character-extractor.js'
 import { optimizeMemories, type OptimizedMemory } from '../services/memory-optimizer.js'
@@ -638,15 +638,17 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
         error: '归档失败：没有找到预归档数据，请先调用 prepare-archive'
       })
     }
-    const pending = safeJsonParse<PendingArchiveDataV3 | null>(pendingRaw, null)
-    if (!pending || pending.version !== 3) {
+    // v4 校验:必须是 PendingArchiveDataV4(v3 直接 400 提示重新准备)
+    const pending = safeJsonParse<PendingArchiveDataV4 | null>(pendingRaw, null)
+    if (!pending || pending.version !== 4) {
       return reply.status(400).send({
         success: false,
         error: '归档失败：pendingArchiveData 版本不匹配，请重新准备归档'
       })
     }
+    // v4 严格校验 5 stage 全 success:character / memoryExtract / memoryOptimize / plotArc / graph
     const failedStages = Object.entries(pending.stages)
-      .filter(([_, s]) => (s as any).status !== 'success')
+      .filter(([_, s]) => s.status !== 'success')
       .map(([name]) => name)
     if (failedStages.length > 0) {
       return reply.status(400).send({
@@ -665,28 +667,35 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
 
     // 拷 pendingArchiveData 数据到 Chapter 三列(chapterGraph / cumulativeGraph / cumulativeGraphGeneratedAt),
     // 清 pendingArchiveData。 Chapter 三列只在 archived 之后才有数据, 知识图谱页面只查 archived 章节, 读这三列。
-    const chapterGraph = (pending.stages.graph as any)?.result?.chapterGraph
-      ? JSON.stringify((pending.stages.graph as any).result.chapterGraph)
+    const graphStageResult = (pending.stages.graph.result ?? {}) as GraphExtractStageResult
+    const chapterGraph = graphStageResult.chapterGraph
+      ? JSON.stringify(graphStageResult.chapterGraph)
       : null
 
-    // 收集 memory-stage raw + optimizer 融合结果(都来自 memory stage)
-    // raw 来自 result 的 mainEvents / sideEvents / emotions / foreshadowing / relationshipChanges / scenes / summary
-    // 融合结果: prepare-archive 把 optimizer 输出写到 result.memories[]; 失败或缺省时为空数组(此时不写 global 层)
-    const memResult: any = (pending.stages.memory as any)?.result
-    const mainEvents: any[] = Array.isArray(memResult?.mainEvents) ? memResult.mainEvents : []
-    const sideEvents: any[] = Array.isArray(memResult?.sideEvents) ? memResult.sideEvents : []
-    const emotions: string[] = Array.isArray(memResult?.emotions) ? memResult.emotions : []
-    const foreshadowing: string[] = Array.isArray(memResult?.foreshadowing) ? memResult.foreshadowing : []
-    const relationshipChanges: string[] = Array.isArray(memResult?.relationshipChanges) ? memResult.relationshipChanges : []
-    const scenes: any[] = Array.isArray(memResult?.scenes) ? memResult.scenes : []
-    const summary: string = typeof memResult?.summary === 'string' ? memResult.summary : ''
-    const optimized: OptimizedMemory[] = Array.isArray(memResult?.memories) ? memResult.memories : []
+    // v4 数据来源拆分:
+    //   - raw (mainEvents / sideEvents / emotions / foreshadowing / relationshipChanges / scenes / summary)
+    //     来自 memoryExtract.result(原 v3 memory stage 去 optimizer 部分)
+    //   - 优化融合 (global layer) 来自 memoryOptimize.result.memories[]
+    //     校验已保证两 stage 都 success,所以 default [] 只为类型安全兜底
+    const toArray = <T,>(x: unknown): T[] => Array.isArray(x) ? (x as T[]) : []
+    const extractResult = (pending.stages.memoryExtract.result ?? {}) as MemoryStageResult
+    const optimizeResult = (pending.stages.memoryOptimize.result ?? {}) as { memories?: unknown }
+    const mainEvents = toArray<MemoryStageResult['mainEvents'][number]>(extractResult.mainEvents)
+    const sideEvents = toArray<MemoryStageResult['sideEvents'][number]>(extractResult.sideEvents)
+    const emotions = toArray<string>(extractResult.emotions)
+    const foreshadowing = toArray<string>(extractResult.foreshadowing)
+    const relationshipChanges = toArray<string>(extractResult.relationshipChanges)
+    const scenes = toArray<MemoryStageResult['scenes'][number]>(extractResult.scenes)
+    const summary: string = typeof extractResult.summary === 'string' ? extractResult.summary : ''
+    const optimized = toArray<OptimizedMemory>(optimizeResult.memories)
 
     // plot-consolidator 输出 (PendingPlotArcWrite[]) — archive confirm 时落 PlotArc 表
-    const plotArcs: any[] = (pending.stages.plotArc as any)?.result?.plotArcs ?? []
+    const plotArcResult = (pending.stages.plotArc.result ?? {}) as PlotArcStageResult
+    const plotArcs = plotArcResult.plotArcs ?? []
 
     // character-stage 输出 (CharacterStateRow[]) — archive confirm 时落 CharacterBranchState 表
-    const characterStates: any[] = (pending.stages.character as any)?.result?.characterStates ?? []
+    const characterStageResult = (pending.stages.character.result ?? {}) as CharacterStageResult
+    const characterStates = characterStageResult.characterStates ?? []
 
     // 把 'NEW' UID 替换成本章生成的实际 UID
     const newUidHex = (): string => randomBytes(2).toString('hex').toUpperCase()
@@ -779,6 +788,10 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
         }
       })
     })
+    app.log.info(
+      { chapterId, storyId: chapter.storyId, chapterRows: chapterRows.length, sceneRows: sceneRows.length, globalRows: globalRows.length },
+      '[Archive] confirm success'
+    )
 
     return {
       success: true,
