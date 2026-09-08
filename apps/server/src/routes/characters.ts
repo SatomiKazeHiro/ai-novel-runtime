@@ -76,18 +76,22 @@ export async function characterRoutes(app: FastifyInstance) {
     }
     return { success: true, data: { updated: result.count } }
   })
-  // GET /api/stories/:id/characters
+  // GET /api/stories/:storyId/characters
   app.get('/api/stories/:storyId/characters', async (request, reply) => {
     const { storyId } = request.params as any
+    // ?include=branchStates 可选：需要「最新快照」的调用方显式传，默认不查（避免白查未消费的数据）
+    const includeBranchStates = (request.query as any).include === 'branchStates'
     const characters = await app.prisma.character.findMany({
       where: { storyId },
-      include: { branchStates: { orderBy: { fromChapterNumber: 'desc' } } },
+      ...(includeBranchStates
+        ? { include: { branchStates: { orderBy: { fromChapterNumber: 'desc' } } } }
+        : {}),
       orderBy: { createdAt: 'asc' }
     })
     return { success: true, data: characters }
   })
 
-  // POST /api/stories/:id/characters
+  // POST /api/stories/:storyId/characters
   app.post('/api/stories/:storyId/characters', async (request, reply) => {
     const { storyId } = request.params as any
     const body = request.body as any

@@ -48,7 +48,10 @@ export interface CharacterDisplayRow {
 }
 
 export const charactersApi = {
-  list: (storyId: string) => api.get(`/api/stories/${storyId}/characters`),
+  list: (storyId: string, includeBranchStates = false) =>
+    api.get(`/api/stories/${storyId}/characters`, {
+      params: includeBranchStates ? { include: 'branchStates' } : undefined
+    }),
   create: (storyId: string, data: CharacterCreate) => api.post(`/api/stories/${storyId}/characters`, data),
   update: (charId: string, data: CharacterUpdate) => api.put(`/api/characters/${charId}`, data),
   remove: (charId: string) => api.delete(`/api/characters/${charId}`),

@@ -74,7 +74,9 @@ export function formatCharacterSnapshot(characters: any[]): string {
     const temperament = safeJsonParse<string[]>(c.temperament, [])
 
     const statusStr = Object.entries(status).map(([k, v]) => `${k}:${v}`).join(', ')
-    const relStr = Object.entries(rels).slice(0, 2).map(([k, v]) => `${k}-${v}`).join(', ')
+    // TODO(统一预算): 关系全量注入，token 上限统一由 PromptPipeline 的 character 层预算调度，
+    // 不在各环节硬编码条数（此处原为 slice(0,2)，已砍）。等实际撑爆预算再在对应层优化。
+    const relStr = Object.entries(rels).map(([k, v]) => `${k}-${v}`).join(', ')
 
     const parts = [`【${c.name}】`]
     if (identity.length) parts.push(`身份[${identity.join(', ')}]`)
