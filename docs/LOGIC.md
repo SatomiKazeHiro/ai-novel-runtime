@@ -82,7 +82,6 @@ v4 拆 `memoryExtract` + `memoryOptimize` 为 2 独立 stage, 任一失败可独
 | `/api/chapters/:id/drafts` + `/api/drafts/:id` | `routes/drafts.ts` | 草稿 CRUD（generate 路由内会自己创建 draft） |
 | `/api/stories/:id/graph` + `/api/chapters/:id/graph-snapshot` | `routes/graph.ts` | 知识图谱查询 + 手动增删节点/边 |
 | `/api/stories/:id/memory` | `routes/memories.ts` | 记忆查询 + 创建 |
-| `/api/drafts/:id/score` + `/api/stories/:id/scores` | `routes/scores.ts` | 7 维度 AI 评分 + 规则引擎 fallback |
 | `/api/runtime-profiles` | `routes/runtime-profile.ts` | 写作人格 CRUD |
 | `/api/worker-tasks` | `routes/worker-task.ts` | Worker 任务模板 CRUD |
 | `/api/ai-providers` | `routes/ai-provider.ts` | AI Provider 配置 CRUD + 默认设置 + 连通性测试 |
@@ -351,8 +350,7 @@ AI 调用失败时（`result` 为 null）的降级内容，**是 mock 章节文�
 ## §5 · 脚注
 
 - `chapters.ts` 事务控制中心；旧的 `assertStatusTransition` / `VALID_STATUS_TRANSITIONS` / `preLockStatus` 补丁均已删除 —— 状态机实际靠 `updateMany where status` 原子锁 + Prisma enum 类型兜底
-- **v2**：`scored` / `generating` / `generated` / `selected` / `rejected` 等旧 chapter 态已从 `ChapterStatus` 移除；评分（score）与选择（select）现在是 Draft 层概念，不再有对应的 chapter 状态
-- 评分路由（`scores.ts`）用了"try 多次 parse + 规则 fallback"，比 extractors 健壮
+- **v2**：`scored` / `generating` / `generated` / `selected` / `rejected` 等旧 chapter 态已从 `ChapterStatus` 移除；选择（select）现在是 Draft 层概念，不再有对应的 chapter 状态
 - 删除归档章节时（`chapters-crud.ts`）级联删同 `fromChapterNumber` 的 Memory / TimelineEvent / CharacterBranchState / PlotArc / PromptLog。**v3 不再重建图谱表**：GraphNode/Edge 已 drop（migration `20260729000000_drop_graph_node_edge`），累计图谱以各章 `Chapter.cumulativeGraph` JSON 为准，删章不影响前章快照
 - 4 个 composables 都有"全局 manager"模式（`new MemoryManager()` 等），每次调用 new 一次。功能上无状态，性能上略有浪费
 - `Graph.vue` 是少数用 `as any` 的前端文件（2 处）—— 用于 type any 的 graph 节点数据
