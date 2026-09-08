@@ -2,9 +2,11 @@ import type { CharacterStateRow } from './stages/character-stage.js'
 
 export interface ConflictInfo {
   writeIndex: number
-  reason: 'missing_key' | 'slug_name_mismatch'
+  reason: 'missing_key' | 'slug_name_mismatch' | 'batch_duplicate_key'
   existingCharacter?: { id: string; slug: string; name: string }
   aiWrite?: CharacterStateRow
+  /** 仅 reason='batch_duplicate_key'：指向批内首次出现同 key 的 writeIndex */
+  duplicateOfWriteIndex?: number
 }
 
 export class ConflictError extends Error {
@@ -32,6 +34,9 @@ export async function resolveAndCommitCharacterWrites(
   const safeLog = log ?? { info: () => {}, warn: () => {} }
   const effectiveWrites: CharacterStateRow[] = []
   const conflicts: ConflictInfo[] = []
+  // 批内 key 去重：key 是角色身份标识，重复 key 即「AI 重复输出同一角色」。
+  // 放在所有分支之前（含短路分支），无论该条是否已被 ReviewingPanel 纠正。
+  const seenKeys = new Map<string, number>()
 
   for (let i = 0; i < writes.length; i++) {
     const w = writes[i]
@@ -39,6 +44,16 @@ export async function resolveAndCommitCharacterWrites(
       conflicts.push({ writeIndex: i, reason: 'missing_key', aiWrite: w })
       continue
     }
+    if (seenKeys.has(w.key)) {
+      conflicts.push({
+        writeIndex: i,
+        reason: 'batch_duplicate_key',
+        duplicateOfWriteIndex: seenKeys.get(w.key),
+        aiWrite: w
+      })
+      continue
+    }
+    seenKeys.set(w.key, i)
     // 短路: ReviewingPanel 已纠正(characterId 非空 + isNew=false),信任前端选的 characterId,跳过 slug 校验
     if (w.characterId && !w.isNew) {
       effectiveWrites.push(w)
