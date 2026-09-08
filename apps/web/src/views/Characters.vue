@@ -176,13 +176,39 @@
         <n-form-item label="Base status"><n-input v-model:value="form.statusText" type="textarea" placeholder="e.g. {&quot;rank&quot;: &quot;level 1&quot;}" /></n-form-item>
       </n-form>
         <aside v-if="editingHasSnapshot && editingCharacter" class="character-edit-snapshot">
-          <span class="character-edit-snapshot__hint">章节快照由归档 AI 分析生成，仅供查看，不可编辑。</span>
-          <n-select v-model:value="snapshotChapter" :options="chapterOptions" size="small" placeholder="Select snapshot chapter" />
-          <span class="char-card__label">最新章节快照</span>
-          <div class="character-edit-snapshot__row"><strong>关系</strong><span>{{ formatObject(snapshotCharacter?.relationships?.value) || '未提取' }}</span></div>
-          <div class="character-edit-snapshot__row"><strong>状态</strong><span>{{ formatObject(snapshotCharacter?.status?.value) || '未提取' }}</span></div>
-          <div class="character-edit-snapshot__row"><strong>衣着</strong><span>{{ snapshotCharacter?.costume?.value || '未提取' }}</span></div>
-          <span class="char-card__source is-snapshot">只读·归档快照</span>
+          <div class="character-edit-snapshot__bar">
+            <span class="character-edit-snapshot__hint">章节快照由归档 AI 分析生成；手动修改由你负责。</span>
+            <n-button v-if="!snapshotEditing" size="tiny" @click="startSnapshotEdit">编辑快照</n-button>
+            <n-space v-else size="small">
+              <n-button size="tiny" type="primary" @click="saveSnapshot">保存快照</n-button>
+              <n-button size="tiny" @click="cancelSnapshotEdit">取消编辑</n-button>
+            </n-space>
+          </div>
+          <n-alert v-if="snapshotEditing" type="warning" :show-icon="true">
+            手动修改快照由你负责。该快照将直接作为后续章节生成时的角色参考；删除对应章节时此修改随快照一并删除。
+          </n-alert>
+          <n-select
+            v-model:value="snapshotChapter"
+            :options="chapterOptions"
+            size="small"
+            placeholder="Select snapshot chapter"
+            :disabled="snapshotEditing"
+          />
+          <template v-if="snapshotEditing">
+            <span class="char-card__label">关系（JSON）</span>
+            <n-input v-model:value="snapshotForm.relationshipsText" type="textarea" :rows="4" placeholder='{"林帆": "师徒"}' />
+            <span class="char-card__label">状态（JSON）</span>
+            <n-input v-model:value="snapshotForm.statusText" type="textarea" :rows="4" placeholder='{"realm": "练气"}' />
+            <span class="char-card__label">衣着</span>
+            <n-input v-model:value="snapshotForm.costume" placeholder="留空 = 未描写" />
+          </template>
+          <template v-else>
+            <span class="char-card__label">最新章节快照</span>
+            <div class="character-edit-snapshot__row"><strong>关系</strong><span>{{ formatObject(snapshotCharacter?.relationships?.value) || '未提取' }}</span></div>
+            <div class="character-edit-snapshot__row"><strong>状态</strong><span>{{ formatObject(snapshotCharacter?.status?.value) || '未提取' }}</span></div>
+            <div class="character-edit-snapshot__row"><strong>衣着</strong><span>{{ snapshotCharacter?.costume?.value || '未提取' }}</span></div>
+            <span class="char-card__source is-snapshot">归档快照</span>
+          </template>
         </aside>
       </div>
       <template #footer>
@@ -412,6 +438,54 @@ function handleDelete(row: CharacterDisplayRow) {
 watch(viewChapter, () => {
   loadCharacters()
 })
+
+// ========== 快照编辑 (v4 快照纠错) ==========
+const snapshotEditing = ref(false)
+const snapshotForm = ref({ relationshipsText: '{}', statusText: '{}', costume: '' })
+
+function startSnapshotEdit() {
+  if (!snapshotCharacter.value) return
+  snapshotForm.value = {
+    relationshipsText: JSON.stringify(snapshotCharacter.value.relationships?.value ?? {}, null, 2),
+    statusText: JSON.stringify(snapshotCharacter.value.status?.value ?? {}, null, 2),
+    costume: snapshotCharacter.value.costume?.value ?? ''
+  }
+  snapshotEditing.value = true
+}
+
+function cancelSnapshotEdit() {
+  snapshotEditing.value = false
+}
+
+async function saveSnapshot() {
+  if (!editingCharacter.value || snapshotChapter.value === null || !route.params.storyId) return
+  let status: Record<string, any>
+  let relationships: Record<string, any>
+  try {
+    status = JSON.parse(snapshotForm.value.statusText || '{}')
+    relationships = JSON.parse(snapshotForm.value.relationshipsText || '{}')
+  } catch (err: any) {
+    message.error(`快照 JSON 不合法: ${err.message || err}`)
+    return
+  }
+  try {
+    await charactersApi.updateSnapshot(
+      route.params.storyId as string,
+      editingCharacter.value.id,
+      snapshotChapter.value,
+      { status, relationships, costume: snapshotForm.value.costume }
+    )
+  } catch (err: any) {
+    message.error(err?.response?.data?.error || '快照更新失败')
+    return
+  }
+  message.success('快照已更新')
+  snapshotEditing.value = false
+  // 重新拉取该章快照 + 刷新列表
+  const res = await charactersApi.getSnapshot(route.params.storyId as string, editingCharacter.value.id, snapshotChapter.value)
+  snapshotCharacter.value = res.data.data ?? null
+  await loadCharacters()
+}
 
 watch(snapshotChapter, async (chapter) => {
   if (!editingHasSnapshot.value || !editingCharacter.value || chapter === null || !route.params.storyId) return
@@ -662,4 +736,5 @@ onMounted(() => {
   color: var(--color-positive, #5a7a4f);
   background: rgba(90, 122, 79, 0.08);
 }
+.character-edit-snapshot__bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 </style>
