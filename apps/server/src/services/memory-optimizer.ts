@@ -140,9 +140,14 @@ ${rawText}
     storyId, chapterId, callType: 'memory_optimize',
     compiled, temperature: 0.3, maxTokens: 4096
   })
+  // 反馈规则 `feedback_no_silent_errors`: 当 provider 返回空内容时, 绝不允许
+  // 静默 return [] (那是让用户以为归档成功但 global 记忆实际缺失)。
+  // 抛错让 chapters-archive prepare-archive catch 把 memory stage 标 failed,
+  // 用户能在 UI 看到 "解析失败" 提示, 主动 retry 或编辑 raw 后重试。
+  // (callAIWithLog 在 provider 抛错时已经会 rethrow, 这条只覆盖 provider 返回 null 的边界情况)
   if (!raw_ai) {
-    app.log.warn('[MemoryOptimizer] AI call returned empty')
-    return []
+    app.log.warn('[MemoryOptimizer] AI call returned empty/null')
+    throw new Error('[MemoryOptimizer] AI 返回空内容, 无法做记忆融合')
   }
 
   const result: { memories: OptimizedMemory[] } = JSON.parse(cleanJsonBlock(raw_ai))

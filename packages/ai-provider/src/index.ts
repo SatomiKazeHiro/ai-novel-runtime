@@ -73,6 +73,29 @@ export class OpenAICompatibleProvider implements AIProvider {
     return headers
   }
 
+  /**
+   * 从 AI 响应里提取文本内容。DeepSeek V4-Flash 等 reasoning 模型把 JSON
+   * 输出放进 reasoning_content 字段、content 留空; 这里把 reasoning_content
+   * 作为 content 的兜底, 让上层不用关心上游模型是否启用了 thinking mode。
+   *
+   * 两个字段都空时返回 null, 让调用方抛 "empty content" 诊断错误
+   * (上游真正故障, 不能吞)。fallback 触发时打一行 warning, 让用户能
+   * 在 server.log 看到 reasoning mode 激活的频率。
+   */
+  private extractContent(choice: any): string | null {
+    const content = choice?.message?.content
+    if (content) return content
+    const reasoning = choice?.message?.reasoning_content
+    if (reasoning) {
+      console.warn(
+        `[${this.config.name}] content empty, fell back to reasoning_content ` +
+        `(model=${this.config.model} likely uses thinking mode)`
+      )
+      return reasoning
+    }
+    return null
+  }
+
   private async callCompletions(body: any): Promise<any> {
     const apiKey = this.config.apiKey
     const baseUrl = this.getBaseUrl()
@@ -173,7 +196,7 @@ export class OpenAICompatibleProvider implements AIProvider {
     })
 
     const choice = data.choices?.[0]
-    const content = choice?.message?.content
+    const content = this.extractContent(choice)
     if (!content) {
       const reason = choice?.finish_reason ? `(finish_reason=${choice.finish_reason})` : '(no choice)'
       const modelInfo = data.model ? ` model=${data.model}` : ''
@@ -208,7 +231,7 @@ export class OpenAICompatibleProvider implements AIProvider {
     })
 
     const choice = data.choices?.[0]
-    const content = choice?.message?.content
+    const content = this.extractContent(choice)
     if (!content) {
       const reason = choice?.finish_reason ? `(finish_reason=${choice.finish_reason})` : '(no choice)'
       const modelInfo = data.model ? ` model=${data.model}` : ''

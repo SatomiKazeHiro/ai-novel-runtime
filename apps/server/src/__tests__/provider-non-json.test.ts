@@ -192,4 +192,76 @@ describe('OpenAICompatibleProvider — non-JSON response diagnostics', () => {
       {}
     )).rejects.toThrow(/deepseek API error \(503\): Service Unavailable/)
   })
+
+  it('falls back to reasoning_content when content is empty (DeepSeek V4-Flash thinking mode)', async () => {
+    // DeepSeek V4-Flash 等 reasoning 模型把 JSON 输出放进 reasoning_content
+    // 字段, content 留空。provider 必须读 reasoning_content 兜底, 否则
+    // chapters-archive memory-optimizer / memory-stage 会一直抛
+    // "API returned empty content" 把 stage 标 failed, 章节永远无法归档。
+    // 用户场景: 87be28a9 ch2 prepare-archive, memory-optimizer 触发该 bug。
+    mockFetch(200, 'application/json', JSON.stringify({
+      choices: [{
+        message: {
+          content: '',
+          reasoning_content: '{"memories":[{"content":"测试记忆","originUid":"NEW","importance":5,"type":"event"}]}'
+        },
+        finish_reason: 'stop'
+      }],
+      model: 'deepseek-v4-flash'
+    }))
+
+    const provider = new OpenAICompatibleProvider({
+      name: 'deepseek', apiKey: 'sk-test', model: 'deepseek-v4-flash'
+    })
+
+    const content = await provider.generateWithRuntime(
+      { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
+      {}
+    )
+    expect(content).toBe('{"memories":[{"content":"测试记忆","originUid":"NEW","importance":5,"type":"event"}]}')
+  })
+
+  it('prefers content over reasoning_content when both are present', async () => {
+    // 兜底逻辑必须优先用 content (普通模型), reasoning_content 只在 content
+    // 为空时才用。不能反过来。
+    mockFetch(200, 'application/json', JSON.stringify({
+      choices: [{
+        message: {
+          content: '正常 content 输出',
+          reasoning_content: '{"should":"not","be":"used"}'
+        },
+        finish_reason: 'stop'
+      }]
+    }))
+
+    const provider = new OpenAICompatibleProvider({
+      name: 'deepseek', apiKey: 'sk-test', model: 'deepseek-chat'
+    })
+
+    const content = await provider.generateWithRuntime(
+      { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
+      {}
+    )
+    expect(content).toBe('正常 content 输出')
+  })
+
+  it('still throws empty-content error when both content and reasoning_content are empty', async () => {
+    // 回归测试: 两个字段都为空时, 仍然要抛诊断错误 (上游真正故障)。
+    // 不能因为加了 fallback 就吞掉所有 empty-content 情况。
+    mockFetch(200, 'application/json', JSON.stringify({
+      choices: [{
+        message: { content: '', reasoning_content: '' },
+        finish_reason: 'stop'
+      }]
+    }))
+
+    const provider = new OpenAICompatibleProvider({
+      name: 'deepseek', apiKey: 'sk-test', model: 'deepseek-v4-flash'
+    })
+
+    await expect(provider.generateWithRuntime(
+      { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
+      {}
+    )).rejects.toThrow(/empty content.*finish_reason=stop/)
+  })
 })
