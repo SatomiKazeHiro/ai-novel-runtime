@@ -167,6 +167,40 @@ SPEC 修正说明:Q9(zod 接入)在 spec「背景」节中误标 OPEN,实施时�
 - **Fix:** 加 `onBeforeUnmount` + `removeAllListeners()` + `destroy()` + `cy = null`,确保组件销毁时彻底释放 cytoscape 实例。P5 解耦后该路径迁入共享 hook `useCytoscapeLifecycle.ts:destroy()`,`GraphView.vue` (display) 与 `EditableGraph.vue` (editable) 都通过 `init()` / `destroy()` 复用同一份 unmount 路径,行为一致。
 - **Status:** [RESOLVED 2026-06-17 by 4def263,2026-06-22 P5 解耦后保留修复路径 by 18fdd45 + 4434cb3]
 
+### `memory-optimizer` AI 返回空内容时静默 return [] → prepare-archive 标 success,跨章融合空跑
+- **File:line:** `apps/server/src/services/memory-optimizer.ts:155`(`runOptimize` 函数入口附近的 silent return)
+- **Symptom:** AI 返回空字符串(典型 V4 reasoning 模式污染: content 留空, reasoning_content 8KB+ 思考)时, optimizer 静默 return `[]`, prepare-archive 把 `memory` stage 标 success, archive confirm 拿到空 global 记忆, 跨章融合实质空跑。用户无感知。
+- **Root cause hypothesis:** 防御式 silent return 把 AI 异常吞了, 违反"不隐瞒给用户"原则(`memory-optimizer.ts` 旧注释说要"logger 一下"但实际 logger 也无)。
+- **Fix:** provider 返回空内容时 throw 替代 silent return; prepare-archive catch 把 `stages.memory.status='failed'` + `errorMessage` 落库, ReviewingPanel「重跑」按钮显失败原因。
+- **Status:** [RESOLVED 2026-07-31 by 5eb4efc]
+
+### DeepSeek V4-Flash thinking 模式把 JSON 输出塞进 `reasoning_content` 字段,`content` 留空
+- **File:line:** `packages/ai-provider/src/index.ts:122`(`REASONING_MAX_LENGTH_FOR_FALLBACK = 4096`)+ `extractContent()`
+- **Symptom:** 切换到 `deepseek-v4-flash` 模型后, generate / memory_stage 等调用偶发返回"empty content"; JSON.parse 失败污染上游诊断。
+- **Root cause hypothesis:** V4 reasoning 模式下, content 字段被空置, 答案塞 reasoning_content 字段。这是 V4 上游行为, 不是 bug。修前 generate 直接返回 null/空字符串, 上层 `cleanJsonBlock` 抛"empty content"通用错, 看不出是 thinking 模式。
+- **Fix (临时):** `extractContent` content 空时 fallback reasoning_content; 太长 (>4KB) 抛"reasoning_content too long, 疑似纯思考, 关 thinking mode 或换模型"诊断, 让用户能区分"empty content" vs "thinking 模式未给答案"。
+- **注意:** **4KB 阈值本身是经验数(见 [设计债] 节)**。当前是治标方案。
+- **Status:** [RESOLVED 2026-07-31 by 5eb4efc (临时); 后续按 A 方案删除 fallback]
+
+### `archive` confirm 时 Prisma 抛"Argument `status`: Invalid value provided. Expected String, provided Object" → 整 $transaction rollback
+- **File:line:** `apps/server/src/services/character-extractor.ts:38`(`commitCharacterBranchStateWrites` 边界)
+- **Symptom:** archive 确认时整 transaction 抛错 rollback, 章节保持 reviewing, 用户看到 500。
+- **Root cause hypothesis:** `CharacterBranchState.status` / `relationships` 是 `String` 列(存 JSON 文本)。prompt 写 `"status": "<JSON 对象>"`, character-stage 解析 JSON 后 `w.status` 实际是 Object。`commitCharacterBranchStateWrites` 直接透传给 Prisma, Prisma 拒绝 Object 类型入 String 列。**类型契约 vs prompt 措辞 vs 实际数据三者不一致**:`CharacterStateRow.status: string`(类型) + `<JSON 对象>`(prompt) + `{...}`(实际数据)。
+- **Fix:** 边界统一 `JSON.stringify`, `typeof === 'string'` 时不重复编码(防测试 fixture 双重编码)。同步放宽 `CharacterStateRow.status/relationships` 类型到 `string | object` + prompt 改明确(举 JSON 对象例子 + "必须是 JSON 对象, 不是字符串")。
+- **Status:** [RESOLVED 2026-07-31 by 2a2fd1b]
+
+### [Feature] AI Provider thinking 三态配置 — 让用户显式控制上游 thinking 行为
+- **Files:**
+  - `prisma/schema.prisma` `AiProviderConfig.thinking String @default("auto")` + migration `20260731000000_add_ai_provider_thinking`
+  - `packages/ai-provider/src/index.ts:33` `ThinkingMode` 类型 + `:57` `shouldDisableThinking` 纯函数 + `:160` `callCompletions` 入口统一注入
+  - `apps/server/src/services/ai-provider-init.ts` `getProviderById` 透传 `thinking`, `initAiProviderConfig` 不覆盖用户偏好
+  - `apps/server/src/routes/ai-provider.ts` `normalizeThinking` 校验(必须 `auto|enabled|disabled`)+ `AI_PROVIDER_SAFE_SELECT` 加 `thinking: true`
+  - `apps/web/src/views/ModelManager.vue` 表单加三态 radio(自动/启用/关闭)
+- **动机:** 业务方当前不需 thinking(自动运行批量生成 + 后台归档), 早期 V3 时代默认不关心 thinking 行为。切换到 V4-Flash(reasoning 模型)后, AI 经常把答案塞 `reasoning_content` + `content` 留空,导致 generate / memory_stage 偶发返回空内容。手动调 thinking 不直观(API 字段不暴露),需要 UI 显式配置。
+- **行为:** `auto` 模式默认对 DeepSeek 模型发送 `{ thinking: { type: 'disabled' } }` 关上游 reasoning;`enabled` 永远不发送(让上游按自身默认);`disabled` 永远发送关参数(部分非 DeepSeek 模型也支持)。
+- **附带:** 让 [设计债] 节的 4KB fallback 实际触发频率降到接近 0(请求端先关, 上游不产 reasoning_content, 兜底路径基本不进)。
+- **Status:** [已落 2026-07-31 by 95ea5bb]
+
 ---
 
 ## [工程化决策 - 本周期已落]
@@ -281,10 +315,41 @@ SPEC 修正说明:Q9(zod 接入)在 spec「背景」节中误标 OPEN,实施时�
 
 ---
 
+## [设计债]
+
+> 不是 bug,但留有"未来要解决"的设计缺陷。**与 [Bug fix 备忘] 的区别**:这些是"先临时能跑,知道有更好方案",已记录但未立即执行。
+
+### `REASONING_MAX_LENGTH_FOR_FALLBACK = 4096` 是经验阈值,非原则限制
+- **File:line:** `packages/ai-provider/src/index.ts:122`(`OpenAICompatibleProvider.REASONING_MAX_LENGTH_FOR_FALLBACK = 4096`)+ `extractContent()` line 130-148
+- **现状:** `extractContent` 在 `content` 字段空时 fallback `reasoning_content`;若 `reasoning_content.length > 4096` 则抛错(< 4KB 视为"答案"静默返回, > 4KB 视为"思考"抛错)。
+- **问题:** 4KB 是"短 reasoning_content 是答案, 长 reasoning_content 是思考过程"的经验判断,不是原则限制。本质是**用魔法数替用户决定"什么时候算 answer / 什么时候算 thinking"**。两类失败模式都被这个数字掩盖:
+  1. AI 真实答案 < 4KB 但实际是"碎片式"思考的某段切片,被错认成答案给上层 `JSON.parse(cleanJsonBlock(...))` → 失败污染诊断
+  2. AI 真实答案 > 4KB 但确实是答案,被错认成 thinking 抛错 → 用户在 UI 看到"reasoning_content too long"但实际是上游问题
+- **用户决策(2026-08-01):** **A 方案 — 永远 throw, 删 fallback**。理由:
+  1. thinking 三态配置(`packages/ai-provider/src/index.ts:57` `shouldDisableThinking`)已经接管问题根源: `auto` 模式对 DeepSeek 模型默认关 thinking, 真正需要兜底的窗口极小
+  2. 保留 short reasoning 兜底**反而是陷阱**:悄悄把"thinking 模式未给答案"埋了, 用户在 UI 看到奇怪的 JSON parse 错或生成空内容
+  3. 错误显式更友好 — 用户归档时看到"thinking 模式可能开了"立刻知道去 ModelManager 关, 不会以为是网络问题瞎 retry
+- **待执行:** 单独 commit 删 `REASONING_MAX_LENGTH_FOR_FALLBACK` 常量 + `extractContent` reasoning_content 兜底 + 2 个相关测试(`falls back to short reasoning_content` + `does NOT fall back to reasoning_content when too long`)。当前 commit `5eb4efc` 是临时方案,本节是后续清理的契约。
+- **优先级:** 中。thinking 三态配置已落, 当前 fallback 实际触发频率低; 但每多一个"用经验数替用户决定"的代码就是债, 应尽早清。
+
+---
+
 ## 修复时间线
 
 | 日期 | Hash | 说明 |
 |------|------|------|
+| 2026-07-31 | `2a2fd1b` | [Bug] archive confirm 修 CharacterBranchState.status 类型契约 (边界 JSON.stringify) |
+| 2026-07-31 | `95ea5bb` | [Feature] AI Provider thinking 三态配置 (auto/enabled/disabled, schema + API + UI) |
+| 2026-07-31 | `5eb4efc` | [Bug] provider reasoning_content 4KB 兜底 + memory-optimizer 抛错替代静默 return (临时方案,见 [设计债]) |
+| 2026-07-31 | `3678a97` | [Docs] 同步 v3 archive confirm CharacterBranchState 写库已接通 (LOGIC.md) |
+| 2026-07-31 | `3b724b2` | [Bug] 接通 v3 archive confirm 写 CharacterBranchState 表 |
+| 2026-07-31 | `255e06a` | [Test] archive-character-branch-state-write 集成测试 (验证接通前 FAIL) |
+| 2026-07-31 | `077977b` | [Feature] 新增 commitCharacterBranchStateWrites (P0 修 v3 archive 不写表) |
+| 2026-07-31 | `eb62823` | [Test] character-extractor 单元测试 (验证函数未实现前 FAIL) |
+| 2026-07-30 | `1709482` | [Docs] 同步 v3 archive confirm PlotArc 写库已接通 (LOGIC.md) |
+| 2026-07-30 | `7b53e00` | [Bug] 接通 v3 archive confirm 写 PlotArc 表 |
+| 2026-07-30 | `d7ab7cb` | [Test] archive-plot-arc-write 集成测试 (验证接通前 FAIL) |
+| 2026-07-30 | `4f4d19c` | [Test/Review] 修 archive-plot-arc-write 测试代码质量 |
 | 2026-06-17 | `e077407` | [P0 #2] 段落感知内容截断,替代 `slice(0, 8000)` |
 | 2026-06-17 | `4def263` | [Bonus] cytoscape null `isHeadless` 修复 |
 | 2026-06-17 | `bd62a21` | [P0 #8 partial] `js-tiktoken` 7 处重复装收口到 `packages/ai-provider` 1 处 |

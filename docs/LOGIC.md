@@ -20,27 +20,35 @@ draft ──┬─→ reviewing ─→ archived
 - **reviewing** 是人工审查环节（见 `Chapter.pendingArchiveData`）：AI 提取完记忆/图谱/弧线后不直接写库，停在 `reviewing` 状态等用户在 `ReviewingPanel.vue` 编辑后再 commit
 - 只有 `archived` 章节会喂给下一章的 prompt
 
-**归档流水线**（v3 — 跨多个 HTTP 端点，实现在 `routes/chapters-archive.ts`）：
+**归档流水线**（v4 — 5 stage 拆分 memory）：
 
 ```
 [prepare-archive]                       [archive 确认]
 4 stage 并行 (Promise.all):  ─┐
-  character / memory /        │ ← 纯 AI 调用, 结果各自落
+  character / memoryExtract /  │ ← 纯 AI 调用, 结果各自落
   plot-arc / graph-extract    │   pendingArchiveData.stages[name]
-  写入 Chapter.pendingArchiveData (version: 3)
-  状态变 reviewing            ┘
+  + 串行 memoryOptimize:      │
+    (仅 memoryExtract success │   pendingArchiveData version: 4
+     时跑 optimizer)          ┘
+                                ↓
 [cumulative-graph/build]  用户主动点「生成累计图谱」→
   services/cumulative-graph.ts 合并 → 写 pendingArchiveData.cumulativeGraph
-                            ┌─ 校验: 全 stage success + 累计图谱已生成
-                            │   把图谱数据从 pendingArchiveData 拷到
-                            │   Chapter 三列(chapterGraph/cumulativeGraph/
-                            │   cumulativeGraphGeneratedAt), 清 pendingArchiveData
+                            ┌─ 校验: 5 stage 全 success + 累计图谱已生成
+                            │   pendingArchiveData.version === 4
+                            │   (v3 数据直接 400 拒,提示用户重新准备归档)
                             └─  prisma.$transaction 内依次写
-                                Memory 三层 (chapter / scene / global)
+                                Memory 三层 (chapter / scene / global,
+                                data 源: memoryExtract.result + memoryOptimize.result.memories)
                                 + Chapter.summary + Chapter 三列
                                 + 翻 status='archived'
                                 (CharacterBranchState / PlotArc 写入另文档)
 ```
+
+**v4 拆分动机**: v3 单 `memory` stage 串行 extractor+optimizer 有 2 类脆弱:
+1. extractor 失败 → optimizer 白跑 (AI 调用成本)
+2. extractor 成功 + optimizer 失败 → 整 stage 标 failed, extractor work 浪费
+
+v4 拆 `memoryExtract` + `memoryOptimize` 为 2 独立 stage, 任一失败可独立重启。
 
 **硬规则**: reviewing 期间图谱数据只活在 `pendingArchiveData` JSON, Chapter 三列全程不读写; archive confirm 才落列。
 
@@ -86,7 +94,7 @@ draft ──┬─→ reviewing ─→ archived
 | Service | 职责 | 状态 |
 |---------|------|------|
 | `cumulative-graph.ts` | 用户主动触发累计图谱合并（relation 归一 + codeMerge 五元组去重） | 核心 |
-| `memory-optimizer.ts` | **v3 接入 prepare-archive 阶段**(4 stage `Promise.all` 完成后跑,覆盖 `stages.memory.result.memories`)。archive confirm **不调**(commit-only)。 | 核心 |
+| `memory-optimizer.ts` | **v4 接入 prepare-archive 阶段**(4 stage `Promise.all` 完成后串行跑,仅 memoryExtract success 时触发,产物写 `stages.memoryOptimize.result.memories`)。archive confirm **不调**(commit-only)。 | 核心 |
 | `generate-processor.ts` | 队列 worker，**串行**调用 AI 生成每个 draft | 核心 |
 | `ai-call-logger.ts` | **统一 AI 调用封装**，自动写 PromptLog（成功/失败都记） | 核心 |
 | `runtime-loader.ts` | 加载 `RuntimeBase` 和 `WorkerTask`（Story → 全局 → 硬编码回退） | 核心 |
@@ -94,6 +102,7 @@ draft ──┬─→ reviewing ─→ archived
 | `stages/memory-stage.ts` | v3 章节记忆提取（mainEvents / sideEvents / scenes / emotions / foreshadowing / relationshipChanges / summary） | 核心 |
 | `stages/plot-arc-stage.ts` | v3 剧情弧线提取 / 更新 / 合并 | 核心 |
 | `stages/graph-extract-stage.ts` | v3 本章图谱提取（prevCumulativeGraph 复用 type:key） | 核心 |
+| `character-extractor.ts` | v3 archive confirm 时把 `character-stage` 输出的 characterStates 落 `CharacterBranchState` 表（边界统一 JSON.stringify, `commitCharacterBranchStateWrites`） | 核心 |
 | `graph-snapshot.ts` | 图谱快照数据结构（GraphNodeSnapshot / GraphEdgeSnapshot / GraphSnapshot） | 辅助 |
 | `plot-extractor.ts` | 剧情弧线提取 + 状态推进 | 辅助 |
 | `ai-provider-init.ts` | 启动时从 `.env` 同步 DeepSeek 配置到 DB | 启动 |
@@ -183,17 +192,18 @@ if (!current || SKIP_STATUSES.includes(current.status)) continue
 
 **v2 关键变化**：worker 循环结束后**不再写 `chapter.status`**（旧版本会 `updateMany where status='generating'` 恢复 chapter 状态）。候选生成与章节状态彻底解耦，worker 只负责 Draft 层。
 
-### 归档流水线（详细, v3）
+### 归档流水线（详细, v4 — 5 stage 拆分 memory）
 
 | 阶段 | 文件 | 端点 | AI 调用 | 失败语义 |
 |------|------|------|---------|---------|
-| 1 提取 | `services/stages/{character,memory,plot-arc,graph-extract}-stage.ts` | `prepare-archive` | 4 次并行（每 stage 各 1 次） | **v3**：单 stage 失败落 `stages[name].status='failed'`，不影响其他 stage，章节仍进 `reviewing` |
+| 1 提取 | `services/stages/{character,memoryExtract,plot-arc,graph-extract}-stage.ts` | `prepare-archive` | 4 次并行（每 stage 各 1 次） | **v4**：单 stage 失败落 `stages[name].status='failed'`，不影响其他 stage，章节仍进 `reviewing` |
+| 1.5 记忆融合 | `memory-optimizer.ts:optimizeMemories` | `prepare-archive` 阶段(4 stage `Promise.all` 完成后串行) | 仅当 memoryExtract success 时跑 1 次；产物写 `stages.memoryOptimize.result.memories` | **v4 独立 stage**：失败独立标 `stages.memoryOptimize.status='failed'`，不浪费 raw extract 结果；archive confirm 校验 A 严格策略需要 5 stage 全 success |
 | 2 累计图谱 | `services/cumulative-graph.ts:buildCumulativeGraph` | `cumulative-graph/build`（用户点"生成累计图谱"） | 1 次 | 失败返回错误，可重试；成功写 `pendingArchiveData.cumulativeGraph` |
-| 2.5 人工审查 | `ReviewingPanel.vue` | `chaptersApi.update({ pendingArchiveData })`（用户点"保存调整"） | 0 次 | 用户编辑失败可重试 |
-| 3 落列 | `routes/chapters-archive.ts:archive` | `archive` | 0 次 | 校验失败返回 400，章节维持 `reviewing`；`prisma.$transaction` 内写 Memory 三层 + PlotArc (`commitPlotArcWrites`) + CharacterBranchState (`commitCharacterBranchStateWrites`) + Chapter.summary + Chapter 三列 + 翻 status |
-| 4 优化 | `memory-optimizer.ts:optimizeMemories` | `prepare-archive` 阶段(4 stage 后) | memory-optimizer(无 caller 阶段已结束) | 详见 §v3 memory 集成 |
+| 2.5 人工审查 | `ReviewingPanel.vue` | `chaptersApi.update({ pendingArchiveData })`（用户点"保存调整"） | 0 次 | 用户编辑失败可重试。**v4 记忆 tab 顶部两步进度条**：步骤 1 (memoryExtract) / 步骤 2 (memoryOptimize)，per-stage 失败时显独立重启按钮 |
+| 3 落列 | `routes/chapters-archive.ts:archive` | `archive` | 0 次 | 校验失败返回 400，章节维持 `reviewing`；`prisma.$transaction` 内写 Memory 三层（数据源 = `stages.memoryExtract.result` 写 chapter/scene + `stages.memoryOptimize.result.memories` 写 global）+ PlotArc (`commitPlotArcWrites`) + CharacterBranchState (`commitCharacterBranchStateWrites`) + Chapter.summary + Chapter 三列 + 翻 status |
+| 4 per-stage 重跑 | `chapters-archive.ts:retry-stage` | `prepare-archive/retry-stage/:stageName` | 单 stage 重跑（v4 支持 5 stageName） | **v4**：重跑 memoryExtract 自动续跑 optimizer 写回两 stage；重跑 memoryOptimize 要求 memoryExtract 已 success；archive confirm 校验 `version === 4`,v3 数据报 400「版本不匹配,请重新准备归档」 |
 
-> **v3 归档前置条件**: 累计图谱必须已生成（`Chapter.cumulativeGraphGeneratedAt != null`）。否则后端返回 400 `cumulative-graph-not-generated`，前端 ReviewingPanel 也会预先拦截。
+> **v4 归档前置条件**: 累计图谱必须已生成（`Chapter.cumulativeGraphGeneratedAt != null`） + 5 stage 全 success + `pendingArchiveData.version === 4`。任一不满足返回 400,前端 ReviewingPanel 也会预先拦截。
 
 **阶段 3 当前实现**：`prisma.$transaction` 内依次写：
 1. `tx.memory.create` 每条 mainEvent / sideEvent / emotion / foreshadowing / relationshipChange 写入 `layer='chapter'`（mainEvent 多带 `'main-plot'` tag）；每条 scene 写 `layer='scene'`；每条 optimizer 融合记忆写 `layer='global'`（tag 加 `event` / `state`）。
@@ -209,20 +219,20 @@ if (!current || SKIP_STATUSES.includes(current.status)) continue
 - "确认归档" → `chaptersApi.update({ pendingArchiveData })` → `chaptersApi.archive()`（双步串行）
 - "取消" → `chaptersApi.remove(chapterId)`（**删除章节本身**）
 
-### AI 调用全景表（v3 — 4 stage 并行 + optimizer 追加融合）
+### AI 调用全景表（v4 — 4 stage 并行 + 串行 memoryOptimize + 累计图谱 dedup）
 
 | callType | 温度 | maxTokens | 用途 | 关键参数 |
 |----------|------|-----------|------|---------|
 | `generate` | 0.6 / 0.75 / 0.9 | 用户定 | 章节正文生成 | 9 层 Pipeline 拼装 |
 | `character_stage` | 0.3 | 4096 | 角色状态提取（matchedCharacters → characterStates） | 输入 = matchedCharacters（路由层 pre-stage 文本匹配） |
-| `memory_stage` | 0.3 | 4096 | 章节记忆 raw 提取（mainEvents/sideEvents/scenes/emotions/foreshadowing/relationshipChanges/summary） | 输入含 protagonistNames / existingNodeKeys / previousSnapshotNodes（跨章上下文） |
+| `memory_stage` | 0.3 | 4096 | 章节记忆 raw 提取（mainEvents/sideEvents/scenes/emotions/foreshadowing/relationshipChanges/summary） | 输入含 protagonistNames / existingNodeKeys / previousSnapshotNodes（跨章上下文）。**v4 仍由 memoryExtract stage 调用,产物写到 `stages.memoryExtract.result`** |
 | `plot_consolidate` | 0.3 | 4096 | 剧情弧线合并（plot-arc-stage） | 输入 = existingArcs + latestBranchStates |
 | `graph_extract_stage` | 0.3 | 4096 | 本章图谱提取（不复用 prev cumulative） | 输入含 prevCumulativeGraphNodes（type:key 复用约束） |
 | `cumulative_dedup` | 0.2 | 8192 | 累计图谱 relation 字面归一 + codeMerge | merged + chapter 双产物 |
-| `memory_optimize` | 0.3 | 4096 | 跨章 global 记忆融合（覆盖 stages.memory.result.memories） | 输入 = 当前 layer='global' + 当前 memory-stage output；无 user-edited 特殊分支 |
+| `memory_optimize` | 0.3 | 4096 | 跨章 global 记忆融合 | **v4**: 仅 memoryExtract success 时调,产物写到 `stages.memoryOptimize.result.memories`,**不再**覆盖 raw stage 输出。archive confirm 不调 |
 | `score` | 0.5 | 4096 | 7 维度评分 | 失败时 fallback 到规则引擎 |
 
-> **v3 删除了 v2 时代的 `combined_extract` / `graph_organize` callType**（2026-07-30 死代码收口），由 4 个并行 stage + 累计图谱 dedup 替代。
+> **v3+ 删除了 v2 时代的 `combined_extract` / `graph_organize` callType**（2026-07-30 死代码收口），由 4 个并行 stage + 累计图谱 dedup 替代。
 
 ---
 
@@ -250,14 +260,18 @@ POST /api/chapters/:id/select
 POST /api/chapters/:id/prepare-archive
   └─ prepare-archive route (chapters-archive.ts)
        ├─ runCharacterStage (stages/character-stage.ts)
-       ├─ runMemoryStage (stages/memory-stage.ts)
+       ├─ runMemoryStage (stages/memory-stage.ts)        → memoryExtract
        ├─ runPlotArcStage (stages/plot-arc-stage.ts)
        └─ runGraphExtractStage (stages/graph-extract-stage.ts)
        ↑ 4 个 stage 并行，结果落 pendingArchiveData.stages[name]
+       串行: optimizeMemories → memoryOptimize (memoryExtract success 时)
+       最终写 pendingArchiveData.version === 4
 
-POST /api/chapters/:id/prepare-archive/retry-stage/:name
-  └─ 复用 prepare-archive 的 pre-stage 数据加载
-  └─ 单 stage 重跑，结果合并回 pendingArchiveData
+POST /api/chapters/:id/prepare-archive/retry-stage/:stageName
+  └─ v4 stageName: 'character' | 'memoryExtract' | 'memoryOptimize' | 'plotArc' | 'graph'
+       └─ memoryExtract 重跑后自动续跑 optimizer (与 prepare-archive 行为一致)
+       └─ memoryOptimize 独立重跑，要求 memoryExtract 已 success
+       └─ 合并回 pendingArchiveData (version === 4)
 
 POST /api/chapters/:id/cumulative-graph/build
   └─ buildCumulativeGraph (cumulative-graph.ts)
@@ -265,7 +279,10 @@ POST /api/chapters/:id/cumulative-graph/build
        └─ codeMerge 五元组去重 (程序)
 
 POST /api/chapters/:id/archive
-  └─ safeJsonParse (chapter.pendingArchiveData)
+  └─ safeJsonParse (chapter.pendingArchiveData)        [version === 4]
+  └─ 校验 5 stage 全 success (character / memoryExtract / memoryOptimize / plotArc / graph)
+  └─ memoryExtract.result → chapter / scene / summary  Memory 写入
+  └─ memoryOptimize.result.memories → global           Memory 写入
   └─ prisma.$transaction 内:
        ├─ tx.memory.create (chapter / scene / global 三层)
        ├─ tx.chapter.update({ summary })
@@ -308,8 +325,8 @@ Prisma schema 把 `personality` / `metadata` / `params` / `settings` / `chapterG
 
 `prompt-runtime` 已统一从 `ai-provider` 导入。`shared` 的启发式仅作无 tiktoken 环境的 fallback（实际项目用 `ai-provider` 那套）。**修改 prompt 拼装时不要新增"自己估 token"的分支**。
 
-### 5. `prepare*` / `commit*` 拆分（v2 遗留说明）
-v3 重构后 `prepareMemoryWrites` / `commitMemoryWrites` 已从主流程移除。归档流水线现在是 4 个 stage 并行提取 + memory-optimizer 追加融合 + 累计图谱,结果落 `pendingArchiveData.stages[name]` / `stages.memory.result.memories` / `cumulativeGraph`。`archive` 端点 commit 时 prisma.$transaction 写 Memory 表三层(`chapter` / `scene` / `global`)+ Chapter.summary + Chapter 三列 + 翻 status。**CharacterBranchState / PlotArc 写入另文档讨论**;`TimelineEvent` 在 v3 删除,不再写。
+### 5. `prepare*` / `commit*` 拆分（v2 → v4 演进说明）
+v3 重构后 `prepareMemoryWrites` / `commitMemoryWrites` 已从主流程移除,v4 进一步把 `memory` stage 拆为 `memoryExtract` + `memoryOptimize` 两个独立 stage(详见 §6)。归档流水线现在是 4 stage 并行提取(character / memoryExtract / plotArc / graph)+ memoryOptimize 串行追加融合 + 累计图谱,结果落 `pendingArchiveData.stages[name]` / `stages.memoryOptimize.result.memories` / `cumulativeGraph`。`archive` 端点 commit 时 prisma.$transaction 写 Memory 表三层(`chapter` / `scene` / `global`,数据源 = `stages.memoryExtract.result` + `stages.memoryOptimize.result.memories`)+ Chapter.summary + Chapter 三列 + 翻 status。**CharacterBranchState / PlotArc 写入另文档讨论**;`TimelineEvent` 在 v3 删除,不再写。
 
 详细 v3 memory system 设计见 `docs/superpowers/specs/2026-07-30-v3-memory-system-design.md`(layer 规则 / optimizer 触发点 / searchRelevant originUid 分组)。
 
@@ -345,36 +362,53 @@ AI 调用失败时（`result` 为 null）的降级内容，**是 mock 章节文�
 
 ---
 
-## §6 · v3 Stage 边界（2026-07-25, branch `v3/prepare-archive-stages`）
+## §6 · v4 Stage 边界（2026-07-31, branch `v2/state-machine`）
 
-v3 把 `prepare-archive` 的提取阶段拆为 4 个独立 stage 服务。所有 stage 服务签一致（`runXxxStage(app, input): Promise<StageState<XxxStageResult>>`），由 `apps/server/src/routes/chapters-archive.ts` 的 prepare-archive 端点用 `Promise.all` 并行触发，每个 stage 的写入路径：
+v4 把 v3 单 `memory` stage 拆为 `memoryExtract` + `memoryOptimize` 两个独立 stage。所有 stage 服务签一致（`runXxxStage(app, input): Promise<PendingStageState<XxxStageResult>>`），由 `apps/server/src/routes/chapters-archive.ts` 的 prepare-archive 端点用 `Promise.all` 并行触发前 4 个 stage，再**串行**追加 `memoryOptimize`（依赖 `memoryExtract.success`），写入路径：
 
 ```
-stage.run() → StageState<{status, result, errorMessage, completedAt}>
-             ↓
-        路由汇总
-             ↓
-   Chapter.pendingArchiveData = JSON.stringify({ version: 3, stages: { ... }, meta })
+4 × stage.run() ─┐
+                 │ Promise.all (并行)
+memoryOptimize ──┘ → 串行 (仅 memoryExtract success 时调)
+                       ↓
+                 路由汇总
+                       ↓
+   Chapter.pendingArchiveData = JSON.stringify({ version: 4, stages: { ... }, meta })
 ```
 
-### Stage 边界
+### Stage 边界（v4 — 5 stage）
 
 每个 stage 服务只调 AI + 解析，不写 DB。路由层负责持久化。
 
 - **character-stage**: 仅输出 `characterStates`；锚定 `matchedCharacters`（路由层 pre-stage 文本匹配）
-- **memory-stage**: 输出 `mainEvents` / `sideEvents` / `scenes` / `emotions` / `foreshadowing` / `relationshipChanges` / `summary`；**不输出** `characterStatusChanges`（归属 character-stage）/ `timelinePosition` / `timelineEvents`（v3 已删）
+- **memoryExtract-stage**（v4 新名,实质是 v3 memory-stage 去掉 optimizer）: 输出 `mainEvents` / `sideEvents` / `scenes` / `emotions` / `foreshadowing` / `relationshipChanges` / `summary`；**不输出** `characterStatusChanges`（归属 character-stage）/ `timelinePosition` / `timelineEvents`（v3 已删）。产物写到 `stages.memoryExtract.result`
+- **memoryOptimize-stage**（v4 新增,原 memory-optimizer 升级为独立 stage）: 仅在 memoryExtract success 时被路由层调,读 memoryExtract.result + 当前 layer='global' 跨章融合,产物 `{ memories: OptimizedMemory[] }` 写到 `stages.memoryOptimize.result.memories`。**不再**覆盖 raw 阶段输出
 - **plot-arc-stage**: 输出 `plotArcs`（内部 `consolidatePlotArcs` 自己读章节 + existing arcs）
 - **graph-extract-stage**: 输出 `chapterGraph`（本章范围，**不与历史合并**）；累积去重在 archive 端点 `buildCumulativeGraph` 做
 
 Stage 输入里的 `characterNames` / `characterKeys` / `latestBranchStates` / `prevCumulativeGraphKeys` **全部由路由层独立查 DB** 提供，stage 之间不通信。
 
+### 依赖关系 & 重试语义
+
+- **memoryOptimize 仅在 memoryExtract success 时跑**：失败时该 stage 独立标记 `failed` + `errorMessage: 'memoryExtract 未成功,跳过 optimizer'`,不影响其他 4 stage,也不浪费 raw 抽取结果
+- **retry-stage 扩展（v4）**: 5 个 stageName 合法值 `['character', 'memoryExtract', 'memoryOptimize', 'plotArc', 'graph']`（v3 的 `'memory'` 已弃用,白名单外 stageName 直接 400）。重试路由逻辑：
+  - 重跑 `memoryExtract`: **自动续跑 optimizer**,两 stage 一起写回 pendingArchiveData,与 prepare-archive 行为一致
+  - 重跑 `memoryOptimize`: **独立重跑**,要求 memoryExtract 已 success(否则 400 提示先重跑 memoryExtract)
+  - 重跑其他 stage: 单 stage 重写回,其他不动
+
+### Archive 策略（A 严格,v4）
+
+- archive 端点预检：**5 stage 全 success** 才允许确认归档。任一 stage `status !== 'success'` 直接 400 列出失败 stage 名
+- archive 校验 `pending.version === 4`,v3 数据一律 400「版本不匹配,请重新准备归档」
+
 ### 失败隔离
 
-- 单 stage 失败：返回 `StageState.failed` + `errorMessage`，其他 stage 结果仍写入 `pendingArchiveData.stages[name]`
-- archive 端点预检：∀ `stages[*].status === 'success'` 才允许确认归档；否则 400 列出失败 stage 名
-- 失败 stage 用户可在 `ReviewingPanel` 点"重新解析（全部）"重试（v3 端点 v3 不提供 per-stage 重试，按整体 retry；未来可加）
+- 单 stage 失败：返回 `PendingStageState.failed` + `errorMessage`,其他 stage 结果仍写入 `pendingArchiveData.stages[name]`
+- 失败 stage 用户可在 `ReviewingPanel` 重跑:
+  - **总入口**「重新解析两步」(记忆 tab): 重跑 memoryExtract → 自动续跑 optimizer
+  - **per-stage 按钮** (v4): 失败 stage 旁显独立重启按钮,通过后消失
 
-### Graph 两段式（v3 重新定义）
+### Graph 两段式（v3 重新定义,v4 沿用）
 
 - `Chapter.chapterGraph` = `graph-extract-stage` 的本章产出（gacha，单次 AI 抽取；v3 起由用户主动编辑）
 - `Chapter.cumulativeGraph` (v3 重新定义) = **用户在 ReviewingPanel 主动生成 + 编辑的工作产物**,不再是 archive 时由后端 `buildCumulativeGraph` 派生的字段
@@ -384,7 +418,7 @@ Stage 输入里的 `characterNames` / `characterKeys` / `latestBranchStates` / `
   - v3 起不再走 archive 阶段的 AI 重建路径
 - **relation 字面归一（2026-07-28）**：dedup 阶段 AI 只输出 `mappings: [{from, to, variants, canonical}]`，程序 `applyRelationMapping` 重写边 relation 字段后交给 `codeMerge` 按 `${fromType}:${fromKey}|${relation}|${toType}:${toKey}` 五元组去重 + weight 累加。解决了跨章节 AI 抽取 relation 字面漂移（c1 "收留/决定帮助" / c2 "收留并帮助" / c3 "收留"）累积成多条字面不同的边的问题。归一策略：同义合并 / 升级到终点 / 反转到转折那条。AI 选不出时宁可不输出 mapping，保留原字面演化历史。
 
-### 累计图谱归档前置条件（v3 新增）
+### 累计图谱归档前置条件（v3 新增,v4 沿用）
 
 - 归档端点 `POST /api/chapters/:id/archive` 在 `Chapter.cumulativeGraphGeneratedAt == null || cumulativeGraph == null` 时返回 400 `cumulative-graph-not-generated`
 - 前端 `ReviewingPanel.handleConfirm` 在 `cumulativeGeneratedAt` 为空时拦截 emit,弹 toast 提示用户去生成
@@ -394,14 +428,15 @@ Stage 输入里的 `characterNames` / `characterKeys` / `latestBranchStates` / `
 
 v3 删除所有 `updateMany({where: {status: ...}})` 锁（v2 还在 `prepare-archive` / `archive` 两处用）。仅依赖 `ChapterStatus` 状态机自身（draft → reviewing → archived）+ UI 按钮 disabled 防双击。prepare-archive 预检在 `draft` / `reviewing` 都允许，重试时先清空 `pendingArchiveData` + `chapterGraph` 再并行触发 4 stage。
 
-## pendingArchiveData v3
+## pendingArchiveData v4
 
 ```typescript
-interface PendingArchiveDataV3 {
-  version: 3
+interface PendingArchiveDataV4 {
+  version: 4
   stages: {
     character: PendingStageState
-    memory: PendingStageState
+    memoryExtract: PendingStageState   // v4 新名 (v3 字段名 memory 已废弃)
+    memoryOptimize: PendingStageState  // v4 新增 (独立 stage)
     plotArc: PendingStageState
     graph: PendingStageState
   }
@@ -419,8 +454,63 @@ interface PendingStageState {
 }
 ```
 
-**老 v1/v2 blob 无 `version` 字段** → 前端检测为老 shape，提示用户"数据格式过旧，请重新准备归档"。`PendingArchiveDataV3Schema` 在 `packages/shared/src/archive.ts` 定义，前后端共用。archive 端点对 `pending.version !== 3` 一律 400。
+**老 v1/v2 blob 无 `version` 字段** → 前端检测为老 shape，提示用户"数据格式过旧，请重新准备归档"。v3 数据（`version: 3` 或字段 `stages.memory`）一律 400 拒归档,提示用户重新准备归档。`PendingArchiveDataV4Schema` 在 `packages/shared/src/archive.ts` 定义，前后端共用。archive 端点对 `pending.version !== 4` 一律 400。
+
+> v3 stage 边界详见 `git log -p docs/LOGIC.md` 的历史版本。
 
 ---
 
-*本文档对应代码版本：commit `12c6880` 之前。生成工具：见 `docs/superpowers/specs/2026-06-16-codebase-analysis-design.md`。*
+## §7 · AI Provider 模型管理（v3+ 模型切换后补齐）
+
+> 业务方当前不需 thinking（自动批量生成 + 后台归档不需要"边想边写"），早期 V3 时代默认不关心 thinking 行为。切换到 DeepSeek V4-Flash（reasoning 模型）后，AI 经常把答案塞 `reasoning_content` + `content` 留空，导致 generate / memory_stage 偶发返回空内容。手调 thinking 不直观（API 字段不暴露），需要 UI 显式配置 + Provider 行为确定化。**2026-07-31 起落 thinking 三态配置**。
+
+### thinking 三态配置
+
+`AiProviderConfig.thinking: String @default("auto")`，合法值三态：
+
+| 值 | 行为 | 用例 |
+|----|------|------|
+| `auto` | 跟模型名启发式决定：DeepSeek 模型发 `{ thinking: { type: 'disabled' } }` 关上游 reasoning,其他模型保留上游默认 | 默认值,业务首选 |
+| `enabled` | 永远不发 disabled 字段,让上游按自身默认走(可能启用也可能不启用) | 极少数场景(需要 reasoning 提升质量时) |
+| `disabled` | 永远发 disabled 字段(不论模型),强制关 reasoning | 非 DeepSeek 模型也能显式关 |
+
+**单点决策**：`packages/ai-provider/src/index.ts:57` `shouldDisableThinking(model, thinking = 'auto'): boolean` 纯函数,`callCompletions` 入口统一调用,`generate` / `generateWithRuntime` 不重复判断。`normalizeThinking`（`apps/server/src/routes/ai-provider.ts:21`）校验非法值返 400。
+
+**UI**：`apps/web/src/views/ModelManager.vue` 表单"思考模式"三态 radio,默认 `auto`。**注意**:`.env` 的 `DEEPSEEK_API_KEY` 启动时由 `ai-provider-init.ts:117` 创建默认配置（`thinking: 'auto'`），但**不覆盖**用户已设值（`ai-provider-init.ts:94` 注释固化语义）。
+
+### DeepSeek V4-Flash reasoning 模型风险
+
+V4-Flash 是 reasoning 模型（`deepseek-v4-flash` / `deepseek/deepseek-v3.2` via OpenRouter 等），与 V3 (`deepseek-chat`) 行为差异：
+
+| 维度 | V3 `deepseek-chat` | V4-Flash `deepseek-v4-flash` |
+|------|---------------------|------------------------------|
+| 架构 | 非 reasoning chat | reasoning 模型 |
+| thinking 行为 | 默认无 | 默认开 |
+| content 字段 | 始终有答案 | 经常留空,答案塞 `reasoning_content` |
+| 结构化 JSON | 高 | 漂(thinking 散文化 + JSON 易被截断) |
+| 偶发 200+空 body | 罕 | 上游 bug 偶发 |
+
+`callCompletions` (`packages/ai-provider/src/index.ts:184-225`) 处理的 3 类边界:
+- **情况 A**: 200 + 全空白 body → 抛 "empty response body",提示 retry / 换模型 / 查 upstream 状态页
+- **情况 B**: 200 + 非空非 JSON body → 抛 "non-JSON response",带 body 切片方便识别 CDN 截断
+- **情况 C**: 200 + body.error 对象 → 抛 "API error: <msg>"
+
+### `REASONING_MAX_LENGTH_FOR_FALLBACK = 4096` 经验阈值（设计债）
+
+`packages/ai-provider/src/index.ts:122` `OpenAICompatibleProvider.REASONING_MAX_LENGTH_FOR_FALLBACK = 4096`：
+
+- **现状**：`extractContent` 在 `content` 空时 fallback `reasoning_content`;`reasoning_content.length > 4096` 抛"reasoning_content too long, 疑似纯思考"诊断
+- **问题**：4KB 是"短 = 答案 / 长 = 思考"的经验判断,不是原则限制
+- **用户决策（2026-08-01）**：A 方案 — 永远 throw, 删 fallback。thinking 三态配置已接管问题根源（请求端关,上游基本不产 `reasoning_content`,兜底路径触发频率接近 0）
+- **待执行**：单独 commit 删 `REASONING_MAX_LENGTH_FOR_FALLBACK` 常量 + 兜底逻辑 + 2 个相关测试
+- **详细**：见 `docs/ISSUES.md` [设计债] 节
+
+### CharacterBranchState 类型契约（v3+ bug fix）
+
+`CharacterBranchState.status` / `relationships` 是 `String` 列（存 JSON 文本）。prompt 写 `"status": <JSON 对象>` 但 `CharacterStateRow.status: string` —— **类型契约 vs prompt 措辞 vs 实际数据三者不一致**。`character-stage` 解析后 `w.status` 实际是 Object,`commitCharacterBranchStateWrites` 边界统一 `JSON.stringify`（`typeof === 'string'` 时不重复编码防双重）。
+
+**类型放宽**：`CharacterStateRow.status/relationships: string | object`（`apps/server/src/services/stages/character-stage.ts:19-26`）。**详细**：见 `docs/ISSUES.md` [Bug fix 备忘]。
+
+---
+
+*本文档对应代码版本：commit `2a2fd1b`（branch `v2/state-machine` 2026-07-31），含 v4 归档流水线 + thinking 三态 + CharacterBranchState 写库 + 4KB 阈值设计债。生成工具：见 `docs/superpowers/specs/2026-06-16-codebase-analysis-design.md`。*
