@@ -1,5 +1,61 @@
 import type { CharacterStateRow } from './stages/character-stage.js'
 
+export interface ConflictInfo {
+  writeIndex: number
+  reason: 'missing_key' | 'slug_name_mismatch'
+  existingCharacter?: { id: string; slug: string; name: string }
+  aiWrite?: CharacterStateRow
+}
+
+export class ConflictError extends Error {
+  constructor(public conflicts: ConflictInfo[]) {
+    super(`character write conflict: ${conflicts.length} issues`)
+    this.name = 'ConflictError'
+  }
+}
+
+export async function resolveAndCommitCharacterWrites(
+  tx: any,
+  storyId: string,
+  chapterNumber: number,
+  writes: CharacterStateRow[],
+  allExistingCharacters: Array<{ id: string; slug: string; name: string }>,
+  log?: { info: (msg: string) => void; warn: (msg: string) => void }
+): Promise<{ effectiveWrites: CharacterStateRow[]; conflicts: ConflictInfo[] }> {
+  const safeLog = log ?? { info: () => {}, warn: () => {} }
+  const effectiveWrites: CharacterStateRow[] = []
+  const conflicts: ConflictInfo[] = []
+
+  for (let i = 0; i < writes.length; i++) {
+    const w = writes[i]
+    if (!w.key || !w.key.trim()) {
+      conflicts.push({ writeIndex: i, reason: 'missing_key', aiWrite: w })
+      continue
+    }
+    const existing = allExistingCharacters.find(c => c.slug === w.key)
+    if (existing) {
+      if (existing.name === w.name) {
+        effectiveWrites.push({ ...w, characterId: existing.id, isNew: false })
+      } else {
+        conflicts.push({
+          writeIndex: i,
+          reason: 'slug_name_mismatch',
+          existingCharacter: existing,
+          aiWrite: w
+        })
+        safeLog.warn(
+          `[CharacterResolve] slug conflict: AI returned name="${w.name}" for slug="${w.key}", but existing character has name="${existing.name}"`
+        )
+      }
+    } else {
+      effectiveWrites.push({ ...w, characterId: null, isNew: true })
+    }
+  }
+
+  return { effectiveWrites, conflicts }
+}
+
+
 /**
  * 在事务中提交角色分支状态写入 (P0 fix: 修 v3 archive 不写 CharacterBranchState 表)
  *
