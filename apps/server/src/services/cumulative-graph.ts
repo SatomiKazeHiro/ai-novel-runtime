@@ -163,7 +163,13 @@ export function codeMerge(prev: GraphSnapshot, chapterGraph: GraphSnapshot, now:
   //   - AI 输出 mappings, 程序 applyRelationMapping 重写 prev/chapterGraph 的 relation 字段
   //   - 这里 codeMerge 看到的是归一后字面, 五元组 key 命中, weight 累加正确
   const edgeMap = new Map<string, any>()
-  for (const e of [...prev.edges, ...chapterGraph.edges]) {
+  // 先放 prev 边，保留历史累计 weight（不能像旧逻辑那样把 prev 的 weight 重置为 1）
+  for (const e of prev.edges) {
+    const k = `${e.fromType}:${e.fromKey}|${e.relation}|${e.toType}:${e.toKey}`
+    edgeMap.set(k, { ...e, weight: e.weight ?? 1 })
+  }
+  // 再合并 chapterGraph 边：命中 +1（忽略 AI 的 weight），未命中 set 1
+  for (const e of chapterGraph.edges) {
     const k = `${e.fromType}:${e.fromKey}|${e.relation}|${e.toType}:${e.toKey}`
     const existing = edgeMap.get(k)
     if (existing) {

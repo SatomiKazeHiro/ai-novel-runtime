@@ -143,6 +143,22 @@ describe('codeMerge', () => {
     expect(result.edges[0].weight).toBe(2)
   })
 
+  it('preserves prev cumulative weight (>1) instead of resetting to 1', () => {
+    const prev = {
+      nodes: [{ type: 'character', key: 'a', label: 'A', data: {} }],
+      edges: [{ fromType: 'character', fromKey: 'a', toType: 'character', toKey: 'b', relation: '友', weight: 2 }],
+      timestamp: ts
+    }
+    const chapterGraph = {
+      nodes: [{ type: 'character', key: 'a', label: 'A', data: {} }],
+      edges: [{ fromType: 'character', fromKey: 'a', toType: 'character', toKey: 'b', relation: '友', weight: 1 }],
+      timestamp: ts
+    }
+    const result = codeMerge(prev, chapterGraph, ts)
+    expect(result.edges).toHaveLength(1)
+    expect(result.edges[0].weight).toBe(3) // 2 (prev 历史) + 1 (chapterGraph)，而非重置 1 再 +1=2
+  })
+
   it('treats different relation literal as different edge', () => {
     const prev = {
       nodes: [{ type: 'character', key: 'a', label: 'A', data: {} }],
