@@ -45,11 +45,12 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { NButton, NEmpty, NSpin, useMessage } from 'naive-ui'
+import { NButton, NEmpty, NSpin, useMessage, useDialog } from 'naive-ui'
 import { plotArcApi } from '../api/plot-arc'
 
 const route = useRoute()
 const message = useMessage()
+const dialog = useDialog()
 const arcs = ref<any[]>([])
 const loading = ref(false)
 
@@ -77,14 +78,22 @@ async function loadArcs() {
   }
 }
 
-async function closeArc(arc: any) {
-  try {
-    await plotArcApi.close(arc.id)
-    message.success('已关闭')
-    await loadArcs()
-  } catch (err: any) {
-    message.error(err?.response?.data?.error || '关闭失败')
-  }
+function closeArc(arc: any) {
+  dialog.warning({
+    title: '确认关闭剧情弧线',
+    content: `确定要关闭「${arc.name}」吗？关闭后该弧线不再注入后续章节生成。`,
+    positiveText: '关闭',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await plotArcApi.close(arc.id)
+        message.success('已关闭')
+        await loadArcs()
+      } catch (err: any) {
+        message.error(err?.response?.data?.error || '关闭失败')
+      }
+    }
+  })
 }
 
 onMounted(loadArcs)
