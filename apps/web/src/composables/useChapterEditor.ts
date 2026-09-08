@@ -5,10 +5,6 @@ import { plotArcApi } from '../api/plot-arc'
 import { runtimeApi as runtimeProfileApi } from '../api/runtime'
 import { aiProviderApi } from '../api/ai-provider'
 
-// v3 pendingArchiveData 空骨架。撤销审查 / 版本不匹配时可作为占位默认值,
-// 避免模板访问 stages/meta 时报 undefined。
-export const V3_EMPTY_PAYLOAD = { version: 3, stages: {}, meta: { extractedAt: '', chapterNumber: 0 } }
-
 export function useChapterEditor(storyId: () => string | undefined) {
   const message = useMessage()
 
@@ -22,7 +18,7 @@ export function useChapterEditor(storyId: () => string | undefined) {
   const editForm = ref({ outline: '', content: '', sceneLocation: '', sceneMood: '', sceneGoal: '' })
   const plotArcs = ref<any[]>([])
   const chapterGraph = ref<any>(null)
-  const pendingArchiveData = ref<any>(null)  // v3 shape: { version: 3, stages: {...}, meta }
+  const pendingArchiveData = ref<any>(null)  // v4 shape: { version: 4, stages: {...}, meta }
   const savingContent = ref(false)
 
   async function loadProfiles() {

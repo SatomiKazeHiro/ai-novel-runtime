@@ -249,7 +249,7 @@
 
         <!-- ========== Step 3.5: 归档审查 (嵌入 ReviewingPanel) ========== -->
         <ReviewingPanel
-            v-if="chapter?.status === 'reviewing' && pendingArchiveData?.version === 3"
+            v-if="chapter?.status === 'reviewing' && pendingArchiveData?.version === 4"
             :pending="pendingArchiveData"
             :retrying-stages="retryingStages"
             :chapter-id="chapter.id"

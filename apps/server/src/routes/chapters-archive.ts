@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { randomBytes } from 'crypto'
 import { PrepareArchiveRequestSchema, safeJsonParse } from '@novel-runtime/shared'
-import type { PendingArchiveDataV3, PendingArchiveDataV4, PendingStageState, RetryStageName } from '@novel-runtime/shared'
+import type { PendingArchiveDataV4, PendingStageState, RetryStageName } from '@novel-runtime/shared'
 import { parseBody, getOrThrowChapter } from './_helpers.js'
 import { runCharacterStage, type CharacterStageResult } from '../services/stages/character-stage.js'
 import { runMemoryStage, type MemoryStageResult } from '../services/stages/memory-stage.js'
@@ -538,8 +538,8 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     }
 
     // 读 existing pendingArchiveData, 重建并加 cumulativeGraph 字段
-    const existing = safeJsonParse<PendingArchiveDataV3 | null>(chapter.pendingArchiveData, null)
-    if (!existing || existing.version !== 3) {
+    const existing = safeJsonParse<PendingArchiveDataV4 | null>(chapter.pendingArchiveData, null)
+    if (!existing || existing.version !== 4) {
       return reply.status(400).send({
         success: false,
         error: '当前章节没有 pendingArchiveData,无法生成累计图谱(请先 prepare-archive)',
@@ -579,7 +579,7 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
     }
 
     const generatedAt = new Date().toISOString()
-    const updatedPending: PendingArchiveDataV3 = {
+    const updatedPending: PendingArchiveDataV4 = {
       ...existing,
       cumulativeGraph: result.cumulativeGraph,
       cumulativeGraphGeneratedAt: generatedAt,
