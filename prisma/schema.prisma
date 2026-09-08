@@ -24,7 +24,6 @@ model Story {
   characters  Character[]
   loreItems   LoreItem[]
   memories    Memory[]
-  timelineEvents TimelineEvent[]
   drafts      Draft[]
   scores      Score[]
   plotArcs    PlotArc[]
@@ -192,24 +191,6 @@ model Memory {
   @@index([storyId, category])
   @@index([storyId, fromChapterNumber])
   @@index([storyId, originUid])
-}
-
-// 时间线事件。**@deprecated** v3 删除。理由见 docs/DESIGN.md 决策日志。
-// 强 Y.DDDHH 时间戳假设排除无时间/模糊时间/嵌套叙事类故事;
-// findMany 全量注入与 Memory.semantic recall 重复。v3 改为 chapterNumber 排序的弱化版
-// (或并入 Memory layer='event')。
-model TimelineEvent {
-  id                String   @id @default(uuid())
-  storyId           String
-  fromChapterNumber Float?   // 来源章节序号（archive 时标记）
-  position          Float    // 实数时间编码 YYYY.MMDD.HH（整数位=年，依次为月/日/时；缺位=0）
-  events            String   @default("[]") // JSON string array of event descriptions
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  story             Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-
-  @@unique([storyId, position])
 }
 
 // 候选/废案
