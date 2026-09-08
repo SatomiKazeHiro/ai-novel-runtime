@@ -1,20 +1,19 @@
 <template>
-  <div class="stage-card" :data-status="status">
+  <!-- stage-card 不再持有自己的外框,由父级 ReviewingPanel 提供单一卡片壳 -->
+  <div class="stage-card" :data-status="dataStatus">
     <header class="sc-header">
       <div class="sc-heading">
         <h3 class="sc-title">{{ title }}</h3>
         <p v-if="caption" class="sc-caption">{{ caption }}</p>
       </div>
 
-      <!-- 勘印章:平方双线外框 + 中心一字 -->
-      <span class="sc-seal" :data-status="status" :title="statusLabel" aria-hidden="true">
-        <span class="sc-seal-char">{{ sealChar }}</span>
-      </span>
+      <!-- 状态点:取代此前的印/驳/待 双线外框,8px 圆点 + data-status 着色 -->
+      <span class="sc-dot" :data-status="status" :title="status" aria-hidden="true"></span>
     </header>
 
     <div v-if="status === 'failed'" class="sc-error">
       <span class="sc-error-mark" aria-hidden="true">×</span>
-      <span class="sc-error-text">{{ state?.errorMessage || '本次解析未通过，点“再校”重试本阶段' }}</span>
+      <span class="sc-error-text">{{ state?.errorMessage || '本次解析未通过,点"再校"重试本阶段' }}</span>
     </div>
 
     <div v-else-if="status === 'running'" class="sc-state">
@@ -38,6 +37,11 @@
 import { computed } from 'vue'
 import { NSpin } from 'naive-ui'
 
+defineEmits<{
+  /** 子级 StageResultView 发出,父级 ReviewingPanel 监听并再 emit 到上一层 */
+  (e: 'delete-row', section: string, index: number): void
+}>()
+
 const props = defineProps<{
   stageName: 'character' | 'memory' | 'plotArc' | 'graph'
   state?: {
@@ -51,6 +55,31 @@ const props = defineProps<{
 
 const status = computed(() => props.state?.status || 'pending')
 
+/**
+ * data-status:
+ * - failed → 列级别错误处理(下边缘红线 + 标题加粗)
+ * - empty  → 列级别空态降透明度 (success 但 result 无内容)
+ * - 其他   → 不渲染,交给默认主题
+ */
+const dataStatus = computed(() => {
+  if (status.value === 'failed') return 'failed'
+  if (status.value === 'success') {
+    const r = props.state?.result as null | undefined | Record<string, unknown>
+    if (r === null || r === undefined) return 'empty'
+    const { mainEvents, sideEvents, scenes, characterStates, plotArcs, chapterGraph } = r as any
+    const sum =
+      (mainEvents?.length ?? 0) +
+      (sideEvents?.length ?? 0) +
+      (scenes?.length ?? 0) +
+      (characterStates?.length ?? 0) +
+      (plotArcs?.length ?? 0)
+    const graphCount =
+      (chapterGraph?.nodes?.length ?? 0) + (chapterGraph?.edges?.length ?? 0)
+    if (sum === 0 && graphCount === 0) return 'empty'
+  }
+  return status.value
+})
+
 const title = computed(() => ({
   character: '角色状态',
   memory: '记忆提取',
@@ -58,22 +87,7 @@ const title = computed(() => ({
   graph: '本章图谱'
 }[props.stageName]))
 
-const statusLabel = computed(() => ({
-  pending: '待校',
-  running: '待校',
-  success: '已勘印',
-  failed: '驳回'
-} as Record<string, string>)[status.value])
-
-/** 勘印章中心字：印(通过) / 驳(失败) / 待(待校或进行中)。 */
-const sealChar = computed(() => ({
-  success: '印',
-  failed: '驳',
-  running: '待',
-  pending: '待'
-} as Record<string, string>)[status.value])
-
-/** header 右侧 caption：仅在 state 携带提取信息时渲染。 */
+/** header 下方 caption:仅在 state 携带提取信息时渲染 */
 const caption = computed(() => {
   const at = props.state?.extractedAt
   const n = props.state?.chapterNumber
@@ -86,13 +100,11 @@ const caption = computed(() => {
 </script>
 
 <style scoped>
-/* 古籍校样终审：纯白纸面 + 单线细边，无色条、无装饰、无实心徽章。 */
+/* column 内不持外框:背景透明,由 grid 单层边框串联 */
 .stage-card {
   position: relative;
-  border: 1px solid var(--color-pebble-border);
-  border-radius: var(--radius-card);
-  background: var(--color-pure-white);
   padding: 20px;
+  background: transparent;
 }
 
 /* === Header === */
@@ -120,6 +132,11 @@ const caption = computed(() => {
   line-height: 1.4;
 }
 
+/* 失败列标题加粗 */
+.stage-card[data-status='failed'] .sc-title {
+  font-weight: var(--weight-bold);
+}
+
 .sc-caption {
   margin: 0;
   font-family: var(--font-mono);
@@ -128,50 +145,34 @@ const caption = computed(() => {
   letter-spacing: 0.02em;
 }
 
-/* === 勘印章 === */
-.sc-seal {
+/* === 状态点 === */
+.sc-dot {
   flex: 0 0 auto;
-  position: relative;
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  /* 外粗线 */
-  border: 1px solid currentColor;
-  border-radius: 2px;
-  color: var(--color-muted-ash);
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-muted-ash);
+  margin-top: 6px;
 }
-/* 内细线：靠 inset box-shadow 画第二道框，形成“双线外框” */
-.sc-seal::before {
-  content: '';
-  position: absolute;
-  inset: 2px;
-  border: 0.5px solid currentColor;
-  border-radius: 1px;
-  opacity: 0.55;
-  pointer-events: none;
-}
-.sc-seal-char {
-  font-family: 'Songti SC', 'STSong', 'Noto Serif CJK SC', serif;
-  font-size: 14px;
-  font-weight: var(--weight-semibold);
-  line-height: 1;
-  color: currentColor;
-}
-
-.sc-seal[data-status='success'] {
-  color: var(--color-ink-black);
-  /* 极淡外阴影模拟红泥沁染 */
-  box-shadow: 0 0 6px rgba(185, 76, 76, 0.10);
-}
-.sc-seal[data-status='failed'] { color: var(--color-error); }
-.sc-seal[data-status='running'] { color: var(--color-warm-accent); }
-.sc-seal[data-status='pending'] { color: var(--color-muted-ash); }
+.sc-dot[data-status='success'] { background: var(--color-positive); }
+.sc-dot[data-status='failed']  { background: var(--color-error); }
+.sc-dot[data-status='running'] { background: var(--color-warm-accent); }
+.sc-dot[data-status='pending'] { background: var(--color-muted-ash); }
 
 /* === Body / states === */
 .sc-body {
   margin-top: var(--space-4);
+}
+
+/* empty 列:整体降透明度 */
+.stage-card[data-status='empty'] .sc-body,
+.stage-card[data-status='empty'] .sc-state,
+.stage-card[data-status='empty'] .sc-caption {
+  opacity: 0.55;
+}
+.stage-card[data-status='empty'] .sc-title {
+  color: var(--color-muted-ash);
 }
 
 .sc-state {
@@ -183,7 +184,7 @@ const caption = computed(() => {
   color: var(--color-muted-ash);
 }
 
-/* 失败：一行错误文字，无背景 tint */
+/* 失败:一行错误文字,无背景 tint */
 .sc-error {
   margin-top: var(--space-3);
   display: flex;

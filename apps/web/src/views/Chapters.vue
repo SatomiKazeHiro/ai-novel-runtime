@@ -281,9 +281,18 @@ async function handlePrepareArchiveCancel() {
 }
 
 async function handleUpdateStage(stageName: string, result: unknown) {
-    // v3: StageCard 是只读展示,目前不向父组件传回 stage 变更;
-    // 留作未来允许用户在面板内编辑 stage 数据的扩展点。
-    console.debug("[handleUpdateStage] noop", stageName, result);
+    // v3 改造:用户在 ReviewingPanel 点行内 × 删除 AI 输出后,
+    // 把改动深拷贝到 pendingArchiveData.stages[stageName].result 并静默持久化。
+    // savePendingArchiveData 内部已用 1s 静默,不会每点 × 就 message 一次。
+    if (!editor.pendingArchiveData) return
+    const next = JSON.parse(JSON.stringify(editor.pendingArchiveData))
+    if (!next.stages) next.stages = {}
+    if (!next.stages[stageName]) {
+        next.stages[stageName] = { status: 'success', result }
+    } else {
+        next.stages[stageName].result = result
+    }
+    await editor.savePendingArchiveData(next)
 }
 
 async function handleReprepareArchive() {

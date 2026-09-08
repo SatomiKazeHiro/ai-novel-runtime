@@ -15,6 +15,12 @@
           :key="i"
           class="sc-item"
         >
+          <button
+            type="button"
+            class="sc-row-del"
+            aria-label="删除"
+            @click="$emit('delete-row', 'characterStates', i)"
+          >×</button>
           <div class="sc-line">
             <span class="sc-name">{{ row.name }}</span>
             <code class="sc-mono">{{ row.key }}</code>
@@ -43,6 +49,12 @@
       </header>
       <ul class="sc-list">
         <li v-for="(ev, i) in result.mainEvents" :key="`m${i}`" class="sc-item">
+          <button
+            type="button"
+            class="sc-row-del"
+            aria-label="删除"
+            @click="$emit('delete-row', 'mainEvents', i)"
+          >×</button>
           <div class="sc-line">
             <span class="sc-imp" :data-imp="ev.importance">{{ ev.importance }}</span>
             <span>{{ ev.description }}</span>
@@ -64,6 +76,12 @@
       </header>
       <ul class="sc-list">
         <li v-for="(ev, i) in result.sideEvents" :key="`s${i}`" class="sc-item">
+          <button
+            type="button"
+            class="sc-row-del"
+            aria-label="删除"
+            @click="$emit('delete-row', 'sideEvents', i)"
+          >×</button>
           <div class="sc-line">
             <span class="sc-imp" :data-imp="ev.importance">{{ ev.importance }}</span>
             <span>{{ ev.description }}</span>
@@ -131,6 +149,12 @@
           :key="i"
           class="sc-item"
         >
+          <button
+            type="button"
+            class="sc-row-del"
+            aria-label="删除"
+            @click="$emit('delete-row', 'plotArcs', i)"
+          >×</button>
           <div class="sc-line">
             <span class="sc-name">{{ arc.name }}</span>
             <span v-if="arc.isNew" class="sc-flag is-new">新增</span>
@@ -281,6 +305,15 @@ import { computed } from 'vue'
 const props = defineProps<{
   stageName: 'character' | 'memory' | 'plotArc' | 'graph'
   result: any
+}>()
+
+/**
+ * delete-row:用户点击行内 × 时抛向父 StageCard → ReviewingPanel。
+ * 由 ReviewingPanel 真正修改 pending.stages[stageName].result,再 emit('update-stage')。
+ * graph 阶段不出 × 按钮,因此不会抛出。
+ */
+defineEmits<{
+  (e: 'delete-row', section: string, index: number): void
 }>()
 
 /**
@@ -668,6 +701,7 @@ const graphLegend = computed(() => {
 
 /* 列表项:无边框、无底色，仅靠行距分隔 */
 .sc-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -678,6 +712,36 @@ const graphLegend = computed(() => {
 }
 .sc-item--flat {
   gap: 0;
+}
+
+/* 行内 × 删除按钮:默认透明，hover/focus-within 时显现 */
+.sc-row-del {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--color-muted-ash);
+  font-size: 14px;
+  line-height: 18px;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.sc-item:hover .sc-row-del,
+.sc-item:focus-within .sc-row-del {
+  opacity: 1;
+}
+.sc-row-del:hover,
+.sc-row-del:focus-visible {
+  color: var(--color-error);
+  opacity: 1;
+  outline: none;
 }
 
 /* name 在前，meta 在右，inline flex */
