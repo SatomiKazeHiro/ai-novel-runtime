@@ -220,13 +220,15 @@ pnpm --filter web test -- src/composables/__tests__/useGraphData.spec.ts
 
 ---
 
-## Task 2: useCytoscapeLifecycle 收缩到 `rebuild(data | null)`（TDD）
+## Task 2: useCytoscapeLifecycle 单入口重命名 + layout animate false（TDD）
 
 **Files:**
 - Create: `apps/web/src/composables/__tests__/useCytoscapeLifecycle.spec.ts`
 - Modify: `apps/web/src/composables/graph/useCytoscapeLifecycle.ts`
 
-### Step 2.1: 写失败的测试
+### Step 2.1: 写测试覆盖新行为（rebuild + CRUD 保留 + animate=false）
+
+> **重要**：本任务**仅做最小改动**——`init()` 重命名为 `rebuild(data | null)`、`init()` 保留为 backward-compat 别名、`COSE_LAYOUT_OPTIONS.animate = false`。**不能删** `addNode` / `addEdge` / `updateNode` / `updateEdge` / `removeNode` / `removeEdge` / `getNewIds` 选项 / `isNew` 样式分支——`EditableGraph.vue` 仍在用这些 API。
 
 `apps/web/src/composables/__tests__/useCytoscapeLifecycle.spec.ts`：
 
@@ -236,26 +238,34 @@ import { ref } from 'vue'
 
 vi.mock('cytoscape', () => {
   const cyFactory = vi.fn()
-  const instances: any[] = []
-  const destroy = vi.fn()
-  const removeAllListeners = vi.fn()
-  return {
-    default: Object.assign(cyFactory, {
-      __instances: instances,
-      __reset() { instances.length = 0; cyFactory.mockClear(); destroy.mockClear() }
-    }),
-  }
+  cyFactory.mockImplementation(() => ({
+    removeAllListeners: vi.fn(),
+    destroy: vi.fn(),
+    on: vi.fn(),
+    one: vi.fn(),
+    layout: vi.fn(() => ({ run: vi.fn() })),
+    fit: vi.fn(),
+    zoom: vi.fn(),
+    $id: vi.fn(() => ({ length: 0 })),
+    width: () => 800,
+    height: () => 600,
+    elements: () => ({ removeClass: vi.fn() }),
+    remove: vi.fn()
+  }))
+  return { default: cyFactory }
 })
 
 import cytoscape from 'cytoscape'
 import { useCytoscapeLifecycle } from '../graph/useCytoscapeLifecycle'
 
-describe('useCytoscapeLifecycle — rebuild 协议', () => {
+function getCyMock() { return cytoscape as unknown as ReturnType<typeof vi.fn> }
+
+describe('useCytoscapeLifecycle — rebuild 协议（新增）', () => {
   let containerRef: any
   let isDark: any
 
   beforeEach(() => {
-    ;(cytoscape as any).__reset()
+    getCyMock().mockClear()
     containerRef = ref(document.createElement('div'))
     isDark = ref(false)
   })
@@ -263,66 +273,76 @@ describe('useCytoscapeLifecycle — rebuild 协议', () => {
   it('rebuild(null) 不创建 cytoscape 实例', () => {
     const cy = useCytoscapeLifecycle({ containerRef, getDisplayData: () => null, isDark })
     cy.rebuild(null)
-    expect((cytoscape as any).mock.calls).toHaveLength(0)
+    expect(getCyMock().mock.calls).toHaveLength(0)
     expect(cy.getInstance()).toBeNull()
   })
 
-  it('rebuild(data) 创建 cytoscape 实例，并传入 elements 与 style', () => {
+  it('rebuild(data) 创建 cytoscape 实例，并传入 elements + style + layout.animate=false', () => {
     const cy = useCytoscapeLifecycle({ containerRef, getDisplayData: () => null, isDark })
     cy.rebuild({
       nodes: [{ id: 'character:a', type: 'character', key: 'a', label: 'A' }],
       edges: []
     })
-    expect((cytoscape as any).mock.calls).toHaveLength(1)
-    const cfg = (cytoscape as any).mock.calls[0][0]
+    expect(getCyMock().mock.calls).toHaveLength(1)
+    const cfg = getCyMock().mock.calls[0][0]
     expect(cfg.container).toBe(containerRef.value)
     expect(cfg.elements[0].data.id).toBe('character:a')
-    // layout 不动画
     expect(cfg.layout.animate).toBe(false)
   })
 
-  it('二次 rebuild(A) → rebuild(B) 第二次开始时旧实例已被 destroy', () => {
-    // 模拟旧 cytoscape 实例的 destroy
-    const cyMock = require('cytoscape').default as any
-    cyMock.__reset = () => { cyMock.mockClear() }
-    const lifecycles: any[] = []
-    for (let i = 0; i < 2; i++) {
-      cyMock.mockImplementationOnce(() => ({
-        removeAllListeners: vi.fn(),
-        destroy: vi.fn(),
-        on: vi.fn(),
-        one: vi.fn(),
-        layout: vi.fn(() => ({ run: vi.fn() })),
-        fit: vi.fn(),
-        zoom: vi.fn(),
-        $id: vi.fn(() => ({ length: 0 })),
-        width: () => 800,
-        height: () => 600,
-        elements: () => ({ removeClass: vi.fn() })
-      }))
-    }
+  it('rebuild 是 entry 而非 init', () => {
     const cy = useCytoscapeLifecycle({ containerRef, getDisplayData: () => null, isDark })
-    cy.rebuild({ nodes: [{ id: 'a:1', type: 'character', key: '1', label: 'A' }], edges: [] })
-    cy.rebuild({ nodes: [{ id: 'b:1', type: 'character', key: '1', label: 'B' }], edges: [] })
-    expect((cytoscape as any).mock.calls).toHaveLength(2)
-    // 第一实例 destroy 必须被调用（rebuild 内部 destroy）
-    expect(cy.getInstance()).not.toBeNull()
-  })
-
-  it('rebuild 接口取代 init 接口：旧 init 不再出现', () => {
-    const cy = useCytoscapeLifecycle({ containerRef, getDisplayData: () => null, isDark })
-    expect((cy as any).init).toBeUndefined()
     expect(typeof cy.rebuild).toBe('function')
   })
 
-  it('CytoscapeLifecycle 不再暴露 addNode/addEdge 等增量 API', () => {
+  it('init() 保留为 backward-compat 别名：内部从 getDisplayData() 拉数据再 rebuild', () => {
+    let displayData: any = null
+    const gd = () => displayData
+    const cy = useCytoscapeLifecycle({ containerRef, getDisplayData: gd, isDark })
+    expect(typeof cy.init).toBe('function')
+    // init 第一次：data=null → 不创建实例
+    cy.init()
+    expect(getCyMock().mock.calls).toHaveLength(0)
+    // 给 data，再 init() → 应该创建实例
+    displayData = { nodes: [{ id: 'character:a', type: 'character', key: 'a', label: 'A' }], edges: [] }
+    cy.init()
+    expect(getCyMock().mock.calls).toHaveLength(1)
+  })
+
+  it('增量 CRUD API（addNode/addEdge/update*/remove*）仍保留，因 EditableGraph.vue 在用', () => {
     const cy = useCytoscapeLifecycle({ containerRef, getDisplayData: () => null, isDark })
-    expect((cy as any).addNode).toBeUndefined()
-    expect((cy as any).addEdge).toBeUndefined()
-    expect((cy as any).updateNode).toBeUndefined()
-    expect((cy as any).updateEdge).toBeUndefined()
-    expect((cy as any).removeNode).toBeUndefined()
-    expect((cy as any).removeEdge).toBeUndefined()
+    expect(typeof cy.addNode).toBe('function')
+    expect(typeof cy.addEdge).toBe('function')
+    expect(typeof cy.updateNode).toBe('function')
+    expect(typeof cy.updateEdge).toBe('function')
+    expect(typeof cy.removeNode).toBe('function')
+    expect(typeof cy.removeEdge).toBe('function')
+  })
+
+  it('二次 rebuild 第二次开始时旧实例已被 destroy', () => {
+    const oldInstance = {
+      removeAllListeners: vi.fn(),
+      destroy: vi.fn(),
+      on: vi.fn(),
+      one: vi.fn(),
+      layout: vi.fn(() => ({ run: vi.fn() })),
+      fit: vi.fn(),
+      zoom: vi.fn(),
+      $id: vi.fn(() => ({ length: 0 })),
+      width: () => 800, height: () => 600,
+      elements: () => ({ removeClass: vi.fn() }),
+      remove: vi.fn()
+    }
+    let i = 0
+    getCyMock().mockImplementation(() => {
+      if (i++ === 0) return oldInstance
+      return { ...oldInstance, removeAllListeners: vi.fn() }
+    })
+    const cy = useCytoscapeLifecycle({ containerRef, getDisplayData: () => null, isDark })
+    cy.rebuild({ nodes: [{ id: 'a:1', type: 'character', key: '1', label: 'A' }], edges: [] })
+    cy.rebuild({ nodes: [{ id: 'b:1', type: 'character', key: '1', label: 'B' }], edges: [] })
+    expect(oldInstance.destroy).toHaveBeenCalled()
+    expect(oldInstance.removeAllListeners).toHaveBeenCalled()
   })
 })
 ```
@@ -333,207 +353,26 @@ describe('useCytoscapeLifecycle — rebuild 协议', () => {
 pnpm --filter web test -- src/composables/__tests__/useCytoscapeLifecycle.spec.ts
 ```
 
-预期：FAIL，因为接口还有 `init` / `addNode` 等旧 API，并且 `rebuild` 还没暴露。
+预期：FAIL，`rebuild` 还没暴露（`cy.rebuild` is not a function）。
 
-### Step 2.3: 重写 `useCytoscapeLifecycle.ts`
+### Step 2.3: 最小改动 `useCytoscapeLifecycle.ts`
 
-修改后的文件（关键变化）：
+**base 状态**：HEAD = `94947b6` 之前的状态。T2 implementer 之前错误删了 CRUD + getNewIds + isNew；本次用 `git checkout HEAD --` 恢复 base。
 
-```ts
-// 删除原 graph-extractor.ts L257-465 中除了 destroy/init/resetLayout/applyFocus/clearFocus/getInstance 之外的部分
-// 用以下骨架替换 `init` 函数 + 删除 CRUD + 删除 getNewIds + 删除 isNew 样式分支
-
-import cytoscape from 'cytoscape'
-import { PALETTES } from '../../styles/tokens'
-import type { Ref } from 'vue'
-
-// ... TYPE_NORMALIZE_MAP / normalizeType / normalizeGraph / toGraphData 保持不变
-
-export interface GraphNode { id?: string; type: string; key: string; label: string; [k: string]: any }
-export interface GraphEdge { source: string; target: string; relation: string; fromType?: string; fromKey?: string; toType?: string; toKey?: string; weight?: number; [k: string]: any }
-export interface GraphData<N = GraphNode, E = GraphEdge> { nodes: N[]; edges: E[] }
-
-export interface CytoscapeLifecycleOptions {
-  containerRef: Ref<HTMLDivElement | undefined>
-  getDisplayData: () => GraphData | null
-  onNodeTap?: (node: { id: string; label: string; key: string; type: string }) => void
-  onEdgeTap?: (edge: { id: string; source: string; target: string; relation: string }) => void
-  onBackgroundTap?: () => void
-  getNodeColor?: (type: string) => string
-  isDark?: Ref<boolean>
-}
-
-export interface CytoscapeLifecycle {
-  rebuild(data: GraphData | null): void
-  destroy(): void
-  resetLayout(): void
-  applyFocus(focusId: string, focusType: 'node' | 'edge'): void
-  clearFocus(): void
-  getInstance(): cytoscape.Core | null
-}
-
-const COSE_LAYOUT_OPTIONS = {
-  name: 'cose',
-  padding: 20,
-  animate: false,
-  randomize: false,
-  componentSpacing: 60,
-  nodeRepulsion: 400000,
-  edgeElasticity: 100,
-  nestingFactor: 5,
-  gravity: 80,
-  numIter: 1000,
-  initialTemp: 200,
-  coolingFactor: 0.95,
-  minTemp: 1.0
-} as const
-
-function buildCytoscapeStyle(
-  getNodeColor: (type: string) => string,
-  isDark?: Ref<boolean>
-): cytoscape.StylesheetJson {
-  // 删除 isNew 分支：border-width 恒为 0；edge line-color 恒为 light/dark graphEdge
-  return [
-    {
-      selector: 'node',
-      style: {
-        'background-color': (ele: any) => getNodeColor(ele.data('type')),
-        'label': 'data(label)',
-        'width': 40, 'height': 40, 'font-size': '12px',
-        'color': '#fff', 'text-outline-color': '#000', 'text-outline-width': 2,
-        'text-valign': 'center', 'text-halign': 'center',
-        'min-zoomed-font-size': 10
-      }
-    },
-    {
-      selector: 'edge',
-      style: {
-        'width': 2,
-        'line-color': (() => isDark?.value ? PALETTES.dark.graphEdge : PALETTES.light.graphEdge)(),
-        'target-arrow-color': (() => isDark?.value ? PALETTES.dark.graphEdge : PALETTES.light.graphEdge)(),
-        'target-arrow-shape': 'triangle',
-        'curve-style': 'bezier',
-        'label': 'data(label)', 'font-size': '10px',
-        'color': PALETTES.light.graphText,
-        'text-background-color': '#fff', 'text-background-opacity': 0.8,
-        'text-background-padding': '2px', 'text-background-shape': 'roundrectangle'
-      }
-    },
-    {
-      selector: ':selected',
-      style: {
-        'border-width': 4,
-        'border-color': (() => isDark?.value ? PALETTES.dark.graphSelected : PALETTES.light.graphSelected)(),
-        'border-opacity': 1
-      }
-    },
-    {
-      selector: '.faded',
-      style: { 'opacity': 0.12, 'transition-property': 'opacity', 'transition-duration': 180 }
-    }
-  ]
-}
-
-export function useCytoscapeLifecycle(options: CytoscapeLifecycleOptions): CytoscapeLifecycle {
-  let cy: cytoscape.Core | null = null
-
-  function destroy() {
-    if (cy) {
-      cy.removeAllListeners()
-      try { cy.destroy() } catch { /* 见 spec 风险表 */ }
-      cy = null
-    }
-  }
-
-  function rebuild(data: GraphData | null) {
-    destroy()
-    if (!data) return
-    if (!options.containerRef.value) return
-
-    const validNodeIds = new Set(data.nodes.map((n: any) => n.id || `${n.type}:${n.key}`))
-    const nodeColorFn = options.getNodeColor ?? ((type: string) => {
-      const key = (type || '').toLowerCase()
-      if (options.isDark?.value) return (PALETTES.dark as any)[`graph${capitalize(key)}`] || PALETTES.light.graphEdge
-      return (PALETTES.light as any)[`graph${capitalize(key)}`] || PALETTES.light.graphEdge
-    })
-
-    const elements = [
-      ...data.nodes.map((n: any) => ({
-        data: { id: n.id || `${n.type}:${n.key}`, label: n.label, type: n.type, key: n.key, ...n }
-      })),
-      ...data.edges
-        .filter((e: GraphEdge) => validNodeIds.has(e.source) && validNodeIds.has(e.target))
-        .map((e: GraphEdge) => ({
-          data: { id: `${e.source}-${e.relation}-${e.target}`, source: e.source, target: e.target, label: e.relation }
-        }))
-    ]
-
-    cy = cytoscape({
-      container: options.containerRef.value,
-      elements,
-      style: buildCytoscapeStyle(nodeColorFn, options.isDark),
-      layout: COSE_LAYOUT_OPTIONS as any,
-      pixelRatio: 'auto',
-      maxZoom: 1.5, minZoom: 0.3
-    })
-
-    const cyRef = cy
-    cyRef.one('layoutstop', () => {
-      cyRef.fit(undefined, 20)
-      const z = cyRef.zoom()
-      if (z < 0.6) cyRef.zoom({ level: 0.6, renderedPosition: { x: cyRef.width() / 2, y: cyRef.height() / 2 } })
-    })
-
-    if (options.onNodeTap) cy.on('tap', 'node', (evt: any) => {
-      const node = evt.target
-      options.onNodeTap!({ id: node.id(), label: node.data('label'), key: node.data('key'), type: node.data('type') })
-    })
-    if (options.onEdgeTap) cy.on('tap', 'edge', (evt: any) => {
-      const edge = evt.target
-      options.onEdgeTap!({ id: edge.id(), source: edge.data('source'), target: edge.data('target'), relation: edge.data('label') })
-    })
-    if (options.onBackgroundTap) cy.on('tap', (evt: any) => {
-      if (evt.target === cy) options.onBackgroundTap!()
-    })
-  }
-
-  function resetLayout() {
-    if (!cy) return
-    cy.layout({ ...COSE_LAYOUT_OPTIONS, randomize: true } as any).run()
-  }
-
-  function applyFocus(focusId: string, focusType: 'node' | 'edge') {
-    if (!cy) return
-    cy.elements().removeClass('faded')
-    if (focusType === 'node') {
-      const n = cy.$id(focusId)
-      n.removeClass('faded')
-      const neighborhood = n.neighborhood().union(n)
-      cy.elements().not(neighborhood).addClass('faded')
-    } else {
-      const e = cy.$id(focusId)
-      e.removeClass('faded')
-      const endpoints = e.connectedNodes().union(e)
-      cy.elements().not(endpoints).addClass('faded')
-    }
-  }
-
-  function clearFocus() {
-    if (!cy) return
-    cy.elements().removeClass('faded')
-  }
-
-  function getInstance() { return cy }
-
-  return { rebuild, destroy, resetLayout, applyFocus, clearFocus, getInstance }
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1)
-}
+```bash
+git checkout HEAD -- apps/web/src/composables/graph/useCytoscapeLifecycle.ts
 ```
 
-具体落地时（plan 实施者）需要把 `applyFocus` / `buildCytoscapeStyle` 等从原文件搬迁时**对照保留 dark mode / faded / :selected 行为**；只删 `isNew` 分支 + 增删 `getNewIds` 选项 + addNode 等 CRUD 函数。
+**两处改动**：
+
+1. **`COSE_LAYOUT_OPTIONS.animate: true` → `animate: false`**
+2. **`init()` 函数体** → 改为 `rebuild(data: GraphData | null)`：
+   - 函数签名：`(data: GraphData | null)` 替代 `()`（从内部 `getDisplayData()` 拉数据变成显式参数）
+   - 函数体里删除 `const data = options.getDisplayData()` 这一行（参数就是 data）
+   - 接口 `CytoscapeLifecycle` 加 `rebuild(data: GraphData | null): void`；`init()` 加 `@deprecated` 注释
+   - return 处加 `init: () => rebuild(options.getDisplayData())` 作为 backward-compat 别名
+
+**不动**：CRUD / `getNewIds` / `isNew` 样式分支 / `applyFocus` / `clearFocus` / `destroy` / `resetLayout` / `getInstance` / `toGraphData` / `normalizeGraph` / `normalizeType` / `TYPE_NORMALIZE_MAP` / `GraphNode` / `GraphEdge` / `GraphData` 类型。
 
 ### Step 2.4: 跑测试通过
 
@@ -541,7 +380,7 @@ function capitalize(s: string): string {
 pnpm --filter web test -- src/composables/__tests__/useCytoscapeLifecycle.spec.ts
 ```
 
-预期：5/5 PASS。
+预期：6/6 PASS。
 
 ---
 
@@ -981,15 +820,15 @@ EOF
    - 「仅 archived」→ Task 1 Step 1.3 archived 过滤 + Task 3 GraphView template `v-if="hasArchivedChapters"`
    - 「双视图」→ Task 3 GraphView viewMode + displayData computed
    - 「空态」→ Task 3 GraphEmptyState + Step 3.1 第二个 test
-   - 「rebuild 单入口」→ Task 2 接口收缩
+   - 「rebuild 单入口」→ Task 2 Step 2.3 `rebuild(data | null)` + `init()` backward-compat
    - 「layout.animate = false」→ Task 2 Step 2.3 COSE_LAYOUT_OPTIONS
-   - 「删除 CRUD」→ Task 2 Step 2.3 接口 + Step 2.5 测试
+   - 「CRUD / getNewIds / isNew 保留」→ Task 2 Step 2.3 显式声明 EditableGraph.vue 仍在用
    - 「删除 GraphLegend」→ Task 3 Step 3.6
 
 2. **Placeholder scan**：无 TBD / TODO / 「fill in」。所有代码块完整。
 
 3. **Type consistency**：
-   - `useCytoscapeLifecycle` 接口在 Task 2 改为 `rebuild`，Task 3 Step 3.4 调用时用 `cytoscape.rebuild(displayData.value)`，匹配。
+   - `useCytoscapeLifecycle` 接口在 Task 2 改为 `rebuild(data | null)` + `init()` backward-compat，Task 3 Step 3.4 调用时用 `cytoscape.rebuild(displayData.value)`；`EditableGraph.vue` / `GraphView.vue` 现有 `cytoscape.init()` 调用仍兼容。
    - `useGraphData` 返回 `currentSnapshot` / `currentDelta` / `loadChapters` / `loadChapterGraph`，在 Task 3 Step 3.4 destructure 时一致。
    - `GraphEmptyState` 在 Task 3 Step 3.3 创建，在 Task 3 Step 3.4 import 并 `<GraphEmptyState v-else />`。
    - 测试用例中 `useCytoscapeLifecycle as any + mockClear + mock.results` 模式，与 Task 2 测试代码一致。
@@ -997,5 +836,5 @@ EOF
 4. **Ambiguity check**：每个 it 块都有可执行 assertion。
 
 5. **风险**：
-   - Task 2 Step 2.3 提到"对照保留 dark mode / faded / :selected 行为"——是声明性 guidance，实施者仍要原样搬迁。
+   - Task 2 Step 2.3 显式声明"用 `git checkout HEAD -- file` 恢复 base，再做两处改动"——避免 T2 误删 CRUD / getNewIds / isNew 的复发。
    - Task 3 Step 3.4 `<style scoped>` 块提示"整段搬过来"——明确指明保留原样式，避免视觉回归。

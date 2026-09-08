@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 GraphView 重写为唯一消费 v3 `cumulativeGraph` JSON 的只读视图；只展示 archived 章节；支持累计视图 / 本章纯净双模式切换；不再做新增高亮；删除被取消的 GraphLegend 与 useCytoscapeLifecycle 的增量 CRUD 路径。
+**Goal:** 把 GraphView 重写为唯一消费 v3 `cumulativeGraph` JSON 的只读视图；只展示 archived 章节；支持累计视图 / 本章纯净双模式切换；不再做新增高亮；删除被取消的 GraphLegend。`useCytoscapeLifecycle` 仅做最小改动：`init()` 重命名为 `rebuild(data | null)`，`init()` 保留为 backward-compat 别名，`COSE_LAYOUT_OPTIONS.animate = false`；增量 CRUD / `getNewIds` / `isNew` 样式分支 **保留**（`EditableGraph.vue` 仍在用）。
 
 **Architecture:**
 - 唯一数据源：`Chapter.cumulativeGraph` JSON（已有 3 端点：`GET /api/chapters/:id/cumulative-graph` 等）
@@ -10,7 +10,7 @@
 - 只读视图：`GraphView` 仅 fetch + render，不再持有图谱编辑状态
 - ChapterReel 选项过滤 `status === 'archived'`；默认选 number 最大者
 - 空态：找不到 archived → 渲染 `GraphEmptyState` 卡片，cytoscape 不 init
-- cytoscape 单入口：`rebuild(data | null)`，destroy + new + 平移 layout 不动画
+- cytoscape 单入口：`rebuild(data | null)`，destroy + new + 平移 layout 不动画；`init()` 保留为 backward-compat 别名
 
 **Tech Stack:** TypeScript (NodeNext 后端 / ESNext 前端)、Vue 3、Pinia、Naive UI、Cytoscape、Vitest + @vue/test-utils + jsdom。
 
@@ -44,7 +44,7 @@
 | `GraphView.vue:280` watch(viewMode) | tab 切换 | 有效 |
 | `GraphView.vue:271` watch(chapterId, viewMode) | **包含 chapterId 变化** | **只 `clearFocus()`，根本没重 init**——这就是 bug 2 |
 
-增量 `addNode` 路径虽然有去除重复逻辑（`$id(nodeId).length > 0`），但仍保留在 API 表面；本次不消费，等于死代码。
+增量 `addNode` 路径在 `GraphView` 只读路径不消费，但 `EditableGraph.vue` 仍在用（章节编辑期）。
 
 ---
 
@@ -62,7 +62,7 @@
 | 路径 | 改动 |
 |------|------|
 | `apps/web/src/components/graph/GraphView.vue` | 瘦化到 ~80 行。删除 `loadChapters` / `loadChapterGraph` / `loadPrevSnapshot` / `diffStats` / `computeNewIds` / `prevSnapshot` / `showNewMarker` / 焦点相关本地状态（移到 useGraphData）；保留 `selectedChapterId` / `viewMode` / `displayData` / 工具条 + 画布 + 文案 footer |
-| `apps/web/src/composables/graph/useCytoscapeLifecycle.ts` | (1) `init()` 重命名为 `rebuild(data: GraphData \| null)`；(2) 删除 `addNode` / `addEdge` / `updateNode` / `updateEdge` / `removeNode` / `removeEdge` / `ensureCy` / 接口中相关签名；(3) layout `animate: false`；(4) 删除 `getNewIds` 选项；(5) 删除 style 中 `isNew` 分支 |
+| `apps/web/src/composables/graph/useCytoscapeLifecycle.ts` | (1) `init()` 重命名为 `rebuild(data: GraphData \| null)`；`init()` 保留为 backward-compat 别名（内部从 `getDisplayData()` 拉数据再 `rebuild`），让 `EditableGraph.vue` / `GraphView.vue` 现有 `cytoscape.init()` 调用继续工作；(2) `COSE_LAYOUT_OPTIONS.animate = false`（切章节 / 重建时不再 500ms 抖动）。`addNode` / `addEdge` / `updateNode` / `updateEdge` / `removeNode` / `removeEdge` / `getNewIds` / `isNew` 样式分支 **全部保留**——`EditableGraph.vue` 仍在用这些增量 CRUD API。 |
 
 ### 必须删除
 
@@ -75,6 +75,7 @@
 - `cumulativeGraphApi` 后端实现（已稳定）
 - `ChapterReel.vue` 实现（已稳定）
 - `EditableGraph.vue`（编辑器，独立组件，本次不动）
+- `EditableGraph.vue` 的接口迁移（仍用 `addNode` / `addEdge` 等增量 CRUD + `getNewIds` 选项 + `isNew` 样式分支）——独立 follow-up，本次不动
 - 主题切换 / dark mode（cytoscape 已有 isDark 支持，保留不动）
 - 节点 / 边的 hover tooltip / 详情面板（用户没要求，且本身没被任何模块消费）
 
@@ -121,24 +122,46 @@ watch([selectedChapterId, viewMode], async () => {
 ```ts
 // useCytoscapeLifecycle.ts
 export interface CytoscapeLifecycle {
-  rebuild(data: GraphData | null): void  // 单入口；null = 销毁并保持实例为 null
+  /**
+   * 单入口: 重建 cytoscape 实例。data=null = 销毁并保持实例为 null（清屏）。
+   * v3 以前只有 init() 私有入口（在内部从 getDisplayData() 拉数据），
+   * v3 改造后显式化：调用方在 ready 时直接 rebuild(displayData)，
+   * null 状态显示空态。
+   */
+  rebuild(data: GraphData | null): void
+  /** @deprecated 用 rebuild(data | null) 替代；保留为 backward-compat 别名让现有 caller 不动。 */
+  init(): void
   destroy(): void
   resetLayout(): void
   applyFocus(focusId: string, focusType: 'node' | 'edge'): void
   clearFocus(): void
   getInstance(): cytoscape.Core | null
+  // 增量 CRUD: 由 EditableGraph.vue 仍在使用，本次保留不动。
+  addNode(node: GraphNode, position?: { x: number; y: number }): void
+  addEdge(edge: GraphEdge): void
+  updateNode(id: string, fields: { type: string; key: string; label: string }): void
+  updateEdge(id: string, relation: string): void
+  removeNode(id: string): void
+  removeEdge(id: string): void
 }
 
 function rebuild(data: GraphData | null) {
-  destroy()
-  if (!data) return
   if (!options.containerRef.value) return
-  // 内部用当前 init() 内逻辑建 elements + new cytoscape + 事件 + fit zoom
+  if (!data) return
+  destroy() // 复用 unmount 路径,保证 destroy 行为一致
+  // 内部沿用旧 init() 内逻辑建 elements + new cytoscape + 事件 + fit zoom
   // 仅区别: layout.animate = false（避免切章节 500ms 抖动）
 }
+
+// init 保留为 backward-compat 别名: 内部从 getDisplayData() 拉数据再 rebuild
+function init() { rebuild(options.getDisplayData()) }
 ```
 
-**为什么删增量 CRUD**：v3 重构后章节编辑期的图谱编辑统一在 `EditableGraph` 自管草稿 / ReviewingPanel 在数据库层处理，GraphView 只读路径完全不触发 addNode / addEdge；保留即死代码。
+**为什么 init() 保留为 backward-compat 别名**：`init()` 是私有入口（在 `useCytoscapeLifecycle` 内部从 `options.getDisplayData()` 拉数据重构），调用方不直接传数据。v3 改造后 expose `rebuild(data | null)` 是更显式的单入口（调用方自己决定 data，且支持 null = 清屏 / 空态分支）。但 `EditableGraph.vue` 的 `nextTick(() => cytoscape.init())` 和 `GraphView.vue` 的 `cytoscape.init()` 调用点都仍依赖 `init()`，本次不动 caller——保留 `init()` 实为 `rebuild(options.getDisplayData())` 的薄封装，作为迁移期的 backward-compat 协议。
+
+**为什么保留增量 CRUD**：`EditableGraph.vue` 仍在用 `addNode` / `addEdge` / `updateNode` / `updateEdge` / `removeNode` / `removeEdge`（章节编辑期 DOM 上加节点 / 改关系 / 删节点）。本次 spec 假设"GraphView 只读路径不触发 addNode/addEdge，因此是死代码"——这是错的；`EditableGraph` 是另一 caller，仍在用。CRUD API 留到 EditableGraph.vue 迁移到别处时再删（独立 follow-up）。
+
+**为什么 `getNewIds` + `isNew` 样式分支保留**：同 `EditableGraph.vue` 仍在用 `getNewIds` 选项（`computed(() => ({ newNodes, newEdges }))`），编辑期新增节点 / 边要高亮（`isNew` 描边色 / 边宽）。
 
 ---
 
@@ -149,7 +172,7 @@ function rebuild(data: GraphData | null) {
 | 文件 | 断言 |
 |---|---|
 | `apps/web/src/composables/__tests__/useGraphData.spec.ts` | (1) `loadChapters` 把 chapters 过滤成只剩 archived；(2) `loadChapters` 在没有任何 archived 时仍 resolve，currentSnapshot/currentDelta 保持 null；(3) `loadChapterGraph` 把 `data.graph` 映射到 `currentSnapshot`、把 `data.chapterGraph` 映射到 `currentDelta`；(4) `displayData` 根据 viewMode 返回正确那一份（computed 测试） |
-| `apps/web/src/composables/__tests__/useCytoscapeLifecycle.spec.ts` | mock cytoscape.js；(1) `rebuild(null)` 调 `destroy()` 且不创建新实例；(2) 连续 `rebuild(dataA)` → `rebuild(dataB)`：第二次开始时 `destroy()` 被调用（实例不存在残留）；(3) `rebuild(data)` 时 `cytoscape` 被以 elements 和 style 构造 |
+| `apps/web/src/composables/__tests__/useCytoscapeLifecycle.spec.ts` | mock cytoscape.js；(1) `rebuild(null)` 不创建实例；(2) `rebuild(data)` 创建实例 + `layout.animate === false`；(3) `rebuild` 是 entry；同时 `init()` 作为 backward-compat 别名仍存在（因 `EditableGraph.vue` 仍在调用）；(4) 增量 CRUD API `addNode`/`addEdge`/`updateNode`/`updateEdge`/`removeNode`/`removeEdge` 仍暴露（`EditableGraph.vue` 仍消费）；(5) `getNewIds` 选项保留；(6) `isNew` 样式分支保留（node.border-width / edge.line-color / edge.width 由 isNew 切换）；(7) 二次 rebuild 第二次开始时旧实例被 destroy |
 | `apps/web/src/components/__tests__/GraphView.spec.ts` | (1) 默认 `selectedChapterId` = number 最大的 archived；(2) 空 archived → 渲染 `GraphEmptyState`，cytoscape `rebuild` 从未被调用；(3) 切 delta tab → `cytoscape.rebuild(currentDelta)` 被触发 |
 
 后端 Vitest 不受影响。

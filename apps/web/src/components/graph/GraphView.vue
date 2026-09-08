@@ -10,8 +10,8 @@
       </div>
     </header>
 
-    <!-- 工具条: chapter reel + view mode + 图例 -->
-    <div class="graph-toolbar">
+    <!-- 工具条: chapter reel + view mode -->
+    <div v-if="hasArchivedChapters" class="graph-toolbar">
       <ChapterReel
         v-model="selectedChapterId"
         :options="chapterOptions"
@@ -44,25 +44,16 @@
           本章纯净
         </button>
       </div>
-
-      <div class="graph-toolbar__spacer" />
-
-      <GraphLegend
-        :show-new-marker="showNewMarker"
-        :new-node-count="diffStats.addedNodes"
-        :new-edge-count="diffStats.addedEdges"
-      />
     </div>
 
     <!-- 图谱画布 (graph-paper surface from base.css) -->
-    <div ref="cyContainer" class="graph-canvas" />
+    <!-- 无 archived 章节时显示空态, 彻底不走 cytoscape 初始化路径 -->
+    <div v-if="hasArchivedChapters" ref="cyContainer" class="graph-canvas" />
+    <GraphEmptyState v-else />
 
-    <div class="graph-foot">
+    <div v-if="hasArchivedChapters" class="graph-foot">
       <span v-if="viewMode === 'delta'" class="graph-foot__hint">
         本章纯净视图只展示该章明确提及的实体和关系。
-      </span>
-      <span v-else-if="showNewMarker" class="graph-foot__hint is-positive">
-        绿色描边 = 相比上一章新增或更新的节点 / 关系。
       </span>
       <span v-else class="graph-foot__hint is-muted">
         拖动节点可重新布局；单击节点 / 边可查看详情。
@@ -72,33 +63,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, computed, nextTick } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
-import { cumulativeGraphApi } from '../../api/cumulative-graph'
-import { chaptersApi } from '../../api/chapters'
-import {
-  useCytoscapeLifecycle,
-  toGraphData,
-  type GraphData
-} from '../../composables/graph/useCytoscapeLifecycle'
+import { useGraphData } from '../../composables/graph/useGraphData'
+import { useCytoscapeLifecycle } from '../../composables/graph/useCytoscapeLifecycle'
 import { useThemeStore } from '../../stores/theme'
 import ChapterReel from './ChapterReel.vue'
-import GraphLegend from './GraphLegend.vue'
+import GraphEmptyState from './GraphEmptyState.vue'
 
 const route = useRoute()
 const themeStore = useThemeStore()
-const cyContainer = ref<HTMLDivElement>()
 
-const chapters = ref<any[]>([])
+const {
+  chapters,
+  currentSnapshot,
+  currentDelta,
+  loadChapters,
+  loadChapterGraph
+} = useGraphData()
+
 const selectedChapterId = ref<string>('')
 const viewMode = ref<'snapshot' | 'delta'>('snapshot')
-
-// 当前章节的图谱数据
-const currentSnapshot = ref<GraphData | null>(null)
-const currentDelta = ref<GraphData | null>(null)
-
-// 上一章的 snapshot 缓存（用于 diff）
-const prevSnapshot = ref<{ nodes: any[]; edges: any[] } | null>(null)
+const cyContainer = ref<HTMLDivElement>()
 
 const chapterOptions = computed(() =>
   chapters.value.map((c: any) => ({
@@ -108,61 +94,32 @@ const chapterOptions = computed(() =>
   }))
 )
 
-const displayGraphData = computed<GraphData | null>(() => {
-  if (viewMode.value === 'delta') {
-    return currentDelta.value
-  }
-  return currentSnapshot.value
-})
+// useGraphData.loadChapters 内部已经过滤掉非 archived 章节,
+// 所以 chapters.length > 0 就表示至少有一个 archived 章节可供查看。
+const hasArchivedChapters = computed(() => chapters.value.length > 0)
 
-const diffStats = computed(() => {
-  if (!currentSnapshot.value || !prevSnapshot.value) {
-    return { addedNodes: 0, addedEdges: 0 }
-  }
-  const prevNodeSet = new Set((prevSnapshot.value.nodes || []).map((n: any) => `${n.type}:${n.key}`))
-  const prevEdgeSet = new Set((prevSnapshot.value.edges || []).map((e: any) =>
-    `${e.fromType}:${e.fromKey}:${e.relation}:${e.toType}:${e.toKey}`
-  ))
-
-  const addedNodes = (currentSnapshot.value.nodes || []).filter((n: any) =>
-    !prevNodeSet.has(`${n.type}:${n.key}`)
-  ).length
-  const addedEdges = (currentSnapshot.value.edges || []).filter((e: any) =>
-    !prevEdgeSet.has(`${e.fromType}:${e.fromKey}:${e.relation}:${e.toType}:${e.toKey}`)
-  ).length
-
-  return { addedNodes, addedEdges }
-})
-
-const showNewMarker = computed(() =>
-  viewMode.value === 'snapshot' && (diffStats.value.addedNodes > 0 || diffStats.value.addedEdges > 0)
+const displayData = computed(() =>
+  viewMode.value === 'snapshot' ? currentSnapshot.value : currentDelta.value
 )
 
-function computeNewIds(): { newNodes: Set<string>; newEdges: Set<string> } {
-  const newNodes = new Set<string>()
-  const newEdges = new Set<string>()
-
-  if (!currentSnapshot.value || !prevSnapshot.value) {
-    return { newNodes, newEdges }
+const cytoscape = useCytoscapeLifecycle({
+  containerRef: cyContainer,
+  getDisplayData: () => displayData.value,
+  isDark: computed(() => themeStore.isDark),
+  onNodeTap: (node) => {
+    focusedId.value = node.id
+    focusedType.value = 'node'
+    cytoscape.applyFocus(node.id, 'node')
+  },
+  onEdgeTap: (edge) => {
+    focusedId.value = edge.id
+    focusedType.value = 'edge'
+    cytoscape.applyFocus(edge.id, 'edge')
+  },
+  onBackgroundTap: () => {
+    if (focusedId.value) clearFocus()
   }
-
-  const prevNodeSet = new Set((prevSnapshot.value.nodes || []).map((n: any) => `${n.type}:${n.key}`))
-  const prevEdgeSet = new Set((prevSnapshot.value.edges || []).map((e: any) =>
-    `${e.fromType}:${e.fromKey}:${e.relation}:${e.toType}:${e.toKey}`
-  ))
-
-  for (const n of currentSnapshot.value.nodes || []) {
-    const key = `${n.type}:${n.key}`
-    if (!prevNodeSet.has(key)) newNodes.add(key)
-  }
-
-  for (const e of currentSnapshot.value.edges || []) {
-    const key = `${e.fromType}:${e.fromKey}:${e.relation}:${e.toType}:${e.toKey}`
-    if (!prevEdgeSet.has(key)) newEdges.add(key)
-  }
-
-  return { newNodes, newEdges }
-}
+})
 
 const focusedId = ref<string | null>(null)
 const focusedType = ref<'node' | 'edge' | null>(null)
@@ -173,120 +130,45 @@ function clearFocus() {
   cytoscape.clearFocus()
 }
 
-const cytoscape = useCytoscapeLifecycle({
-  containerRef: cyContainer,
-  getDisplayData: () => displayGraphData.value,
-  isDark: computed(() => themeStore.isDark),
-  getNewIds: () => {
-    if (viewMode.value !== 'snapshot' || !currentSnapshot.value || !prevSnapshot.value) {
-      return { newNodes: new Set(), newEdges: new Set() }
-    }
-    return computeNewIds()
-  },
-  onNodeTap: (node) => {
-    if (focusedId.value === node.id && focusedType.value === 'node') {
-      clearFocus()
-      return
-    }
-    focusedId.value = node.id
-    focusedType.value = 'node'
-    cytoscape.applyFocus(node.id, 'node')
-  },
-  onEdgeTap: (edge) => {
-    if (focusedId.value === edge.id && focusedType.value === 'edge') {
-      clearFocus()
-      return
-    }
-    focusedId.value = edge.id
-    focusedType.value = 'edge'
-    cytoscape.applyFocus(edge.id, 'edge')
-  },
-  onBackgroundTap: () => {
-    if (focusedId.value) clearFocus()
-  }
-})
-
-async function loadChapters() {
-  const storyId = (route.params.storyId as string) || ''
-  if (!storyId) return
-  const res = await chaptersApi.list(storyId)
-  const list = res.data.data || []
-  list.sort((a: any, b: any) => a.number - b.number)
-  chapters.value = list
-
-  // 默认选中最新 (按 number 倒序第一个); 优先选已归档
-  const lastArchived = [...list].reverse().find((c: any) => c.status === 'archived')
-  const fallback = [...list].reverse()[0]
-  const target = lastArchived || fallback
-  if (target) {
-    await selectChapter(target.id)
-  }
-}
-
 async function selectChapter(chapterId: string) {
   selectedChapterId.value = chapterId
   await loadChapterGraph(chapterId)
 }
 
-async function loadChapterGraph(chapterId: string) {
-  const res = await cumulativeGraphApi.get(chapterId)
-  const data = res.data.data
-
-  // v3 接口: { graph: { nodes, edges, timestamp }, chapterGraph?: {...} }
-  // graph = 累计图 (snapshot 视图), chapterGraph = 本章纯净 (delta 视图)
-  currentSnapshot.value = toGraphData(data.graph?.nodes, data.graph?.edges)
-  currentDelta.value = toGraphData(data.chapterGraph?.nodes, data.chapterGraph?.edges)
-
-  await loadPrevSnapshot(chapterId)
-
-  await nextTick()
-  cytoscape.init()
+async function init() {
+  const storyId = (route.params.storyId as string) || ''
+  if (!storyId) return
+  await loadChapters(storyId)
+  if (chapters.value.length === 0) return
+  // useGraphData.loadChapters 已过滤非 archived 并按 number 升序排序,
+  // 所以最后一个就是 number 最大的 archived 章节。
+  const latest = chapters.value[chapters.value.length - 1]
+  await selectChapter(latest.id)
 }
 
-async function loadPrevSnapshot(currentChapterId: string) {
-  const currentIndex = chapters.value.findIndex((c) => c.id === currentChapterId)
-  if (currentIndex <= 0) {
-    prevSnapshot.value = null
-    return
+// 关键修复 (T3):
+// chapterId 切换 / viewMode 切换 / 路由参数切换 都在一条 watch 内,
+// nextTick 后用 displayData 单入口 rebuild —— 避免旧 GraphView 的三处分散 init 路径
+// (chapterId 切换只 clearFocus 没 rebuild; viewMode 切换读旧 ref 值; delta 污染) 。
+watch(
+  [selectedChapterId, viewMode, () => route.params.storyId],
+  async () => {
+    await nextTick()
+    cytoscape.rebuild(displayData.value)
   }
-  // 找前一个章节（按 number 排序后的前一个）
-  const prevChapter = chapters.value[currentIndex - 1]
-  if (!prevChapter) {
-    prevSnapshot.value = null
-    return
-  }
-  try {
-    const res = await cumulativeGraphApi.get(prevChapter.id)
-    prevSnapshot.value = res.data.data.graph
-  } catch {
-    prevSnapshot.value = null
-  }
-}
+)
 
 function onChapterNav() {
-  // viewMode / prevSnapshot 在 selectChapter 内已处理
+  // viewMode 切换 / focusedId 清理由 watch 统一处理
 }
 
-// 章节 / 视图模式 / 路由变化时, 清掉旧的聚焦 (cytoscape 会被 destroy 重建)
-watch([() => route.params.storyId, viewMode, selectedChapterId], () => {
-  if (focusedId.value) clearFocus()
-})
-
-watch(() => route.params.storyId, () => {
-  loadChapters()
-})
-
-watch(viewMode, () => {
-  nextTick(() => cytoscape.init())
-})
-
 onMounted(() => {
-  if (route.params.storyId) loadChapters()
+  init()
 })
 </script>
 
 <style scoped>
-/* === Toolbar: 一行装下 chapter reel / view mode / 图例 === */
+/* === Toolbar: 一行装下 chapter reel + view mode === */
 .graph-toolbar {
   display: flex;
   align-items: center;
@@ -300,7 +182,6 @@ onMounted(() => {
   background: var(--border-subtle);
   flex-shrink: 0;
 }
-.graph-toolbar__spacer { flex: 1 1 auto; }
 
 /* view mode 双选分段按钮 — 嵌在 toolbar 中, 用同样 pebble border */
 .graph-toolbar__mode {

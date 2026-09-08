@@ -55,6 +55,13 @@ export interface CytoscapeLifecycleOptions {
 }
 
 export interface CytoscapeLifecycle {
+  /**
+   * 单入口: 重建 cytoscape 实例。data=null 时不创建实例、不保留旧实例。
+   * v3 以前 GraphView / EditableGraph 都用 init() (内部从 getDisplayData() 拉数据);
+   * v3 单入口改造后, init() 保留为 backward-compat 别名, 让两 caller 都不动。
+   */
+  rebuild(data: GraphData | null): void
+  /** @deprecated 用 rebuild(data | null) 替代; v3 保留为 backward-compat 别名。 */
   init(): void
   destroy(): void
   resetLayout(): void
@@ -164,7 +171,7 @@ function defaultNodeColorDark(type: string): string {
 const COSE_LAYOUT_OPTIONS = {
   name: 'cose',
   padding: 20,
-  animate: true,
+  animate: false,
   animationDuration: 500,
   randomize: false,
   componentSpacing: 60,
@@ -269,9 +276,8 @@ export function useCytoscapeLifecycle(
     }
   }
 
-  function init() {
+  function rebuild(data: GraphData | null) {
     if (!options.containerRef.value) return
-    const data = options.getDisplayData()
     if (!data) return
     destroy() // 复用 unmount 路径,保证 destroy 行为一致
     // 不再 early-return 空数据: 空 cy 也创建, 让后续 addNode/addEdge 能找到容器
@@ -394,7 +400,7 @@ export function useCytoscapeLifecycle(
   // 不触发 destroy+rebuild 和 COSE 重布局, 避免画布抖动和半销毁状态抛错。
 
   function ensureCy() {
-    if (!cy) init()
+    if (!cy) rebuild(options.getDisplayData())
   }
 
   function addNode(node: GraphNode, position?: { x: number; y: number }) {
@@ -491,5 +497,21 @@ export function useCytoscapeLifecycle(
     destroy()
   })
 
-  return { init, destroy, resetLayout, getInstance, addNode, addEdge, updateNode, updateEdge, removeNode, removeEdge, applyFocus, clearFocus }
+  return {
+    rebuild,
+    // init 保留为 backward-compat 别名: 从 getDisplayData() 拉数据再 rebuild,
+    // 让 EditableGraph.vue / GraphView.vue 现有的 cytoscape.init() 调用继续工作。
+    init: () => rebuild(options.getDisplayData()),
+    destroy,
+    resetLayout,
+    getInstance,
+    addNode,
+    addEdge,
+    updateNode,
+    updateEdge,
+    removeNode,
+    removeEdge,
+    applyFocus,
+    clearFocus
+  }
 }
