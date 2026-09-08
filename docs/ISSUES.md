@@ -265,6 +265,26 @@ SPEC 修正说明:Q9(zod 接入)在 spec「背景」节中误标 OPEN,实施时�
 
 ---
 
+## [P2 follow-up] GraphView.vue 重写消费 chapterGraph/cumulativeGraph
+
+**Status:** 未开始
+
+**Context:** v3 重命名 `graphDelta/graphSnapshot` → `chapterGraph/cumulativeGraph`（commit 1）。
+本次不重写 GraphView.vue（`apps/web/src/views/Graph.vue`），仍读 `GraphNode` / `GraphEdge` 工作表，
+旧工作表继续写入。
+
+**Why deferred:** GraphView.vue 涉及 Cytoscape 重构 + 工作表数据迁移，独立 scope。
+本次 6-commit 重点在 stage 拆分，GraphView 是消费侧。
+
+**Next step:** 单独 commit 删除 `GraphNode` / `GraphEdge` 表 + 重写 GraphView.vue 消费
+`Chapter.cumulativeGraph`（主视图）+ `Chapter.chapterGraph`（本章详情）。
+
+**追踪:** 此项完成后 `prisma/schema.prisma` 删除 `model GraphNode` / `model GraphEdge`，
+并删 `apps/server/src/services/graph-snapshot.ts` 的 `saveGraphSnapshotAndDelta` /
+`rebuildGraphFromSnapshot`。
+
+---
+
 ## 修复时间线
 
 | 日期 | Hash | 说明 |
