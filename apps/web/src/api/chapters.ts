@@ -38,6 +38,10 @@ export const chaptersApi = {
   generate: (chapterId: string, data: GenerateRequest) => api.post(`/api/chapters/${chapterId}/generate`, data, { timeout: 0 }),
   selectDraft: (chapterId: string, draftId: string) => api.post(`/api/chapters/${chapterId}/select`, { draftId }),
   prepareArchive: (chapterId: string) => api.post(`/api/chapters/${chapterId}/prepare-archive`, {}, { timeout: 0 }),
+  prepareArchiveCancel: (chapterId: string) =>
+    api.post(`/api/chapters/${chapterId}/prepare-archive/cancel`, {}, { timeout: 5000 }),
+  retryStage: (chapterId: string, stageName: string) =>
+    api.post(`/api/chapters/${chapterId}/prepare-archive/retry-stage/${stageName}`, {}, { timeout: 0 }),
   archive: (chapterId: string) => api.post(`/api/chapters/${chapterId}/archive`, {}, { timeout: 0 }),
   develop: (chapterId: string, data: any) => api.post(`/api/chapters/${chapterId}/develop`, data),
   getTree: (storyId: string) => api.get(`/api/stories/${storyId}/chapter-tree`)
@@ -46,7 +50,6 @@ export const chaptersApi = {
 export const draftsApi = {
   list: (chapterId: string) => api.get(`/api/chapters/${chapterId}/drafts`),
   get: (draftId: string) => api.get(`/api/drafts/${draftId}`),
-  score: (draftId: string) => api.post(`/api/drafts/${draftId}/score`),
   update: (draftId: string, data: { content: string }) => api.put(`/api/drafts/${draftId}`, data),
   remove: (draftId: string) => api.delete(`/api/drafts/${draftId}`)
 }

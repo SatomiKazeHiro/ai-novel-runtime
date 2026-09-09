@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `apps/server` — Fastify + Prisma + BullMQ backend
 - `apps/web` — Vue 3 + Vite + Pinia + Naive UI frontend
-- `packages/*` — Shared engines: AI provider, prompt runtime, memory engine, knowledge graph, scoring
+- `packages/*` — Shared engines: AI provider, prompt runtime, memory engine, knowledge graph
 
 ## CodeGraph
 
@@ -37,15 +37,12 @@ pnpm typecheck
 # Build everything
 pnpm build
 
-# Lint (root script; not all packages define their own lint script)
-pnpm lint
-
 # Tests
 pnpm test                 # run all tests via vitest
 pnpm --filter server test # run server tests / vitest directly
 ```
 
-> Note: there are currently no test files, but Vitest is installed and `apps/server` is configured to run it.
+> Tests live in `apps/server/src/__tests__/` (routes + services, mock Prisma) and `apps/web/src/**/__tests__/`; both run via Vitest.
 
 ### Database Commands
 
@@ -66,23 +63,31 @@ Prisma generates the client to `node_modules/.prisma/client` at the repo root. A
 
 ### Chapter Lifecycle
 
-The system is organized around a chapter state machine (`prisma/schema.prisma` → `enum ChapterStatus`) that drives the entire creative workflow:
+**Mental model (v2):**
+- Chapter = environment snapshot (大纲/正文/角色状态/知识图谱/剧情弧线 = 小说在某一点的快照)
+- Candidate generation = **抽卡 (gacha)**: 抽到的卡（`Draft`）是用户对"下一份快照长什么样"的几种可能;与章节是否在编辑无关——抽卡过程不消耗、不污染、不依赖章节状态
+- ChapterStatus = snapshot lifecycle (3 个值, 见下); DraftStatus = candidate lifecycle (6 个值, 独立于 ChapterStatus)
+
+The system is organized around a chapter state machine (`prisma/schema.prisma` → `enum ChapterStatus`) that drives the entire creative workflow. As of the **v2 refactor**, `ChapterStatus` is a **3-value enum** (`draft` / `reviewing` / `archived`); candidate generation lives entirely in `Draft.status` and is orthogonal to chapter state:
 
 ```
-Draft -> Generating -> Generated -> (Scored) -> Selected -> Reviewing -> Archived
-                                                                       \-> (cancel: deleted)
-                                                                                \-> (Rejected)
+draft ──┬─→ preparing-archive ─→ reviewing ─→ archived
+        │       (AI extraction)        ↑
+        └──── user re-edits / cancel ──┘ (rollback)
 ```
+
+(`preparing-archive` is the transient `prepare-archive` endpoint running, not a persisted enum value.)
 
 1. User creates a chapter (`draft`).
-2. User clicks **Generate**: the backend assembles a prompt and enqueues a job to create multiple `Draft` candidates. While running, the chapter is `generating`; once all drafts finish, it becomes `generated`.
-3. User may **Score** a candidate; AI scores across 7 dimensions, with a rule-based fallback. A scored chapter has the `scored` status.
-4. User **Selects** one candidate; its content is copied into the `Chapter` and its status becomes `selected`.
-5. User clicks **Prepare Archive**: the backend runs phase 1 + phase 2 of the archive pipeline, then parks the extracted payload in `Chapter.pendingArchiveData` (TEXT, JSON) and sets status to `reviewing`. No DB writes yet.
-6. The `ReviewingPanel` lets the user edit memories, character states, timeline events, the chapter graph, and plot arcs. Edits are written back to `Chapter.pendingArchiveData` via `chaptersApi.savePendingArchiveData`. **Cancel = delete the chapter.**
-7. User clicks **Confirm Archive**: the persisted payload is replayed inside a `prisma.$transaction`, chapter status flips to `archived`, and phase 4 (memory optimization) runs after the transaction.
+2. User clicks **Generate**: backend enqueues a job creating N `Draft` candidates. Candidates run independently of chapter status — the chapter stays in `draft` while drafts progress through `Draft.status` (`generating` → `completed`/`failed`).
+3. User **Selects** one candidate: its content is copied into `Chapter.content`; its siblings are marked `Draft.status='rejected'`. **Chapter status stays unchanged** — selection is a Draft-layer concept. v2: the adopted draft is NOT marked `Draft.status='selected'`; "which draft is adopted" is only known by matching `Chapter.content` against `Draft.content`.
+4. User clicks **Prepare Archive**: the backend runs 4 independent extraction stages in parallel (`character` / `memoryExtract` / `plotArc` / `graph`) then `memoryOptimize` serially, parks the payload in `Chapter.pendingArchiveData` (TEXT, JSON, `version: 4`) and sets status to `reviewing`. No DB writes to derived tables or the three graph columns. Single-stage failure is recorded per-stage in the payload, not a rollback.
+5. The `ReviewingPanel` lets the user edit memories, character states, the chapter graph, the cumulative graph, and plot arcs. Edits are written back to `Chapter.pendingArchiveData` via `chaptersApi.update({ pendingArchiveData })`. **Cancel = `POST /prepare-archive/cancel`, reverts status to `draft` and clears `pendingArchiveData`.**
+6. User clicks **Confirm Archive**: the `archive` endpoint validates all stages succeeded and the cumulative graph was generated, then inside a `prisma.$transaction` writes the three memory layers, plot arcs, character branch states (auto-creating `Character` rows for `isNew`), the chapter summary, the graph columns, and flips status to `archived` (clearing `pendingArchiveData`).
 
 Only `archived` chapters feed forward into the next chapter's prompt.
+
+**Candidate generation is orthogonal to chapter state.** A draft can be generated for any non-`archived` chapter (`generate` / `select` return 400 on an `archived` chapter). The worker respects `Draft.status` (skipping user-decided/completed/failed drafts) but never reads or writes `Chapter.status`.
 
 Frontend polling: after submitting generation, the UI polls `draftsApi.list` every 2 seconds (`useIntervalFn` in `useDraftManager.ts`) until all drafts are `completed` or `failed`. Both `generate` and `archive` API calls set `timeout: 0` because they may be long-running.
 
@@ -96,7 +101,7 @@ The prompt is built in fixed layers (bottom to top):
 
 ```
 System Message  ← Identity + Settings + Behavior + Jailbreak + Task
-User Message    ← Style → Story → Lore → Character → Scene → Memory → Timeline → PlotArc → Output
+User Message    ← Style → Story → Lore → Character → Scene → Memory → PlotArc → Output
 ```
 
 Each layer has a token budget. The budgets scale relative to the model's `contextLength` (default benchmark 64k tokens). Implementation is split across:
@@ -108,53 +113,65 @@ Each layer has a token budget. The budgets scale relative to the model's `contex
 
 ### Archive Pipeline (Five-Phase)
 
-Archiving is the most complex flow. It is implemented in `apps/server/src/routes/chapters.ts` and the `services/*-extractor/organizer/optimizer` modules. Phases 1–4 are split across two HTTP endpoints: `prepare-archive` runs phases 1–2 and parks the result, `archive` (confirm) runs phases 3–4 from the parked payload.
+Archiving is the most complex flow. It is implemented in `apps/server/src/routes/chapters-archive.ts` and the `services/stages/*` modules. Phases 1–4 are split across HTTP endpoints: `prepare-archive` runs phases 1–2 and parks the result, the user reviews via `ReviewingPanel.vue` (writes via `chaptersApi.update({ pendingArchiveData })`), `archive` (confirm) runs phases 3–4 from the parked payload.
 
 | Phase | File(s) | Endpoint | What happens |
 |-------|---------|----------|--------------|
-| 1. Extract | `combined-extractor.ts`, `memory-extractor.ts`, `graph-extractor.ts`, `plot-extractor.ts` | `prepare-archive` | One AI call extracts memories, raw graph entities, and plot-arc progress. No DB writes yet. |
-| 2. Organize graph | `graph-organizer.ts` | `prepare-archive` | AI merges the previous chapter's global graph snapshot with the new raw extraction, producing `mergedGraph` (cumulative global) and `chapterGraph` (this chapter only). |
-| 2.5. Human review | `ReviewingPanel.vue` (frontend) | `save-pending-archive-data` (debounced) | The full payload is written to `Chapter.pendingArchiveData` (TEXT) and the chapter enters the `reviewing` state. The user can edit memories, graph, plot arcs, etc. before committing. The endpoint is debounced from the composable; cancel = delete the chapter. |
-| 3. Transaction write | `chapters.ts` archive route | `archive` (confirm) | All DB writes run inside `prisma.$transaction` from the parked payload: `Memory`, `CharacterBranchState`, `TimelineEvent`, `PlotArc`, `GraphNode`/`GraphEdge`, `Chapter.graphSnapshot`/`graphDelta`, `Chapter.summary`, and `Chapter.status = 'archived'`. |
-| 4. Optimize memory | `memory-optimizer.ts` | `archive` (post-commit) | AI fuses previous global memory with new chapter memory into the next global snapshot. Runs after the transaction; failure is logged but does not roll back the archive. |
+| 1. Extract | `services/stages/{character,memory,plot-arc,graph-extract}-stage.ts` (并行 4 独立 stage) | `prepare-archive` | 4 个独立 stage 并行 (`Promise.all`): character / memoryExtract(原 memory 去 optimizer) / plotArc / graph,抽出 characterStates / raw memories / plotArcs / chapterGraph,各自结果落到 `pendingArchiveData.stages[name]`。单 stage 失败不影响其他 stage。reviewing 期间 `Chapter.chapterGraph / cumulativeGraph / cumulativeGraphGeneratedAt` 三列整个过程不被读写。 |
+| 1.5. memoryOptimize | `memory-optimizer.ts` | `prepare-archive` (memoryExtract 完成后串行) | memoryExtract success 后串行调 optimizer,读现有 `layer='global'` + memoryExtract output,AI 融合产出 `stages.memoryOptimize.result.memories`(统一数组,每条 `{content, originUid, importance, type: 'event'\|'state'}`,后端落表时加 `'auto-extracted'` 前缀)。覆盖原 raw output,user review 时看到的是融合结果。**不再** post-commit 跑(原 v2 `archive` post-commit 触发已删除)。失败时该 stage 标记 failed,不影响 graph / character / plot-arc。 |
+| 2. Organize graph | (内嵌在 graph-extract stage 里读 `prevCumulativeGraph`) | `prepare-archive` | graph stage 读上一章归档的 `Chapter.cumulativeGraph` (parent 优先,主线回退) + 本章 chapterGraph,产出新的 `chapterGraph`。累计合成下个 user action 「生成累计图谱」时再走 `services/cumulative-graph.ts`。 |
+| 2.5. Human review | `ReviewingPanel.vue` (前端) | `chaptersApi.update({ pendingArchiveData })` | 用户在审查阶段编辑后点「保存调整」→ `composables/useChapterEditor.ts:savePendingArchiveData` → `PUT /api/chapters/:id` 把整份 `PendingArchiveDataV4` 写回 `Chapter.pendingArchiveData` (TEXT JSON)。累计图谱编辑后保存走同一条路(PATCH 端点已删除)。Cancel = `POST /prepare-archive/cancel`,只清 `pendingArchiveData`。 |
+| 3. Transaction write | `chapters-archive.ts` archive route | `archive` (confirm) | commit-only 端点,**不调 AI 不调 optimizer**。`prisma.$transaction` 内依次:① `tx.memory.create` 写三层(`chapter` from main/sideEvents/emotions/foreshadowing/relationshipChanges、`scene` from scenes、`global` from optimizer 融合 memories)② `tx.chapter.update({summary})` ③ `tx.chapter.update({chapterGraph, cumulativeGraph, cumulativeGraphGeneratedAt, status: 'archived', pendingArchiveData: null})`。④ `tx.plotArc` 写剧情弧线(commitPlotArcWrites) ⑤ `tx.characterBranchState` 写角色快照 + isNew 自动建档 Character(commitCharacterBranchStateWrites,slug+name 冲突则提前 409)。 |
 
-This design guarantees that phases 1 and 2 can fail without writing data, phase 2.5 can be re-entered as many times as the user wants without losing work, and phase 3 failures roll back all writes. Memory writes are split into `prepareMemoryWrites` (pure data preparation) and `commitMemoryWrites` (transactional insert) so the archive route controls the transaction boundary.
+**数据流硬规则(v3)**:reviewing 期间所有图谱数据只活 `pendingArchiveData` JSON;`Chapter` 三列(`chapterGraph` / `cumulativeGraph` / `cumulativeGraphGeneratedAt`)在 `archive` confirm 之前一直为 null。`GraphView.vue` 只查 `archived` 章节,读三列,读到的是用户终稿。详见 `docs/superpowers/specs/2026-07-29-graph-cleanup-design.md` + `docs/superpowers/specs/2026-07-29-graph-v2-deadcode-cleanup-design.md`。
 
 ### Queue System
 
-The backend uses BullMQ when `REDIS_URL` is available, otherwise it falls back to an in-memory `MemoryQueue`. Only the `generateQueue` currently has a registered worker (`generate-processor.ts`). `scoreQueue` and `memoryQueue` exist but are placeholders.
+The backend uses BullMQ when `REDIS_URL` is available, otherwise it falls back to an in-memory `MemoryQueue`. Only the `generateQueue` currently has a registered worker (`generate-processor.ts`).
 
-Drafts are generated **serially** inside `generate-processor.ts` to reduce instantaneous API pressure, even when multiple candidates are requested.
+Drafts are generated **serially** inside `generate-processor.ts` to reduce instantaneous API pressure, even when multiple candidates are requested. As of v2, the worker only reads/writes `Draft.status` (skipping the three user-decided/terminal statuses `rejected`/`completed`/`failed`); it never touches `Chapter.status`.
 
 ### Memory Model
 
-Memories are stored in a single `Memory` table with a `layer` column:
+Memories are stored in a single `Memory` table，含 `layer`（enum）+ `category`（enum，语义分类）+ `participants`（参与者）列：
 
-- `global` — cross-chapter state, optimized after every archive
-- `chapter` — raw extraction from a single chapter
-- `scene` — high-importance locations
-- `temporary` — ephemeral context
+- **layer**（`MemoryLayer` enum）: `global` / `chapter` / `scene` / `temporary`
+- **category**（`MemoryCategory` enum）: `relationship_change`（关系变化）/ `foreshadowing`（伏笔）/ `emotional_change`（情绪变化）/ `event_memory`（事件）/ `state`（状态快照，global 专用）
 
-Prompt assembly retrieves relevant memories via semantic similarity (`memory-engine`) and Jaccard deduplication. The same logical memory may have multiple historical versions; prompt assembly takes the latest by `originUid`.
+- `global` — 跨章状态,optimizer 融合(originUid 累加版本)。category=`state`(状态快照) 或 `event_memory`(事件)
+- `chapter` — 单章 raw 提取,archive confirm 转表。mainEvents/sideEvents→`event_memory`、emotions→`emotional_change`、foreshadowing→`foreshadowing`、relationshipChanges→`relationship_change`(mainEvents 多带 `main-plot` tag)
+- `scene` — 关键地点(`scenes[]` 字段),archive confirm 转表,category=`event_memory`,importance 7-10(**不进 prompt 注入,仅 Memory.vue UI 显示**)
+- `temporary` — 用户手动创建,绑定章节(可未归档),**只当前章生成时注入、不跨章**(TODO: 章节工作台 prompt 可视化)
+
+`participants` — 参与者姓名(逗号分隔,纯文本不关联角色表),AI 抽取时对 mainEvents/sideEvents/scenes 输出,有参与者填、无留空。
+
+archive confirm **commit-only 不调 AI**,在 `prisma.$transaction` 内一次写完三层。`Chapter.summary` 写 `Chapter.summary` 列,**不进 Memory 表**(理由:`memory-engine.searchRelevant` 不读 summary 字段)。
+
+Prompt assembly retrieves relevant memories via semantic similarity (`memory-engine`) and Jaccard deduplication. `searchRelevant` (`packages/memory-engine/src/index.ts`) 读 `layer IN ('global', 'chapter')`,按相似度排序、按 content 文本相似度 > 0.82 去重。**v3 memory system 拍板**:`searchRelevant` 加 originUid 分组取最新版本逻辑(**仅 layer='global'**),避免同 UID 多版本同时塞 prompt 导致 AI 矛盾描述。layer='chapter' 不参与 UID 分组(章节内 raw 提取独立)。
+
+optimizer 每章归档对同 UID 产生新行 layer='global'(**累加**,不是 update by UID)。删除章节(`chapters-crud.ts`)只 delete where `fromChapterNumber=N`,前 N-1 章同 UID 版本保留 → searchRelevant 取最新版本自然实现"删章节回退"语义,无需特殊代码。
 
 ### Knowledge Graph
 
-Graph data lives in `GraphNode` and `GraphEdge` tables. Each archived chapter also stores:
+v3: graph data lives entirely on the `Chapter` row as JSON columns (the `GraphNode`/`GraphEdge` tables were dropped in migration `20260729000000_drop_graph_node_edge`):
 
-- `graphSnapshot` — the cumulative global graph after this chapter (`mergedGraph`)
-- `graphDelta` — the chapter-only graph (`chapterGraph`)
+- `chapterGraph` — the chapter-only graph extracted at prepare-archive
+- `cumulativeGraph` — the cumulative global graph up to this chapter (user-triggered merge via `services/cumulative-graph.ts`)
+- `cumulativeGraphGeneratedAt` — when the user first generated the cumulative graph; `null` = not generated
 
-The frontend visualizes this with Cytoscape.
+During `reviewing` these three columns stay `null`; the working copies live in `pendingArchiveData`. Only `archive` confirm writes them. `GraphView.vue` reads the columns of `archived` chapters via `cumulativeGraphApi` and visualizes with Cytoscape.
+
+抽取上下文增强（2026-08-15）: `graph-extract-stage` 抽取本章图谱时,不再只传「光 key」,而是从 `prev.cumulativeGraph` 额外提取 edges,按「正文出现的 character」组织成「人名(key): 关系-关联实体」的紧凑上下文喂给 AI,并加「增量抽取」约束(本章只抽新增实体/关系,延续前面就少输出/空)。目的是从源头复用已有 key、避免同实体不同 key 的重复(如姜禾佩剑 jianghe_peijian/jianghe_sword 分裂)。
+
+### Character Snapshot Editing
+
+已归档的角色快照（`CharacterBranchState`，每角色每归档章一行）可在角色页编辑弹窗的右侧快照面板中手动编辑（`PUT /api/stories/:storyId/characters/:charId/snapshot/:chapterNumber`，`updateMany` 幂等更新，无行则 404）。手动修改由用户负责（UI 有 warning 提醒），编辑结果直接作为后续章节生成时的角色参考（`getCharactersWithLatestState` 无缓存）；删除章节时该章快照连同修改一并删除。详见 `docs/superpowers/specs/2026-08-13-character-snapshot-editing-design.md`。
 
 ### Main vs Side Stories
 
 - Main-line chapters form a strictly linear sequence (`1, 2, 3, ...`).
 - Side stories (`isSideStory = true`) are decimal chapters (`1.01`, `1.02`) and can branch from any archived chapter.
-- Deleting an archived chapter cascades: it removes derived data (memories, timeline events, character branch states) that share the same `fromChapterNumber` and rebuilds the graph from the previous chapter snapshot.
-
-### Timeline Position Encoding
-
-`TimelineEvent.position` is stored as a single-decimal **Y.DDDHH** float where the integer part is the year (negative = pre-history) and the decimal part is exactly 5 digits `DDDHH` (day-of-year 1–365 + hour 0–23). Rendered through `formatTimelinePosition()` (currently in `apps/server/src/routes/chapters-generate.ts`); use the same encoding when inserting or comparing positions. Schema migration `20260626000000_timeline_position_encoding` introduced this; pre-migration rows should already be backfilled.
+- Deleting an archived chapter cascades: it removes derived data (memories, character branch states, plot arcs, prompt logs) that share the same `fromChapterNumber`. v3: no graph-table rebuild — the cumulative graph is per-chapter JSON (`Chapter.cumulativeGraph`), so earlier chapters keep their own snapshots.
 
 ## Key Conventions
 
@@ -179,7 +196,7 @@ Both `loadRuntimeBase()` and `loadWorkerTask()` resolve in this order:
 
 ### JSON Fields
 
-Prisma JSON fields (`personality`, `metadata`, `params`, `settings`, `graphSnapshot`, `graphDelta`, `score`, etc.) are manually `JSON.stringify`/`JSON.parse` in route handlers. The frontend often has to `JSON.parse` them after receiving.
+Prisma JSON fields (`personality`, `metadata`, `params`, `settings`, `pendingArchiveData`, `chapterGraph`, `cumulativeGraph`, etc.) are manually `JSON.stringify`/`JSON.parse` in route handlers. The frontend often has to `JSON.parse` them after receiving.
 
 ### Response Shape
 
@@ -201,18 +218,21 @@ The frontend API layer (`apps/web/src/api/*.ts`) does not unwrap this automatica
 
 Import each Naive UI component explicitly. Table action columns are rendered with Vue's `h()` function, not JSX.
 
+### 样式风格
+
+前端以 inline style 为主（直接写在组件 `style` 属性上），仅 `ChapterBranchTree.vue` 等少数组件用 scoped CSS。颜色/间距统一走 boords design system tokens（`apps/web/src/styles/tokens.ts` + `tokens.css`），light 用 `warmCream #fafaf5`、dark 用 `#141414`；不要在 view 文件里硬编码 hex。
+
 ## Important Files to Know
 
 - `apps/server/src/server.ts` — entry point: env, queue worker, HTTP listener
 - `apps/server/src/app.ts` — Fastify app assembly
-- `apps/server/src/routes/chapters-*.ts` — chapter API split by concern: `chapters-crud` (create/list/update/delete), `chapters-tree` (chapter-tree endpoint), `chapters-generate` (preview / generate drafts / select), `chapters-archive` (prepare-archive / save-pending-archive-data / archive), and `chapters.ts` (umbrella register + misc). New chapter endpoints should follow this family pattern, not pile into `chapters.ts`.
+- `apps/server/src/routes/chapters-*.ts` — chapter API split by concern: `chapters-crud` (create/list/update/delete), `chapters-tree` (chapter-tree endpoint), `chapters-generate` (preview / generate drafts / select), `chapters-archive` (prepare-archive / prepare-archive/cancel / cumulative-graph get+build / archive), and `chapters.ts` (umbrella register + misc). New chapter endpoints should follow this family pattern, not pile into `chapters.ts`.
 - `apps/server/src/services/ai-call-logger.ts` — mandatory wrapper for all AI calls
 - `apps/server/src/services/generate-processor.ts` — queue worker that generates drafts serially
-- `apps/server/src/services/combined-extractor.ts` — archive phase 1: memory + graph + plot extraction
-- `apps/server/src/services/graph-organizer.ts` — archive phase 2: merge global graph with new extraction
-- `apps/server/src/services/graph-snapshot.ts` — `defaultTokenEstimator` + snapshot/delta helpers used by combined-extractor / graph-organizer; estimation vs validation boundary is documented at the top
-- `apps/server/src/services/memory-optimizer.ts` — archive phase 4: global memory fusion
-- `apps/server/src/services/memory-compressor.ts` / `memory-organizer.ts` — memory shaping helpers invoked before/after optimizer
+- `apps/server/src/services/stages/` — v4 archive stages — 4 个并行 (`character-stage` / `memory-stage`(=memoryExtract) / `plot-arc-stage` / `graph-extract-stage`) + `memory-optimizer`(=memoryOptimize,串行)
+- `apps/server/src/services/cumulative-graph.ts` — user-triggered cumulative graph merge (`cumulative-graph/build` endpoint)
+- `apps/server/src/services/graph-snapshot.ts` — graph snapshot data shapes (`GraphNodeSnapshot` / `GraphEdgeSnapshot` / `GraphSnapshot`)
+- `apps/server/src/services/memory-optimizer.ts` — 在 `prepare-archive` 阶段(memoryExtract 完成后串行)调,读现有 `layer='global'` + memoryExtract output,AI 融合产出统一 `memories[]`,覆盖 `pendingArchiveData.stages.memoryOptimize.result.memories`。archive confirm **不**再调(commit-only)。详见 `docs/superpowers/specs/2026-07-30-v3-memory-system-design.md`。
 - `packages/prompt-runtime/src/index.ts` — prompt assembly pipeline
 - `packages/ai-provider/src/index.ts` — provider abstraction and runtime compiler
 - `packages/memory-engine/src/index.ts` — semantic search and memory formatting
@@ -220,11 +240,10 @@ Import each Naive UI component explicitly. Table action columns are rendered wit
 
 ## Documentation
 
-- `AGENTS.md` — broader agent guide with route/service tables and tech-stack detail
 - `Process.md` — narrative walkthrough of the chapter lifecycle and data flow
 - `README.md` — project intro, setup, and deployment notes
 - `docs/DESIGN.md` — design-level rationale and decisions
-- `docs/LOGIC.md` — domain logic notes (timeline encoding, scoring rules, etc.)
+- `docs/LOGIC.md` — domain logic notes
 - `docs/ISSUES.md` — P0/P1 issue tracker with file:line citations and resolution commits
 - `docs/sql-reference.md` — SQL reference
 - `docs/superpowers/plans/` — implementation plans produced via superpowers:writing-plans
@@ -235,8 +254,8 @@ Import each Naive UI component explicitly. Table action columns are rendered wit
 
 - 接到非平凡的代码任务（新增功能、跨模块改动、bug 修复），AI 应先调 superpowers 的
   `brainstorming` skill 做意图探索，再视情况调 `writing-plans` 出方案。
-- 写实现代码前，对项目已有测试覆盖的路径调 `test-driven-development`；项目目前**无测试文件**
-  （见 `KNOWN-ISSUES.md`），新代码落 TDD 之前需先在 `apps/server` 补最小测试脚手架（Vitest 已就绪）。
+- 写实现代码前，对项目已有测试覆盖的路径调 `test-driven-development`；server 与 web 均已有
+  Vitest 测试（`apps/server/src/__tests__/`、`apps/web/src/**/__tests__/`），改动相关路径时先跑对应测试。
 - 完成任务、准备声称"完成"前，必须先调 `verification-before-completion`，跑过 `pnpm typecheck`
-  与 `pnpm lint` 再下结论。
+  再下结论。（全仓暂无 ESLint 配置，`pnpm lint` 已于 2026-08 移除；引入 lint 体系后再恢复。）
 - 用户可以直接说"这次跳过 brainstorming / 跳过 TDD"——这条规则是兜底，不是镣铐。

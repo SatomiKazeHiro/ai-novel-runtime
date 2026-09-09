@@ -1,47 +1,87 @@
-import type { FastifyInstance } from 'fastify'
-import { prepareArchiveData, type PendingArchiveData } from '../services/combined-extractor.js'
-import { optimizeMemories } from '../services/memory-optimizer.js'
-import { commitPlotArcWrites } from '../services/plot-extractor.js'
-import { saveGraphSnapshotAndDelta, type GraphSnapshot } from '../services/graph-snapshot.js'
-import { commitMemoryWrites } from '../services/memory-extractor.js'
+﻿import type { FastifyInstance } from 'fastify'
+import { randomBytes } from 'crypto'
 import { PrepareArchiveRequestSchema, safeJsonParse } from '@novel-runtime/shared'
+import type { PendingArchiveDataV4, PendingStageState, RetryStageName } from '@novel-runtime/shared'
 import { parseBody, getOrThrowChapter } from './_helpers.js'
+import { runCharacterStage, type CharacterStageResult } from '../services/stages/character-stage.js'
+import { runMemoryStage, type MemoryStageResult } from '../services/stages/memory-stage.js'
+import { runPlotArcStage, type PlotArcStageResult } from '../services/stages/plot-arc-stage.js'
+import { runGraphExtractStage, type GraphExtractStageResult } from '../services/stages/graph-extract-stage.js'
+import { commitPlotArcWrites } from '../services/plot-extractor.js'
+import { commitCharacterBranchStateWrites, resolveAndCommitCharacterWrites, ConflictError } from '../services/character-extractor.js'
+import { optimizeMemories, type OptimizedMemory } from '../services/memory-optimizer.js'
+import type { GraphSnapshot } from '../services/graph-snapshot.js'
+import { buildCumulativeGraph } from '../services/cumulative-graph.js'
+
+function extractGraphNodes(
+  raw: string | null | undefined
+): Array<{ type: string; key: string; label: string }> {
+  const parsed = safeJsonParse<{ nodes?: Array<{ type?: unknown; key?: unknown; label?: unknown }> } | null>(raw, null)
+  if (!parsed?.nodes) return []
+  return parsed.nodes.filter((n): n is { type: string; key: string; label: string } =>
+    typeof n?.type === 'string' &&
+    typeof n?.key === 'string' &&
+    typeof n?.label === 'string' &&
+    n.label.length > 0
+  )
+}
+
+function extractGraphEdges(
+  raw: string | null | undefined
+): Array<{ fromType: string; fromKey: string; toType: string; toKey: string; relation: string }> {
+  const parsed = safeJsonParse<{ edges?: Array<{ fromType?: unknown; fromKey?: unknown; toType?: unknown; toKey?: unknown; relation?: unknown }> } | null>(raw, null)
+  if (!parsed?.edges) return []
+  return parsed.edges.filter((e): e is { fromType: string; fromKey: string; toType: string; toKey: string; relation: string } =>
+    typeof e?.fromType === 'string' &&
+    typeof e?.fromKey === 'string' &&
+    typeof e?.toType === 'string' &&
+    typeof e?.toKey === 'string' &&
+    typeof e?.relation === 'string'
+  )
+}
 
 /**
- * Archive 流：Phase 1-2 (prepare-archive) + Phase 3-4 (archive confirm)。
- * 详见 routes/chapters.ts 注释或 docs/Process.md「Archive Pipeline」。
+ * v3 archive 端点 — 5 端点:
+ *   POST /api/chapters/:chapterId/prepare-archive                          (启动)
+ *   POST /api/chapters/:chapterId/prepare-archive/cancel                   (撤销审查)
+ *   POST /api/chapters/:chapterId/prepare-archive/retry-stage/:stageName    (单 stage 重跑)
+ *   GET  /api/chapters/:chapterId/cumulative-graph                         (查累计图谱 / 本章图谱)
+ *   POST /api/chapters/:chapterId/cumulative-graph/build                   (AI 生成累计图谱)
+ *   POST /api/chapters/:chapterId/archive                                  (确认归档)
+ *
+ * v3 关键变化 (2026-07-29 收尾):
+ *   - 删除所有 updateMany 锁。仅依赖状态机自身 (draft/reviewing/archived) +
+ *     UI 按钮 disabled 防双击。
+ *   - prepare-archive 调 4 stage 并行 (Promise.all), 各自结果写入
+ *     pendingArchiveData.stages[name]。单 stage 失败不影响其他 stage。
+ *   - reviewing 期间 Chapter.chapterGraph / cumulativeGraph / cumulativeGraphGeneratedAt
+ *     三列整个过程不被读写。所有图谱数据都活在 pendingArchiveData JSON 里。
+ *     archive confirm 时从 pendingArchiveData 拷到这三列, 然后清 pendingArchiveData。
+ *   - 知识图谱页面只查 archived 章节, 读这三列, 数据是用户终稿。
+ *   - 累计图谱编辑后保存走 chaptersApi.update({ pendingArchiveData }) 通路, 不再有独立 PATCH 端点。
  */
 export async function chapterArchiveRoutes(app: FastifyInstance) {
-  // POST /api/chapters/:chapterId/prepare-archive
   app.post('/api/chapters/:chapterId/prepare-archive', async (request, reply) => {
     const { chapterId } = request.params as any
     const body = parseBody(PrepareArchiveRequestSchema, request, reply)
     if (body === null) return
 
     const prisma = app.prisma
-
     const chapter = await getOrThrowChapter(prisma, chapterId, reply)
     if (chapter === null) return
 
-    // 允许 selected 和 reviewing 两种状态进入 prepare-archive：
-    // - selected：正常首次准备
-    // - reviewing：上一次提取失败导致 pendingArchiveData=null/损坏，需要重试
-    //   （不重新丢章节、不让用户走"取消审查=删除"恢复路径）
-    if (chapter.status !== 'selected' && chapter.status !== 'reviewing') {
+    if (chapter.status !== 'draft' && chapter.status !== 'reviewing') {
       return reply.status(400).send({
         success: false,
-        error: `章节当前状态为 ${chapter.status}，只允许 selected 或 reviewing 状态准备归档`
+        error: `章节当前状态为 ${chapter.status}，只允许 draft 或 reviewing 状态准备归档`
       })
     }
-    const preLockStatus = chapter.status
 
-    // 番外不触发提取，直接归档
     if (chapter.isSideStory) {
       await prisma.chapter.update({ where: { id: chapterId }, data: { status: 'archived' } })
       return { success: true, data: { sideStory: true, status: 'archived' } }
     }
 
-    // 主线无正文：直接归档
     if (!chapter.content) {
       await prisma.chapter.update({ where: { id: chapterId }, data: { status: 'archived' } })
       return { success: true, data: { noContent: true, status: 'archived' } }
@@ -49,12 +89,8 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
 
     const outlineText = chapter.outline || ''
     const contentText = chapter.content || ''
-    if (!outlineText.trim()) {
-      return reply.status(400).send({ success: false, error: '归档失败：大纲不能为空' })
-    }
-    if (!contentText.trim()) {
-      return reply.status(400).send({ success: false, error: '归档失败：正文不能为空' })
-    }
+    if (!outlineText.trim()) return reply.status(400).send({ success: false, error: '归档失败：大纲不能为空' })
+    if (!contentText.trim()) return reply.status(400).send({ success: false, error: '归档失败：正文不能为空' })
     if (contentText.length < outlineText.length) {
       return reply.status(400).send({
         success: false,
@@ -62,87 +98,535 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       })
     }
 
-    // 状态机独占锁：原子性 updateMany（防止双击 prepare-archive 触发 2× AI 调用）
-    // 必须先于 prepareArchiveData 获取。允许 status 是 selected（首次）或
-    // reviewing（重试）—— 后者从 reviewing 进入会把 status 翻成 reviewing
-    // （自身），并清掉旧的 pendingArchiveData 让新 payload 接管。
-    const lockResult = await prisma.chapter.updateMany({
-      where: { id: chapterId, status: { in: ['selected', 'reviewing'] } },
+    // 直接翻 status (无锁; UI 按钮 + 状态机双层防双击)
+    await prisma.chapter.update({
+      where: { id: chapterId },
       data: { status: 'reviewing', pendingArchiveData: null }
     })
-    if (lockResult.count === 0) {
-      return reply.status(409).send({
-        success: false,
-        error: '章节正在准备归档中或状态不允许，请刷新后重试'
+
+    // Pre-stage: 文本匹配正文 + 现有 Character → matchedCharacters
+    const allCharacters = await prisma.character.findMany({
+      where: { storyId: chapter.storyId },
+      select: { id: true, name: true, slug: true, protagonist: true }
+    })
+    const matchedCharacters = allCharacters
+      .filter((c: any) => contentText.includes(c.name))
+      .map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        key: c.slug,
+        label: c.name,
+        importance: c.protagonist ? 10 : 7
+      }))
+    const characterNames = matchedCharacters.map((c: any) => c.name)
+    const characterKeys = matchedCharacters.map((c: any) => c.key)
+
+    // 查 latestBranchStates (每个 matched character 的最新一条)
+    const latestBranchStates = matchedCharacters.length > 0
+      ? await prisma.characterBranchState.findMany({
+          where: { characterId: { in: matchedCharacters.map((c: any) => c.id) } },
+          orderBy: { fromChapterNumber: 'desc' }
+        })
+      : []
+    // 去重每个 character 保留最新
+    const latestPerChar = new Map<string, any>()
+    for (const s of latestBranchStates) {
+      if (!latestPerChar.has(s.characterId)) latestPerChar.set(s.characterId, s)
+    }
+    const dedupedBranchStates = Array.from(latestPerChar.values())
+
+    // 查 existing arcs — 只送「激活 + 待激活」（完成/关闭终态不送 AI 分析）
+    const allExistingArcs = await prisma.plotArc.findMany({
+      where: { storyId: chapter.storyId, status: { in: ['active', 'inactive'] } },
+      select: { id: true, name: true, isMainline: true, status: true, firstChapterNumber: true, closedBy: true, closedTargetArcId: true }
+    })
+
+    // 查 prev cumulativeGraph 节点 (含 label, 供 stage 按正文预过滤)
+    let prevCumulativeGraphNodes: Array<{ type: string; key: string; label: string }> = []
+    let prevCumulativeGraphEdges: Array<{ fromType: string; fromKey: string; toType: string; toKey: string; relation: string }> = []
+    if (chapter.parentChapterId) {
+      const parent = await prisma.chapter.findUnique({
+        where: { id: chapter.parentChapterId },
+        select: { cumulativeGraph: true }
       })
+      prevCumulativeGraphNodes = extractGraphNodes(parent?.cumulativeGraph)
+      prevCumulativeGraphEdges = extractGraphEdges(parent?.cumulativeGraph)
     }
 
-    let pending: PendingArchiveData | null = null
-    try {
-      pending = await prepareArchiveData(
-        app,
-        chapterId,
-        chapter.storyId,
-        contentText,
-        chapter.outline,
-        chapter.number,
-        chapter.parentChapterId
-      )
-    } catch (err: any) {
-      // Rollback: 回到 preLockStatus 而不是硬编码 'selected'。
-      // 如果用户从 selected 进入 → 失败 → 回 selected（保持原行为）；
-      // 如果从 reviewing 重试 → 失败 → 回 reviewing（保留 retry 入口）。
-      await prisma.chapter.update({
-        where: { id: chapterId },
-        data: { status: preLockStatus }
-      }).catch(() => { /* swallow rollback failure */ })
-      app.log.error(`[Prepare-Archive] Failed for chapter ${chapterId}: ${err.message}`)
-      return reply.status(500).send({
-        success: false,
-        error: `准备归档失败：AI 提取出错（${err.message}）。请检查 AI 配置后重试。`
+    // memory-stage / memory-optimizer 跨章上下文
+    //   - protagonistNames: 主角名单,影响 mainEvents 评分粒度
+    //   - existingNodeKeys: N-1 节点 type:key,让 AI 复用已有实体
+    //   - previousSnapshotNodes: N-1 节点带 importance,按 desc 排序后取 top CAP
+    const protagonistNames = matchedCharacters.filter((c: any) => c.protagonist).map((c: any) => c.name)
+    const existingNodeKeys = prevCumulativeGraphNodes.map(n => `${n.type}:${n.key}`)
+    // prevCumulativeGraphNodes 不带 importance; 重要度统一视为 0,全量进 prompt 由 cap 截断
+    const previousSnapshotNodes = prevCumulativeGraphNodes.map(n => ({ ...n }))
+
+    // 5 stage 并行: 4 个独立 stage + memoryExtract(原 memory stage 去 optimizer)
+    // memoryOptimize 串行跑 (依赖 memoryExtract success)
+    const [characterState, memoryExtractState, plotArcState, graphState] = await Promise.all([
+      runCharacterStage(app, {
+        storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
+        chapterNumber: chapter.number, matchedCharacters
+      }),
+      runMemoryStage(app, {
+        storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
+        chapterNumber: chapter.number,
+        protagonistNames, characterNames,
+        existingNodeKeys, previousSnapshotNodes
+      }),
+      runPlotArcStage(app, {
+        storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
+        chapterNumber: chapter.number, existingArcs: allExistingArcs as any,
+        characterNames, latestBranchStates: dedupedBranchStates
+      }),
+      runGraphExtractStage(app, {
+        storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
+        chapterNumber: chapter.number, characterNames, prevCumulativeGraphNodes, prevCumulativeGraphEdges,
+        latestBranchStates: dedupedBranchStates
       })
+    ])
+
+    // 1.5. memoryOptimize (v4 拆分): 仅当 memoryExtract success 时跑 optimizer 融合
+    // 失败时该 stage 独立标记 failed,不影响其他 4 stage,也不会浪费 raw 抽取结果。
+    // v3 注释: '未来探讨是否可以优化' — 失败时是否回退到 raw result 让用户 review? 暂不实现, 直接标记 failed。
+    let memoryOptimizeState: PendingStageState = {
+      status: 'pending',
+      completedAt: new Date().toISOString()
+    }
+    if (memoryExtractState.status === 'success' && memoryExtractState.result) {
+      try {
+        // memoryExtractState.result 是 MemoryStageResult (来自 runMemoryStage),
+        // optimizer 接受 MemoryStageRawResult(结构兼容)。无需 as any。
+        const optimized = await optimizeMemories(
+          app, chapter.storyId, chapterId,
+          memoryExtractState.result
+        )
+        memoryOptimizeState = {
+          status: 'success',
+          result: { memories: optimized },
+          completedAt: new Date().toISOString()
+        }
+        app.log.info(
+          `[PrepareArchive] optimizer: ${optimized.length} global memories for chapter ${chapter.number}`
+        )
+      } catch (err: any) {
+        app.log.error(`[PrepareArchive] memory-optimizer failed: ${err.message}`)
+        memoryOptimizeState = {
+          status: 'failed',
+          errorMessage: err.message,
+          completedAt: new Date().toISOString()
+        }
+      }
+    } else {
+      // memoryExtract failed → optimizer 不跑,标记 failed + 明确原因
+      memoryOptimizeState = {
+        status: 'failed',
+        errorMessage: 'memoryExtract 未成功,跳过 optimizer',
+        completedAt: new Date().toISOString()
+      }
     }
 
-    if (!pending) {
-      return reply.status(500).send({
+    const pendingData: PendingArchiveDataV4 = {
+      version: 4,
+      stages: {
+        character: characterState,
+        memoryExtract: memoryExtractState,
+        memoryOptimize: memoryOptimizeState,
+        plotArc: plotArcState,
+        graph: graphState
+      },
+      meta: {
+        extractedAt: new Date().toISOString(),
+        chapterNumber: chapter.number
+      }
+    }
+
+    // reviewing 期间 chapterGraph 数据只活在 pendingArchiveData.stages.graph.result.chapterGraph,
+    // Chapter.chapterGraph 列保持 null, archive confirm 时再从 pendingArchiveData 拷过来。
+    // 乐观锁：仅当章节仍处于 reviewing 时才写回。若期间被 cancel 改回 draft，则放弃写回，
+    // 不覆盖用户的撤销。
+    const writeBack = await prisma.chapter.updateMany({
+      where: { id: chapterId, status: 'reviewing' },
+      data: {
+        status: 'reviewing',
+        pendingArchiveData: JSON.stringify(pendingData)
+      }
+    })
+    if (writeBack.count === 0) {
+      app.log.warn(`[PrepareArchive] chapter ${chapterId} cancelled during extraction, skip write-back`)
+    }
+
+    return { success: true, data: pendingData }
+  })
+
+  app.post('/api/chapters/:chapterId/prepare-archive/cancel', async (request, reply) => {
+    const { chapterId } = request.params as any
+    const prisma = app.prisma
+    const chapter = await getOrThrowChapter(prisma, chapterId, reply)
+    if (chapter === null) return
+
+    if (chapter.status !== 'reviewing') {
+      return reply.status(400).send({
         success: false,
-        error: '准备归档失败：AI 提取返回为空，请检查 AI 配置后重试'
+        error: `章节当前状态为 ${chapter.status}，只允许 reviewing 状态撤销审查`
       })
     }
 
     await prisma.chapter.update({
       where: { id: chapterId },
+      data: { status: 'draft', pendingArchiveData: null }
+    })
+
+    return { success: true, data: { status: 'draft' } }
+  })
+
+  // 单 stage 重跑（不重置其他 stage）。txt 第 1 段:失败 stage 单独重新解析。
+  // 也允许重跑 success 的 stage（用户对结果不满意时,不必撤销整章）。
+  app.post('/api/chapters/:chapterId/prepare-archive/retry-stage/:stageName', async (request, reply) => {
+    const { chapterId, stageName } = request.params as any
+    const prisma = app.prisma
+    const chapter = await getOrThrowChapter(prisma, chapterId, reply)
+    if (chapter === null) return
+
+    if (chapter.status !== 'reviewing') {
+      return reply.status(400).send({
+        success: false,
+        error: `章节当前状态为 ${chapter.status}，只允许 reviewing 状态重跑 stage`
+      })
+    }
+    // v4: 老 'memory' 已被拆成 memoryExtract / memoryOptimize,不在白名单里 → 400
+    const validStages: RetryStageName[] = ['character', 'memoryExtract', 'memoryOptimize', 'plotArc', 'graph']
+    if (!validStages.includes(stageName)) {
+      return reply.status(400).send({
+        success: false,
+        error: `未知 stage: ${stageName}。v4 支持: ${validStages.join(', ')}`
+      })
+    }
+    if (!chapter.content) {
+      return reply.status(400).send({ success: false, error: '正文为空,无法重跑 stage' })
+    }
+
+    // 读已有 pendingArchiveData,只重写目标 stage
+    const existing = safeJsonParse<PendingArchiveDataV4 | null>(chapter.pendingArchiveData, null)
+    if (!existing || existing.version !== 4) {
+      return reply.status(400).send({
+        success: false,
+        error: '当前章节 pendingArchiveData 缺失或不是 v4,无法单 stage 重跑(请用重新准备归档)'
+      })
+    }
+
+    const contentText = chapter.content
+    const outlineText = chapter.outline || ''
+
+    // 复用 prepare-archive 的 pre-stage 数据加载
+    const allCharacters = await prisma.character.findMany({
+      where: { storyId: chapter.storyId },
+      select: { id: true, name: true, slug: true, protagonist: true }
+    })
+    const matchedCharacters = allCharacters
+      .filter((c: any) => contentText.includes(c.name))
+      .map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        key: c.slug,
+        label: c.name,
+        importance: c.protagonist ? 10 : 7
+      }))
+    const characterNames = matchedCharacters.map((c: any) => c.name)
+    const characterKeys = matchedCharacters.map((c: any) => c.key)
+
+    const latestBranchStates = matchedCharacters.length > 0
+      ? await prisma.characterBranchState.findMany({
+          where: { characterId: { in: matchedCharacters.map((c: any) => c.id) } },
+          orderBy: { fromChapterNumber: 'desc' }
+        })
+      : []
+    const latestPerChar = new Map<string, any>()
+    for (const s of latestBranchStates) {
+      if (!latestPerChar.has(s.characterId)) latestPerChar.set(s.characterId, s)
+    }
+    const dedupedBranchStates = Array.from(latestPerChar.values())
+
+    // 只送「激活 + 待激活」（完成/关闭终态不送 AI 分析，避免复活，与 prepare-archive 对齐）
+    const allExistingArcs = await prisma.plotArc.findMany({
+      where: { storyId: chapter.storyId, status: { in: ['active', 'inactive'] } }
+    })
+
+    let prevCumulativeGraphNodes: Array<{ type: string; key: string; label: string }> = []
+    let prevCumulativeGraphEdges: Array<{ fromType: string; fromKey: string; toType: string; toKey: string; relation: string }> = []
+    if (chapter.parentChapterId) {
+      const parent = await prisma.chapter.findUnique({
+        where: { id: chapter.parentChapterId },
+        select: { cumulativeGraph: true }
+      })
+      prevCumulativeGraphNodes = extractGraphNodes(parent?.cumulativeGraph)
+      prevCumulativeGraphEdges = extractGraphEdges(parent?.cumulativeGraph)
+    }
+
+    // 单 stage 执行
+    let newStage: PendingStageState
+    try {
+      if (stageName === 'character') {
+        newStage = await runCharacterStage(app, {
+          storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
+          chapterNumber: chapter.number, matchedCharacters
+        })
+      } else if (stageName === 'memoryExtract') {
+        // memory-stage retry 也要补足跨章上下文; protagonistNames / existingNodeKeys / previousSnapshotNodes
+        // 与 prepare-archive 路由用同一组数据源。
+        const protagonistNames = matchedCharacters.filter((c: any) => c.protagonist).map((c: any) => c.name)
+        const existingNodeKeys = prevCumulativeGraphNodes.map(n => `${n.type}:${n.key}`)
+        const previousSnapshotNodes = prevCumulativeGraphNodes.map(n => ({ ...n }))
+        const extractState: PendingStageState = await runMemoryStage(app, {
+          storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
+          chapterNumber: chapter.number,
+          protagonistNames, characterNames,
+          existingNodeKeys, previousSnapshotNodes
+        })
+
+        // v4: extract 成功后自动续跑 optimizer,两 stage 一起写回(与 prepare-archive 行为一致)
+        let optimizeState: PendingStageState
+        if (extractState.status === 'success' && extractState.result) {
+          try {
+            const optimized = await optimizeMemories(
+              app, chapter.storyId, chapterId,
+              extractState.result as Parameters<typeof optimizeMemories>[3]
+            )
+            optimizeState = {
+              status: 'success',
+              result: { memories: optimized },
+              completedAt: new Date().toISOString()
+            }
+          } catch (err: any) {
+            app.log.error(`[RetryStage:memoryExtract] optimizer failed: ${err.message}`)
+            optimizeState = {
+              status: 'failed',
+              errorMessage: err.message,
+              completedAt: new Date().toISOString()
+            }
+          }
+        } else {
+          optimizeState = {
+            status: 'failed',
+            errorMessage: 'memoryExtract 未成功,跳过 optimizer',
+            completedAt: new Date().toISOString()
+          }
+        }
+
+        const mergedPending: PendingArchiveDataV4 = {
+          ...existing,
+          stages: {
+            ...existing.stages,
+            memoryExtract: extractState,
+            memoryOptimize: optimizeState
+          }
+        }
+        await prisma.chapter.update({
+          where: { id: chapterId },
+          data: { pendingArchiveData: JSON.stringify(mergedPending) }
+        })
+        return { success: true, data: mergedPending }
+      } else if (stageName === 'memoryOptimize') {
+        // v4: 仅重跑 optimizer,复用已有 memoryExtract 结果(不重跑抽取)
+        const extractState = existing.stages.memoryExtract
+        if (extractState?.status !== 'success' || !extractState.result) {
+          return reply.status(400).send({
+            success: false,
+            error: 'memoryExtract 未成功,无法单独重跑 memoryOptimize(请先重跑 memoryExtract)'
+          })
+        }
+        try {
+          const optimized = await optimizeMemories(
+            app, chapter.storyId, chapterId,
+            extractState.result as Parameters<typeof optimizeMemories>[3]
+          )
+          newStage = {
+            status: 'success',
+            result: { memories: optimized },
+            completedAt: new Date().toISOString()
+          }
+        } catch (err: any) {
+          app.log.error(`[RetryStage:memoryOptimize] optimizer failed: ${err.message}`)
+          newStage = {
+            status: 'failed',
+            errorMessage: err.message,
+            completedAt: new Date().toISOString()
+          }
+        }
+      } else if (stageName === 'plotArc') {
+        newStage = await runPlotArcStage(app, {
+          storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
+          chapterNumber: chapter.number, existingArcs: allExistingArcs as any,
+          characterNames, latestBranchStates: dedupedBranchStates
+        })
+      } else {
+        newStage = await runGraphExtractStage(app, {
+          storyId: chapter.storyId, chapterId, content: contentText, outline: outlineText,
+          chapterNumber: chapter.number, characterNames, prevCumulativeGraphNodes, prevCumulativeGraphEdges,
+          latestBranchStates: dedupedBranchStates
+        })
+      }
+    } catch (err: any) {
+      app.log.error(`[RetryStage:${stageName}] ${err.message}`)
+      return reply.status(500).send({ success: false, error: `重跑 ${stageName} 失败: ${err.message}` })
+    }
+
+    // 合并回 pendingArchiveData(只覆盖目标 stage,其他不动)
+    const updatedPending: PendingArchiveDataV4 = {
+      ...existing,
+      stages: {
+        ...existing.stages,
+        [stageName]: newStage
+      }
+    }
+
+    // graph stage 重跑结果只写到 pendingArchiveData.stages.graph.result.chapterGraph,
+    // Chapter.chapterGraph 列保持 null (archive confirm 时再拷)。
+
+    await prisma.chapter.update({
+      where: { id: chapterId },
       data: {
-        status: 'reviewing',
-        pendingArchiveData: JSON.stringify(pending)
+        pendingArchiveData: JSON.stringify(updatedPending)
       }
     })
 
-    return { success: true, data: pending }
+    return { success: true, data: updatedPending }
   })
 
-  // POST /api/chapters/:chapterId/archive
+  // GET /api/chapters/:chapterId/cumulative-graph
+  // 拉取累计图谱 + generatedAt + 本章图谱; 任意字段未写入时回 null。
+  // chapterGraph 来自 Chapter.chapterGraph (archive confirm 阶段写入, 详见本文件 L179-188)。
+  // 前端 GraphView 用 chapterGraph 渲染「本章纯净」tab — 见 spec 2026-07-29-graphview-bugfix-design.md。
+  app.get('/api/chapters/:chapterId/cumulative-graph', async (request, reply) => {
+    const { chapterId } = request.params as any
+    const prisma = app.prisma
+    const chapter = await getOrThrowChapter(prisma, chapterId, reply)
+    if (chapter === null) return
+
+    const generatedAt = chapter.cumulativeGraphGeneratedAt
+      ? chapter.cumulativeGraphGeneratedAt.toISOString()
+      : null
+    const graph = chapter.cumulativeGraph
+      ? safeJsonParse<GraphSnapshot | null>(chapter.cumulativeGraph, null)
+      : null
+    const chapterGraph = chapter.chapterGraph
+      ? safeJsonParse<GraphSnapshot | null>(chapter.chapterGraph, null)
+      : null
+
+    return { success: true, data: { generatedAt, graph, chapterGraph } }
+  })
+
+  // POST /api/chapters/:chapterId/cumulative-graph/build
+  // 入参: { chapterGraph: GraphSnapshot }
+  // 调 buildCumulativeGraph, 把生成的累计图谱写 pendingArchiveData.cumulativeGraph +
+  // cumulativeGraphGeneratedAt(一起放 JSON 里),Chapter 那两列保持 null。
+  // archive confirm 时再从 pendingArchiveData 拷到列。
+  // 响应含 pendingArchiveData, 前端 ReviewingPanel 直接同步到 props.pending / localData。
+  app.post('/api/chapters/:chapterId/cumulative-graph/build', async (request, reply) => {
+    const { chapterId } = request.params as any
+    const body = request.body as { chapterGraph?: GraphSnapshot } | undefined
+    if (!body?.chapterGraph || !Array.isArray(body.chapterGraph.nodes) || !Array.isArray(body.chapterGraph.edges)) {
+      return reply.status(400).send({ success: false, error: '缺少 chapterGraph 字段' })
+    }
+
+    const prisma = app.prisma
+    const chapter = await getOrThrowChapter(prisma, chapterId, reply)
+    if (chapter === null) return
+
+    if (chapter.status !== 'draft' && chapter.status !== 'reviewing') {
+      return reply.status(400).send({
+        success: false,
+        error: `章节当前状态为 ${chapter.status},不允许生成累计图谱`,
+      })
+    }
+
+    // 读 existing pendingArchiveData, 重建并加 cumulativeGraph 字段
+    const existing = safeJsonParse<PendingArchiveDataV4 | null>(chapter.pendingArchiveData, null)
+    if (!existing || existing.version !== 4) {
+      return reply.status(400).send({
+        success: false,
+        error: '当前章节没有 pendingArchiveData,无法生成累计图谱(请先 prepare-archive)',
+      })
+    }
+
+    // 查 prev cumulativeGraph (parent 优先, 主线回退) — 读的是已归档章节的 Chapter.cumulativeGraph 列
+    let prevCumulative: GraphSnapshot | null = null
+    if (chapter.parentChapterId) {
+      const parent = await prisma.chapter.findUnique({
+        where: { id: chapter.parentChapterId },
+        select: { cumulativeGraph: true },
+      })
+      if (parent?.cumulativeGraph) prevCumulative = safeJsonParse<GraphSnapshot | null>(parent.cumulativeGraph, null)
+    }
+    if (!prevCumulative) {
+      const prev = await prisma.chapter.findFirst({
+        where: {
+          storyId: chapter.storyId, parentChapterId: null,
+          number: chapter.number - 1, id: { not: chapterId },
+        },
+        select: { cumulativeGraph: true },
+      })
+      if (prev?.cumulativeGraph) prevCumulative = safeJsonParse<GraphSnapshot | null>(prev.cumulativeGraph, null)
+    }
+
+    let result: { cumulativeGraph: GraphSnapshot; aiCalled: boolean }
+    try {
+      result = await buildCumulativeGraph(app, {
+        storyId: chapter.storyId, chapterId,
+        chapterGraph: body.chapterGraph,
+        prevCumulativeGraph: prevCumulative,
+      })
+    } catch (err: any) {
+      app.log.error(`[CumulativeGraphBuild] ${err.message}`)
+      return reply.status(500).send({ success: false, error: `累计图谱生成失败: ${err.message}` })
+    }
+
+    const generatedAt = new Date().toISOString()
+    const updatedPending: PendingArchiveDataV4 = {
+      ...existing,
+      cumulativeGraph: result.cumulativeGraph,
+      cumulativeGraphGeneratedAt: generatedAt,
+    }
+
+    await prisma.chapter.update({
+      where: { id: chapterId },
+      data: {
+        pendingArchiveData: JSON.stringify(updatedPending)
+      },
+    })
+
+    return {
+      success: true,
+      data: {
+        graph: result.cumulativeGraph,
+        generatedAt,
+        aiCalled: result.aiCalled,
+        pendingArchiveData: updatedPending,
+      }
+    }
+  })
+
+  // 注意: PATCH /api/chapters/:chapterId/cumulative-graph 端点已删除。
+  // 用户编辑累计图谱后保存, 走 chaptersApi.update({ pendingArchiveData }) 通路
+  // (ReviewingPanel.handleSave → emit('save') → editor.savePendingArchiveData),
+  // 与 chapterGraph 走同一条流, 不再有独立的 PATCH 端点。
+
   app.post('/api/chapters/:chapterId/archive', async (request, reply) => {
     const { chapterId } = request.params as any
     const prisma = app.prisma
-
     const chapter = await getOrThrowChapter(prisma, chapterId, reply)
     if (chapter === null) return
 
     if (chapter.status === 'archived') {
-      app.log.info(`[Archive] Chapter ${chapterId} already archived, skipping`)
       return { success: true, data: { alreadyArchived: true } }
     }
-
-    // 只允许 reviewing 状态确认归档
     if (chapter.status !== 'reviewing') {
       return reply.status(400).send({
         success: false,
         error: `章节当前状态为 ${chapter.status}，只允许 reviewing 状态确认归档`
       })
     }
-
-    // 番外或无正文：prepare-archive 阶段已处理，这里兜底
     if (chapter.isSideStory || !chapter.content) {
       await prisma.chapter.update({
         where: { id: chapterId },
@@ -151,90 +635,204 @@ export async function chapterArchiveRoutes(app: FastifyInstance) {
       return { success: true, data: { skipped: true } }
     }
 
-    const pending = safeJsonParse(chapter.pendingArchiveData, null) as PendingArchiveData | null
-
-    if (!pending) {
+    const pendingRaw = chapter.pendingArchiveData
+    if (!pendingRaw) {
       return reply.status(400).send({
         success: false,
         error: '归档失败：没有找到预归档数据，请先调用 prepare-archive'
       })
     }
+    // v4 校验:必须是 PendingArchiveDataV4(v3 直接 400 提示重新准备)
+    const pending = safeJsonParse<PendingArchiveDataV4 | null>(pendingRaw, null)
+    if (!pending || pending.version !== 4) {
+      return reply.status(400).send({
+        success: false,
+        error: '归档失败：pendingArchiveData 版本不匹配，请重新准备归档'
+      })
+    }
+    // v4 严格校验 5 stage 全存在且 success：character / memoryExtract / memoryOptimize / plotArc / graph
+    // 用户可写 pendingArchiveData，stages 结构可能残缺 → 显式校验，避免 Object.entries(undefined) 崩溃
+    const stages = (pending as any)?.stages
+    const requiredStages = ['character', 'memoryExtract', 'memoryOptimize', 'plotArc', 'graph'] as const
+    if (!stages || typeof stages !== 'object') {
+      return reply.status(400).send({
+        success: false,
+        error: '归档失败：pendingArchiveData 缺少 stages 数据'
+      })
+    }
+    const failedStages = requiredStages.filter(name => !stages[name] || stages[name].status !== 'success')
+    if (failedStages.length > 0) {
+      return reply.status(400).send({
+        success: false,
+        error: `归档失败：以下 stage 缺失或未通过：${failedStages.join(', ')}`
+      })
+    }
 
-    // 状态机独占锁：原子性 updateMany（防止双击 archive 产生重复
-    // Memory/Timeline/PlotArc/Graph 写入）。锁在事务外，事务本身仍保持原子性。
-    // 锁把 status 翻到 'archived'，后续事务内的 status='archived' 写入为 no-op。
-    const lockResult = await prisma.chapter.updateMany({
-      where: { id: chapterId, status: 'reviewing' },
-      data: { status: 'archived' }
+    // 校验: 用户必须先在审查阶段生成累计图谱(pendingArchiveData 里必须有 cumulativeGraph + generatedAt)
+    if (!pending.cumulativeGraph || !pending.cumulativeGraphGeneratedAt) {
+      return reply.status(400).send({
+        success: false,
+        error: 'cumulative-graph-not-generated',
+      })
+    }
+
+    // 拷 pendingArchiveData 数据到 Chapter 三列(chapterGraph / cumulativeGraph / cumulativeGraphGeneratedAt),
+    // 清 pendingArchiveData。 Chapter 三列只在 archived 之后才有数据, 知识图谱页面只查 archived 章节, 读这三列。
+    const graphStageResult = (pending.stages.graph.result ?? {}) as GraphExtractStageResult
+    const chapterGraph = graphStageResult.chapterGraph
+      ? JSON.stringify(graphStageResult.chapterGraph)
+      : null
+
+    // v4 数据来源拆分:
+    //   - raw (mainEvents / sideEvents / emotions / foreshadowing / relationshipChanges / scenes / summary)
+    //     来自 memoryExtract.result(原 v3 memory stage 去 optimizer 部分)
+    //   - 优化融合 (global layer) 来自 memoryOptimize.result.memories[]
+    //     校验已保证两 stage 都 success,所以 default [] 只为类型安全兜底
+    const toArray = <T,>(x: unknown): T[] => Array.isArray(x) ? (x as T[]) : []
+    const extractResult = (pending.stages.memoryExtract.result ?? {}) as MemoryStageResult
+    const optimizeResult = (pending.stages.memoryOptimize.result ?? {}) as { memories?: unknown }
+    const mainEvents = toArray<MemoryStageResult['mainEvents'][number]>(extractResult.mainEvents)
+    const sideEvents = toArray<MemoryStageResult['sideEvents'][number]>(extractResult.sideEvents)
+    const emotions = toArray<string>(extractResult.emotions)
+    const foreshadowing = toArray<string>(extractResult.foreshadowing)
+    const relationshipChanges = toArray<string>(extractResult.relationshipChanges)
+    const scenes = toArray<MemoryStageResult['scenes'][number]>(extractResult.scenes)
+    const summary: string = typeof extractResult.summary === 'string' ? extractResult.summary : ''
+    const optimized = toArray<OptimizedMemory>(optimizeResult.memories)
+
+    // plot-consolidator 输出 (PlotArcWriteRow[]) — archive confirm 时落推进点 + 推导状态
+    const plotArcResult = (pending.stages.plotArc.result ?? {}) as PlotArcStageResult
+    const plotArcs = plotArcResult.plotArcs ?? []
+
+    // character-stage 输出 (CharacterStateRow[]) — archive confirm 时落 CharacterBranchState 表
+    const characterStageResult = (pending.stages.character.result ?? {}) as CharacterStageResult
+    const characterStates = characterStageResult.characterStates ?? []
+
+    // 把 'NEW' UID 替换成本章生成的实际 UID
+    const newUidHex = (): string => randomBytes(4).toString('hex').toUpperCase()
+    const fromChapterNumber = chapter.number
+
+    // 构造每条 Memory 行的写入数据(后端按 layer 规则打 tag, 备注: '未来探讨是否可以优化' — 是否让 raw 也由 AI 给 tag?)
+    type MemoryRowData = Parameters<typeof prisma.memory.create>[0]['data']
+    const chapterRows: MemoryRowData[] = []
+    const CATEGORY = {
+      event: 'event_memory', emotional: 'emotional_change',
+      foreshadowing: 'foreshadowing', relationship: 'relationship_change', state: 'state'
+    } as const
+    // 5 段同构 row (layer=chapter),共一个 push helper;category 表达语义,extraTag 控制 main-plot 标记
+    const pushChapterRow = (content: string, importance: number, category: string, extraTags: string[] = [], participants?: string) => {
+      chapterRows.push({
+        storyId: chapter.storyId,
+        chapterId,
+        fromChapterNumber,
+        layer: 'chapter',
+        category: category as any,
+        content,
+        tags: JSON.stringify(['auto-extracted', ...extraTags]),
+        importance,
+        participants: participants ?? null
+      })
+    }
+    for (const e of mainEvents) {
+      if (!e?.description) continue
+      pushChapterRow(e.description, typeof e.importance === 'number' ? e.importance : 5, CATEGORY.event, ['main-plot'], e.participants)
+    }
+    for (const e of sideEvents) {
+      if (!e?.description) continue
+      pushChapterRow(e.description, typeof e.importance === 'number' ? e.importance : 5, CATEGORY.event, [], e.participants)
+    }
+    const pushStringRow = (s: string, category: string) => pushChapterRow(s, 5, category)
+    for (const e of emotions) if (typeof e === 'string' && e) pushStringRow(e, CATEGORY.emotional)
+    for (const e of foreshadowing) if (typeof e === 'string' && e) pushStringRow(e, CATEGORY.foreshadowing)
+    for (const e of relationshipChanges) if (typeof e === 'string' && e) pushStringRow(e, CATEGORY.relationship)
+    const sceneRows: MemoryRowData[] = scenes.filter(s => s?.location).map(s => ({
+      storyId: chapter.storyId, chapterId, fromChapterNumber, layer: 'scene',
+      category: CATEGORY.event,
+      content: `${s.location} | ${s.event || ''}`,
+      tags: JSON.stringify(['auto-extracted', 'scene-memory']),
+      importance: typeof s.importance === 'number' ? s.importance : 5,
+      participants: s.participants ?? null
+    }))
+
+    const globalRows: MemoryRowData[] = optimized.filter(m => m?.content).map(m => ({
+      storyId: chapter.storyId, chapterId, fromChapterNumber, layer: 'global',
+      category: m.type === 'state' ? CATEGORY.state : CATEGORY.event,
+      content: m.content,
+      tags: JSON.stringify(['auto-extracted']),
+      importance: typeof m.importance === 'number' ? m.importance : 5,
+      originUid: m.originUid === 'NEW' ? `${fromChapterNumber}#${newUidHex()}` : m.originUid
+    }))
+
+    // v4 角色自动建档: transaction 外预查 + slug+name 双校验,冲突时直接 409(不进 transaction)
+    let resolvedCharacterStates = characterStates
+    if (characterStates.length > 0) {
+      const allExisting = await prisma.character.findMany({
+        where: { storyId: chapter.storyId },
+        select: { id: true, slug: true, name: true }
+      })
+      const { effectiveWrites, conflicts } = await resolveAndCommitCharacterWrites(
+        null, // resolve 是纯逻辑,不直接调 tx
+        chapter.storyId,
+        chapter.number,
+        characterStates,
+        allExisting,
+        app.log
+      )
+      if (conflicts.length > 0) {
+        return reply.status(409).send({
+          success: false,
+          error: 'character write conflict',
+          conflicts
+        })
+      }
+      resolvedCharacterStates = effectiveWrites
+    }
+
+    // commit-only: prisma.$transaction 内一次写完三层 + PlotArc + CharacterBranchState + Chapter.summary + Chapter 三列 + 翻 status
+    // 备注: CharacterBranchState 已接通 (commitCharacterBranchStateWrites, isNew=true 自动建 Character 行)
+    await prisma.$transaction(async (tx) => {
+      for (const data of [...chapterRows, ...sceneRows, ...globalRows]) {
+        await tx.memory.create({ data })
+      }
+      // 剧情弧线落库：推进点 + 关闭 + 状态推导
+      await commitPlotArcWrites(tx, chapter.storyId, chapter.number, plotArcs)
+      // 接通 v3 CharacterBranchState 写库 (修 P0 遗留): character-stage 输出 → CharacterBranchState 表
+      // isNew=true 时 commitCharacterBranchStateWrites 内部自动 tx.character.create 建 Character 行
+      await commitCharacterBranchStateWrites(tx, chapter.storyId, chapter.number, resolvedCharacterStates)
+      // 乐观锁：仅当章节仍处于 reviewing 时才翻 archived。若期间被 cancel 改回 draft，
+      // updateMany count=0 → 抛错回滚整个事务（memory/plotArc/branchState 都不落库）。
+      const archived = await tx.chapter.updateMany({
+        where: { id: chapterId, status: 'reviewing' },
+        data: {
+          summary,
+          status: 'archived',
+          pendingArchiveData: null,
+          chapterGraph,
+          cumulativeGraph: JSON.stringify(pending.cumulativeGraph),
+          cumulativeGraphGeneratedAt: pending.cumulativeGraphGeneratedAt
+            ? new Date(pending.cumulativeGraphGeneratedAt)
+            : null
+        }
+      })
+      if (archived.count === 0) {
+        throw new Error('归档期间章节状态已变更（可能被取消），请刷新后重试')
+      }
     })
-    if (lockResult.count === 0) {
-      return reply.status(409).send({
-        success: false,
-        error: '章节正在归档中或状态不允许，请刷新后重试'
-      })
-    }
-
-    // 事务写入
-    let graphSaved: { snapshot: GraphSnapshot; delta: GraphSnapshot } | null = null
-    try {
-      graphSaved = await prisma.$transaction(async (tx) => {
-        // 1. 写入记忆、角色状态、时间线
-        await commitMemoryWrites(tx, chapterId, chapter.storyId, pending.memories)
-
-        // 2. 更新章节摘要 + timelinePosition (本章开篇时间锚点)
-        //    把两个相关字段放在同一次 UPDATE: 都是 chapter 本章级元数据,
-        //    都在 prepare-archive 阶段确定, 一起原子落库。
-        //    timelinePosition 可能为 null — 显式置 NULL (Prisma unset 不会写 NULL, 要赋值 null)。
-        const chapterMetaUpdate: { summary?: string; timelinePosition: number | null } = {
-          timelinePosition: pending.memories.timelinePosition
-        }
-        if (pending.memories.summary) {
-          chapterMetaUpdate.summary = pending.memories.summary
-        }
-        await tx.chapter.update({
-          where: { id: chapterId },
-          data: chapterMetaUpdate
-        })
-
-        // 3. 写入剧情弧线 (含 lastTouchedChapter 刷新 + stale 检测)
-        await commitPlotArcWrites(tx, chapter.number, pending.plotArcs)
-
-        // 4. 写入图谱快照
-        const saved = await saveGraphSnapshotAndDelta(tx, chapterId, chapter.storyId, pending.graph)
-        if (!saved) {
-          throw new Error('知识图谱保存失败')
-        }
-
-        // 5. 正式归档
-        await tx.chapter.update({
-          where: { id: chapterId },
-          data: { status: 'archived', pendingArchiveData: null }
-        })
-
-        return saved
-      })
-
-      app.log.info(`[Archive] Transaction committed for chapter ${chapterId}`)
-    } catch (err: any) {
-      app.log.error(`[Archive] Transaction failed: ${err.message}`)
-      return reply.status(500).send({
-        success: false,
-        error: `归档失败：数据保存出错（${err.message}）。章节状态未变更，请检查 AI 配置后重试。`
-      })
-    }
-
-    // 阶段 4：记忆优化（失败不阻塞归档）
-    let optimizedCount = 0
-    try {
-      optimizedCount = await optimizeMemories(app, chapter.storyId, chapterId, chapter.number)
-      app.log.info(`[Archive] Memory optimized: ${optimizedCount} global memories`)
-    } catch (err: any) {
-      app.log.error(`[Archive] Memory optimization failed (non-blocking): ${err.message}`)
-    }
+    app.log.info(
+      { chapterId, storyId: chapter.storyId, chapterRows: chapterRows.length, sceneRows: sceneRows.length, globalRows: globalRows.length },
+      '[Archive] confirm success'
+    )
 
     return {
       success: true,
-      data: { optimizedCount, graph: graphSaved }
+      data: {
+        archived: true,
+        memoryRows: {
+          chapter: chapterRows.length,
+          scene: sceneRows.length,
+          global: globalRows.length
+        }
+      }
     }
   })
 }

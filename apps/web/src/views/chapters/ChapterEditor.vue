@@ -13,6 +13,7 @@
                 v-model:value="editTitle"
                 style="width: 320px; font-size: 16px; font-weight: 600"
                 placeholder="章节标题"
+                :readonly="!canEdit"
             />
             <n-tag
                 v-if="chapter?.isSideStory"
@@ -23,9 +24,9 @@
             <n-tag
                 size="small"
                 :type="statusTagType(chapter?.status)"
-                >{{ chapter?.status }}</n-tag
+                >{{ getChapterStatus(chapter?.status).label }}</n-tag
             >
-            <n-tag v-if="isReadonly" size="small" type="info">只读</n-tag>
+            <n-tag v-if="!canEdit" size="small" type="info">只读</n-tag>
         </n-space>
 
         <!-- ========== Step 1: 配置区 ========== -->
@@ -42,7 +43,7 @@
                             :options="profileOptions"
                             style="width: 280px"
                             placeholder="选择写作人格"
-                            :disabled="isReadonly"
+                            :disabled="!canEdit"
                         />
                     </n-form-item>
                 </n-grid-item>
@@ -58,7 +59,7 @@
                             style="width: 280px"
                             placeholder="选择运行模型"
                             clearable
-                            :disabled="isReadonly"
+                            :disabled="!canEdit"
                         />
                     </n-form-item>
                 </n-grid-item>
@@ -133,7 +134,7 @@
                         type="textarea"
                         :rows="12"
                         placeholder="输入章节大纲..."
-                        :readonly="isReadonly"
+                        :readonly="!canEdit"
                     />
                 </n-form-item>
                 <n-text
@@ -153,7 +154,7 @@
                                     editForm.sceneLocation
                                 "
                                 placeholder="场景地点，如：青云宗藏书阁地下三层"
-                                :readonly="isReadonly"
+                                :readonly="!canEdit"
                         /></n-form-item>
                     </n-grid-item>
                     <n-grid-item>
@@ -161,7 +162,7 @@
                             ><n-input
                                 v-model:value="editForm.sceneMood"
                                 placeholder="氛围，如：紧张、压抑、随时可能被发现"
-                                :readonly="isReadonly"
+                                :readonly="!canEdit"
                         /></n-form-item>
                     </n-grid-item>
                     <n-grid-item>
@@ -169,7 +170,7 @@
                             ><n-input
                                 v-model:value="editForm.sceneGoal"
                                 placeholder="目标，如：找到上古残卷并不被守卫察觉"
-                                :readonly="isReadonly"
+                                :readonly="!canEdit"
                         /></n-form-item>
                     </n-grid-item>
                 </n-grid>
@@ -187,7 +188,7 @@
                 </n-text>
             </n-form>
 
-            <template v-if="!isReadonly">
+            <template v-if="canEdit">
                 <n-divider />
                 <n-button
                     type="primary"
@@ -200,7 +201,7 @@
 
         <!-- ========== Step 2: Prompt (嵌入 ChapterPreview) ========== -->
         <ChapterPreview
-            v-if="!isReadonly"
+            v-if="!isArchived"
             :prompt="prompt"
             @generate-prompt="emit('generate-prompt')"
         />
@@ -208,7 +209,7 @@
         <!-- ========== Step 3: 正文编辑 (外壳 + 嵌入 DraftList) ========== -->
         <n-card
             title="Step 3：正文编辑"
-            v-if="!isReadonly"
+            v-if="!isArchived"
             style="margin-bottom: 24px"
         >
             <n-grid :cols="2" :x-gap="16" style="min-height: 480px">
@@ -231,11 +232,12 @@
                         type="textarea"
                         :rows="22"
                         placeholder="在这里粘贴或编辑章节正文..."
+                        :readonly="!canEdit"
                     />
                     <n-space align="center" justify="space-between" style="margin-top: 12px">
                         <n-space>
-                            <n-button v-if="chapter?.status !== 'archived'" type="primary" size="small" @click="emit('save-content')" :loading="savingContent" :disabled="savingContent">保存正文</n-button>
-                            <n-button v-if="chapter?.status === 'selected'" size="small" @click="emit('prepare-archive')" :loading="archiving">准备归档</n-button>
+                            <n-button v-if="canEdit" type="primary" size="small" @click="emit('save-content')" :loading="savingContent" :disabled="savingContent">保存正文</n-button>
+                            <n-button v-if="chapter?.status === 'draft'" size="small" @click="emit('prepare-archive')" :loading="archiving">准备归档</n-button>
                         </n-space>
                         <n-text depth="3" style="font-size: 13px">
                             {{ (editForm.content || "").length.toLocaleString() }} 字
@@ -247,16 +249,19 @@
 
         <!-- ========== Step 3.5: 归档审查 (嵌入 ReviewingPanel) ========== -->
         <ReviewingPanel
-            v-if="chapter?.status === 'reviewing' && pendingArchiveData"
-            ref="reviewingPanelRef"
-            :chapter="chapter"
-            :pending-archive-data="pendingArchiveData"
-            @save="(data: any) => emit('save-pending-archive', data)"
-            @confirm="(data: any) => emit('confirm-archive', data)"
-            @cancel="emit('cancel-reviewing')"
+            v-if="chapter?.status === 'reviewing' && pendingArchiveData?.version === 4"
+            :pending="pendingArchiveData"
+            :retrying-stages="retryingStages"
+            :chapter-id="chapter.id"
+            :archive-running="archiveRunning"
+            @save="(data) => emit('save-pending-archive', data)"
+            @confirm="(data) => emit('confirm-archive-with-data', data)"
+            @cancel="emit('prepare-archive-cancel')"
+            @reprepare="emit('reprepare-archive')"
+            @retry-stage="(stageName) => emit('retry-stage', stageName)"
         />
 
-        <!-- reviewing 但无待归档数据:提示异常 -->
+        <!-- reviewing 但无待归档数据 / 数据版本过旧:提示异常 -->
         <n-card
             v-else-if="chapter?.status === 'reviewing'"
             title="归档审查"
@@ -279,7 +284,7 @@
 
         <!-- ========== Step 3 只读:正文展示 ========== -->
         <n-card
-            v-if="isReadonly"
+            v-if="isArchived"
             title="Step 3：正文"
             style="margin-bottom: 24px"
         >
@@ -302,17 +307,17 @@
         <n-card
             v-if="
                 chapter?.status === 'archived' &&
-                graphDelta
+                chapterGraph
             "
             title="Step 4：本章范围图谱"
             style="margin-top: 24px"
         >
             <n-space vertical>
-                <n-collapse v-if="graphDelta.nodes?.length > 0">
+                <n-collapse v-if="chapterGraph.nodes?.length > 0">
                     <n-collapse-item title="涉及节点">
                         <n-space>
                             <n-tag
-                                v-for="node in graphDelta.nodes"
+                                v-for="node in chapterGraph.nodes"
                                 :key="node.key"
                                 :type="
                                     node.type === 'character'
@@ -327,11 +332,11 @@
                         </n-space>
                     </n-collapse-item>
                 </n-collapse>
-                <n-collapse v-if="graphDelta.edges?.length > 0">
+                <n-collapse v-if="chapterGraph.edges?.length > 0">
                     <n-collapse-item title="关系">
                         <n-space vertical size="small">
                             <n-text
-                                v-for="edge in graphDelta.edges"
+                                v-for="edge in chapterGraph.edges"
                                 :key="`${edge.fromKey}-${edge.relation}-${edge.toKey}`"
                                 style="font-size: 12px"
                             >
@@ -344,8 +349,8 @@
                 </n-collapse>
                 <n-empty
                     v-if="
-                        !graphDelta.nodes?.length &&
-                        !graphDelta.edges?.length
+                        !chapterGraph.nodes?.length &&
+                        !chapterGraph.edges?.length
                     "
                     description="本章未提取到图谱关系"
                 />
@@ -355,7 +360,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed } from "vue";
 import {
     NSpace,
     NButton,
@@ -377,6 +382,7 @@ import {
     NEmpty,
 } from "naive-ui";
 import { ArrowBackOutline } from "@vicons/ionicons5";
+import { getChapterStatus } from "../../styles/chapter-status";
 import ReviewingPanel from "../ReviewingPanel.vue";
 import ChapterPreview from "./ChapterPreview.vue";
 import DraftList from "./DraftList.vue";
@@ -399,12 +405,13 @@ const props = defineProps<{
     selectedModelId: string | null;
     modelOptions: any[];
     plotArcs: any[];
-    graphDelta: any;
+    chapterGraph: any;
     pendingArchiveData: any;
     savingContent: boolean;
-    isReadonly: boolean;
     archiving: boolean;
     repreparingArchive: boolean;
+    archiveRunning: boolean;
+    retryingStages: Partial<Record<"character" | "memory" | "plotArc" | "graph", boolean>>;
     prompt: any;
     drafts: any;
 }>();
@@ -437,42 +444,29 @@ const emit = defineEmits<{
     (e: "generate-custom"): void;
     (e: "adopt-draft", draft: any): void;
     (e: "prepare-archive"): void;
+    (e: "confirm-archive"): void;
+    (e: "prepare-archive-cancel"): void;
     (e: "save-pending-archive", data: any): void;
-    (e: "confirm-archive", data: any): void;
+    (e: "confirm-archive-with-data", data: any): void;
     (e: "reprepare-archive"): void;
     (e: "cancel-reviewing"): void;
+    (e: "retry-stage", stageName: "character" | "memoryExtract" | "memoryOptimize" | "plotArc" | "graph"): void;
 }>();
 
-// ReviewingPanel ref(子组件内部持有,view shell 通过 chapterEditorRef.startConfirm / stopConfirm 间接调用)
-const reviewingPanelRef = ref<InstanceType<typeof ReviewingPanel> | null>(null);
+// v2 细粒度 readonly:
+// canEdit: 后端 chapters-crud 允许修改字段 = status==='draft'
+//   (reviewing 状态只能改 pendingArchiveData, 不通过本表单走, 所以也 readonly)
+// isArchived: 整张卡片是否折叠 (draft / reviewing 展开, archived 折叠)
+const canEdit = computed(() => props.chapter?.status === "draft");
+const isArchived = computed(() => props.chapter?.status === "archived");
 
-function startConfirm() {
-    reviewingPanelRef.value?.startConfirm();
-}
-
-function stopConfirm() {
-    reviewingPanelRef.value?.stopConfirm();
-}
-
-defineExpose({ startConfirm, stopConfirm });
-
-// 章节 status → n-tag type 映射(从原 Chapters.vue line 1130-1151 搬过来)
+// 章节 status → n-tag type 映射 (v2 3 态: draft / reviewing / archived)
 function statusTagType(status?: string) {
     switch (status) {
         case "archived":
             return "success";
-        case "selected":
-            return "info";
         case "reviewing":
             return "warning";
-        case "generated":
-            return "warning";
-        case "generating":
-            return "warning";
-        case "scored":
-            return "warning";
-        case "rejected":
-            return "error";
         case "draft":
             return "default";
         default:

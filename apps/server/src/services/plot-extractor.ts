@@ -1,129 +1,85 @@
-import type { PendingPlotArcWrite } from '@novel-runtime/shared'
-import { safeJsonParse, tokenSet, jaccardSimilarity } from '@novel-runtime/shared'
-
-/** Jaccard 兜底阈值: 相似度 ≥ 此值的 new arc 写入 similarToExistingIds tag */
-const SIMILAR_JACCARD_THRESHOLD = 0.7
-/** Stale 阈值: 上次 AI update 距今多少章未推进则转 stale */
-const STALE_THRESHOLD_CHAPTERS = 5
+import type { PlotArcWriteRow } from './plot-consolidator.js'
+import { derivePlotArcStatus, RECENT_END_WINDOW } from './plot-arc-status.js'
 
 /**
- * 在事务中提交剧情弧线写入 (P1 bug fix: plot arc 不增长)
+ * 在事务中提交剧情弧线写入（推进点落库 + 关闭落库 + 状态推导）。
  *
- * 数据来源: plot-consolidator v2 直接读章节 + existing arcs,
- * AI 做语义级判断后输出 ConsolidatedArcWrite[] (结构 = PendingPlotArcWrite[]).
- *
- * 这里只负责把 writes 落到数据库:
- * - isNew=true → create 新 arc, 同时按 Jaccard 与已有 arc 比对, 相似度 ≥ 阈值的 existing id 写入 similarToExistingIds
- * - existingId 已存在 → update; 仅 source='ai-update' 推进时刷新 lastTouchedChapter, carry-forward 不刷
- *
- * 末尾扫描 active/resolving arc, 距 lastTouchedChapter > STALE_THRESHOLD_CHAPTERS 自动转 stale。
+ * 数据来源: plot-consolidator v3 输出的 PlotArcWriteRow[]（action: create/update/close）。
+ * 落库后统一跑状态推导（derivePlotArcStatus），刷新所有非终态弧线的 status。
  */
 export async function commitPlotArcWrites(
   tx: any,
+  storyId: string,
   chapterNumber: number,
-  writes: PendingPlotArcWrite[]
+  writes: PlotArcWriteRow[]
 ): Promise<void> {
-  // 1. 准备 existing arcs 列表 (Jaccard 比对)
-  const existingRows: Array<{ id: string; name: string; summary: string | null }> = await tx.plotArc.findMany({
-    select: { id: true, name: true, summary: true }
-  })
-  const existingForJaccard = existingRows.map(a => ({
-    id: a.id,
-    text: `${a.name} ${a.summary || ''}`,
-    tokenSet: tokenSet(`${a.name} ${a.summary || ''}`)
-  }))
-
-  // 2. 遍历 writes
   for (const w of writes) {
-    const data = {
-      type: w.type,
-      status: w.status,
-      progress: w.progress,
-      stages: w.stages,
-      currentStage: w.currentStage,
-      nextGoal: w.nextGoal,
-      unresolved: w.unresolved,
-      summary: w.summary,
-      closedReason: w.closedReason ?? null,
-      closedTargetArcId: w.closedTargetArcId ?? null
-    }
-
-    if (w.isNew) {
-      // Jaccard 兜底: 相似 newArc 打 tag
-      const similarIds: string[] = []
-      const candText = `${w.name} ${w.summary}`
-      const candSet = tokenSet(candText)
-      for (const existing of existingForJaccard) {
-        const sim = jaccardSimilarity(candSet, existing.tokenSet)
-        if (sim >= SIMILAR_JACCARD_THRESHOLD) similarIds.push(existing.id)
-      }
-      await tx.plotArc.create({
+    if (w.action === 'create') {
+      const arc = await tx.plotArc.create({
         data: {
-          storyId: w.storyId,
+          storyId,
           name: w.name,
-          ...data,
-          similarToExistingIds: JSON.stringify(similarIds),
-          lastTouchedChapter: chapterNumber
+          isMainline: w.isMainline,
+          status: 'active',
+          firstChapterNumber: chapterNumber
         }
       })
-    } else if (w.existingId) {
-      // 仅 AI 主动推进时刷新 lastTouchedChapter, carry-forward 不刷
-      const updateData = w.source === 'ai-update'
-        ? { ...data, lastTouchedChapter: chapterNumber }
-        : data
+      await tx.plotArcProgressPoint.create({
+        data: { arcId: arc.id, chapterNumber, content: w.content, isEnd: w.isEnd }
+      })
+    } else if (w.action === 'update' && w.arcId) {
+      await tx.plotArcProgressPoint.create({
+        data: { arcId: w.arcId, chapterNumber, content: w.content, isEnd: w.isEnd }
+      })
+    } else if (w.action === 'close' && w.arcId) {
       await tx.plotArc.update({
-        where: { id: w.existingId },
-        data: updateData
+        where: { id: w.arcId },
+        data: { status: 'closed', closedBy: 'ai-similar', closedTargetArcId: w.targetArcId ?? null }
       })
     }
   }
 
-  // 3. stale 检测: 扫描所有 active/resolving arc
-  const candidates = await tx.plotArc.findMany({
-    where: { status: { in: ['active', 'resolving'] } }
+  // 状态推导：刷新所有非终态弧线
+  const allArcs = await tx.plotArc.findMany({
+    where: { storyId },
+    include: { progressPoints: { orderBy: { chapterNumber: 'desc' } } }
   })
-  for (const arc of candidates) {
-    const last = arc.lastTouchedChapter ?? 0
-    if (chapterNumber - last > STALE_THRESHOLD_CHAPTERS) {
-      await tx.plotArc.update({
-        where: { id: arc.id },
-        data: { status: 'stale' }
-      })
+  for (const arc of allArcs) {
+    if (arc.closedBy) continue // closed 终态
+    const latest = arc.progressPoints[0]
+    const status = derivePlotArcStatus({
+      closedBy: arc.closedBy,
+      latestPoint: latest ? { chapterNumber: latest.chapterNumber, isEnd: latest.isEnd } : null,
+      recentIsEnd: arc.progressPoints.slice(0, RECENT_END_WINDOW).some((p: any) => p.isEnd),
+      firstChapterNumber: arc.firstChapterNumber,
+      currentChapter: chapterNumber
+    })
+    if (status !== arc.status) {
+      await tx.plotArc.update({ where: { id: arc.id }, data: { status } })
     }
   }
 }
 
 /**
- * 获取当前活跃（进行中/待收尾）的剧情弧线，用于注入 Prompt
+ * 获取当前「激活」的剧情弧线，用于注入 Prompt。
  *
- * active + resolving + stale 注入 prompt；completed / closed 不注入。
- * stale 视作"活跃"是因为 AI 可能在新章节重新激活它（spec §1.1）。
+ * 只注入 status='active' 的弧线（inactive 是给用户看的标签，不注入；completed/closed 终态不注入）。
+ * 弧线以「标题 + 推进点集合」注入，推进点全量（content 核心简练）。
+ * TODO(优化): 未来推进点多、token 吃紧时再做截断（最近 K + isEnd + 首点），现在先全量。
  */
-export async function getActivePlotArcs(
-  prisma: any,
-  storyId: string
-): Promise<string> {
+export async function getActivePlotArcs(prisma: any, storyId: string): Promise<string> {
   const arcs = await prisma.plotArc.findMany({
-    where: {
-      storyId,
-      status: { in: ['active', 'resolving', 'stale'] }
-    },
-    orderBy: [
-      { type: 'asc' }, // main 在前
-      { progress: 'desc' }
-    ]
+    where: { storyId, status: 'active' },
+    include: { progressPoints: { orderBy: { chapterNumber: 'asc' } } },
+    orderBy: { firstChapterNumber: 'asc' }
   })
-
   if (arcs.length === 0) return ''
 
   const lines = arcs.map((a: any) => {
-    const unresolved = safeJsonParse(a.unresolved, [])
-    let text = `[${a.type === 'main' ? '主线' : '支线'}] ${a.name}（进度${a.progress}%）\n  当前：${a.currentStage || '未知'}\n  目标：${a.nextGoal || '待定'}`
-    if (unresolved.length > 0) {
-      text += `\n  悬念：${unresolved.join('、')}`
-    }
-    return text
+    const points = a.progressPoints.map((p: any) =>
+      `  第${p.chapterNumber}章: ${p.content}${p.isEnd ? '（可能到尾声）' : ''}`
+    ).join('\n')
+    return `[${a.isMainline ? '主线' : '支线'}] ${a.name}\n${points}`
   })
-
   return lines.join('\n\n')
 }

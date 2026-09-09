@@ -10,9 +10,9 @@
 
     <n-space vertical size="large" style="width: 100%">
 
-      <!-- 本章级常驻区: 摘要 + 角色状态 (跨 tab 通用, 不藏在记忆tab 内) -->
+      <!-- 本章级常驻区: 摘要 (跨 tab 通用, 不藏在记忆tab 内) -->
 
-      <!-- 本章摘要 — 印刷感引文块: cap-eyebrow 副标 + 大字引号 + 内嵌 textarea + 字符计数 hint -->
+      <!-- 本章摘要: 卡片 + eyebrow + textarea(默认边框, 看着就知道能编辑) -->
       <n-card class="cap-summary-card" size="small">
         <template #header>
           <header class="cap-summary-card__head">
@@ -20,26 +20,57 @@
             <h3 class="cap-summary-card__title">一句话核心</h3>
           </header>
         </template>
-        <div class="cap-summary-card__body">
-          <span class="cap-summary-card__quote-mark" aria-hidden="true">"</span>
-          <n-input
-            v-model:value="summary"
-            type="textarea"
-            :rows="3"
-            placeholder="本章的核心冲突、转折或情感落点…"
-            class="cap-summary-card__input"
-          />
-        </div>
+        <n-input
+          v-model:value="summary"
+          type="textarea"
+          :rows="3"
+          placeholder="本章的核心冲突、转折或情感落点…"
+        />
         <footer class="cap-summary-card__foot">
-          <span class="cap-summary-card__hint">印在章节标题下方 · 一行说清本章发生了什么</span>
+          <span class="cap-summary-card__hint">显示在章节标题下方</span>
           <span class="cap-summary-card__count">{{ (summary || '').length }} 字</span>
         </footer>
       </n-card>
 
       <!-- 主编辑区 -->
-      <n-tabs type="line" default-value="characters" :animated="true">
-        <!-- 角色 tab: 角色状态 (2 列 grid + 卡片, 与剧情弧线/时间线节奏一致) -->
-        <n-tab-pane name="characters" tab="角色">
+      <n-tabs type="line" :default-value="defaultTab" :animated="true">
+        <!-- 角色 tab: 角色状态 (2 列 grid + 卡片, 与剧情弧线节奏一致) -->
+        <n-tab-pane name="characters" display-directive="show">
+          <template #tab>
+            <span class="rp-tab-label">
+              <span class="rp-tab-dot" :style="{ background: dotColor('character') }" aria-hidden="true" />
+              角色
+            </span>
+          </template>
+          <div v-if="stageStatus('character') === 'failed'" class="rp-stage-error">
+            <strong>解析失败:</strong> {{ props.pending?.stages?.character?.errorMessage || '未知错误' }}
+          </div>
+          <n-alert
+            v-if="conflicts && conflicts.length > 0"
+            type="error"
+            title="AI 抽取与现有角色冲突"
+            style="margin-bottom: 16px"
+          >
+            <p style="margin: 0 0 8px 0">以下条目需要在归档前处理:</p>
+            <ul style="margin: 0 0 8px 0; padding-left: 20px">
+              <li v-for="c in conflicts" :key="c.writeIndex" style="margin-bottom: 4px">
+                <template v-if="c.reason === 'batch_duplicate_key'">
+                  AI 重复返回了 slug="{{ c.aiWrite?.key }}"（name="{{ c.aiWrite?.name }}"），
+                  与第 {{ (c.duplicateOfWriteIndex ?? 0) + 1 }} 条重复，请删除重复项或改 key
+                </template>
+                <template v-else>
+                  AI 返回 name="{{ c.aiWrite?.name }}", slug="{{ c.aiWrite?.key }}"
+                  与已有 name="{{ c.existingCharacter?.name }}", slug="{{ c.existingCharacter?.slug }}" 冲突
+                </template>
+              </li>
+            </ul>
+            <p style="margin: 0">请在下方表格中纠正(选已有 / 修改 AI 返回的 key),或取消归档。</p>
+          </n-alert>
+          <div class="rp-stage-actions">
+            <n-button size="small" :disabled="isRetrying('character')" @click="emit('retry-stage', 'character')">
+              {{ isRetrying('character') ? '重新解析中…' : '重新解析此阶段' }}
+            </n-button>
+          </div>
           <n-empty v-if="characterStates.length === 0" description="暂无角色状态, 点击下方添加" />
           <n-grid
             v-else
@@ -56,7 +87,8 @@
                     <span class="cap-character-card__item-no">N°&nbsp;{{ String(idx + 1).padStart(2, '0') }}<span class="cap-character-card__item-no-sep"> / {{ String(characterStates.length).padStart(2, '0') }}</span></span>
                   </div>
                   <h3 class="cap-character-card__item-name-wrap">
-                    <span>{{ state.characterId }}</span>
+                    <span>{{ state.name || state.characterId }}</span>
+                    <span v-if="state.isNew" class="cap-pill is-sm is-warm" style="margin-left: 8px">新角色</span>
                     <button
                       type="button"
                       class="cap-pill is-sm is-danger cap-character-card__item-remove"
@@ -66,6 +98,16 @@
                     >删除</button>
                   </h3>
                 </header>
+                <div v-if="state.isNew" class="cap-character-card__field">
+                  <span class="cap-character-card__field-label">00 · 纠正为已有角色</span>
+                  <n-select
+                    :value="state.characterId"
+                    :options="existingCharacterOptions"
+                    placeholder="如果这是已有角色, 请选择"
+                    clearable
+                    @update:value="(val: string | null) => onCorrectCharacter(state, val)"
+                  />
+                </div>
                 <div class="cap-character-card__field">
                   <span class="cap-character-card__field-label">01 · 状态</span>
                   <n-input
@@ -98,10 +140,68 @@
           </footer>
         </n-tab-pane>
 
-        <!-- 记忆 tab: 提取的记忆 (主/次事件 + 情绪/伏笔/关系). 摘要上移到 banner 下, 角色状态在第 1 个 tab -->
-        <n-tab-pane name="memories" tab="记忆">
+        <!-- 记忆 tab: v4 split-stage 两步进度 (抽取 + 优化) + 提取的记忆编辑器 -->
+        <n-tab-pane name="memories">
+          <template #tab>
+            <span class="rp-tab-label">
+              <span class="rp-tab-dot" :style="{ background: dotColor('memoryExtract') }" aria-hidden="true" />
+              记忆
+            </span>
+          </template>
+
+          <!-- 两步进度条 (v4 split) -->
+          <n-card size="small" style="margin-bottom: 16px">
+            <n-space vertical size="small">
+              <!-- 步骤 1: 抽取 -->
+              <n-space align="center" :wrap="false">
+                <span class="rp-step-dot" :class="stepDotClass('memoryExtract')" aria-hidden="true">
+                  {{ stepDotMark('memoryExtract') }}
+                </span>
+                <span class="rp-step-label">抽取</span>
+                <n-button
+                  v-if="stageStatus('memoryExtract') === 'failed'"
+                  size="tiny"
+                  type="warning"
+                  :disabled="isRetrying('memoryExtract')"
+                  data-test="restart-memoryExtract"
+                  @click="emit('retry-stage', 'memoryExtract')"
+                >重启抽取</n-button>
+              </n-space>
+              <div v-if="stageStatus('memoryExtract') === 'failed'" class="rp-stage-error">
+                <strong>抽取失败:</strong> {{ props.pending?.stages?.memoryExtract?.errorMessage || '未知错误' }}
+              </div>
+
+              <!-- 步骤 2: 优化 -->
+              <n-space align="center" :wrap="false">
+                <span class="rp-step-dot" :class="stepDotClass('memoryOptimize')" aria-hidden="true">
+                  {{ stepDotMark('memoryOptimize') }}
+                </span>
+                <span class="rp-step-label">优化</span>
+                <n-button
+                  v-if="stageStatus('memoryOptimize') === 'failed'"
+                  size="tiny"
+                  type="warning"
+                  :disabled="isRetrying('memoryOptimize')"
+                  data-test="restart-memoryOptimize"
+                  @click="emit('retry-stage', 'memoryOptimize')"
+                >重启优化</n-button>
+              </n-space>
+              <div v-if="stageStatus('memoryOptimize') === 'failed'" class="rp-stage-error">
+                <strong>优化失败:</strong> {{ props.pending?.stages?.memoryOptimize?.errorMessage || '未知错误' }}
+              </div>
+
+              <!-- 总入口: 始终保留 -->
+              <n-button
+                size="small"
+                :disabled="isRetrying('memoryExtract') || isRetrying('memoryOptimize')"
+                data-test="restart-all-memory"
+                @click="handleRestartAllMemory"
+              >重新解析两步</n-button>
+            </n-space>
+          </n-card>
+
+          <!-- 原有记忆编辑器 (mainEvents / sideEvents / emotions / ...) -->
           <n-space vertical size="large" style="width: 100%">
-            <!-- 记忆编辑器 -->
             <n-card title="提取的记忆" size="small">
               <n-space vertical style="width: 100%">
                 <n-collapse :default-expanded-names="['mainEvents']">
@@ -145,85 +245,22 @@
           </n-space>
         </n-tab-pane>
 
-        <!-- 时间线 tab -->
-        <n-tab-pane name="timeline" tab="时间线">
-          <!-- 时间线编辑器 — Editorial specimen cards (与剧情弧线共享设计语言) -->
-          <n-card title="时间线事件" size="small">
-            <n-empty v-if="timelineEvents.length === 0" description="暂无时间线事件" />
-            <n-grid
-              v-else
-              cols="2"
-              x-gap="14"
-              y-gap="14"
-              responsive="screen"
-              style="margin-bottom: 12px"
-            >
-              <n-gi v-for="(te, idx) in timelineEvents" :key="`te-${idx}`">
-                <article class="cap-timeline-card cap-rise" :data-rise="String(Math.min(idx + 1, 7))">
-                  <!-- 头部: meta (N° + events count) + 裸露的时间文本 -->
-                  <header class="cap-timeline-card__head">
-                    <div class="cap-timeline-card__head-meta">
-                      <span class="cap-timeline-card__no">N°&nbsp;{{ String(idx + 1).padStart(2, '0') }}<span class="cap-timeline-card__no-sep"> / {{ String(timelineEvents.length).padStart(2, '0') }}</span></span>
-                      <div class="cap-timeline-card__head-chips">
-                        <span class="cap-chip is-blue cap-timeline-card__count-chip">
-                          <span class="cap-timeline-card__count-label">事件数</span>
-                          <span class="cap-timeline-card__count-value">{{ getEventsList(te.events).length }}</span>
-                        </span>
-                      </div>
-                    </div>
-                    <h3 class="cap-timeline-card__pos-time">{{ formatPositionLabel(te.position) }}</h3>
-                  </header>
-
-                  <!-- 字段 01: 时间编码 (input + ? 含义 + 校验 tag 横向并排) -->
-                  <div class="cap-timeline-card__field">
-                    <span class="cap-timeline-card__label">01 · 时间编码</span>
-                    <div class="cap-timeline-card__pos-row">
-                      <div class="cap-timeline-card__pos-input">
-                        <TimelinePositionInput v-model="te.position" :preview="false" :controls="false" />
-                      </div>
-                      <span
-                        class="cap-timeline-card__pos-help"
-                        :title="positionHelpText()"
-                        :aria-label="positionHelpText()"
-                        tabindex="0"
-                      >?</span>
-                      <span
-                        class="cap-chip cap-timeline-card__pos-validity"
-                        :class="positionValidity(te.position).chipClass"
-                      >{{ positionValidity(te.position).label }}</span>
-                    </div>
-                  </div>
-
-                  <!-- 字段 02: 事件列表 (DynamicTags, scoped CSS 强制 1 列: 每行 1 个 tag) -->
-                  <div class="cap-timeline-card__field cap-timeline-card__events-field">
-                    <span class="cap-timeline-card__label">02 · 事件列表</span>
-                    <DynamicTags
-                      class="cap-timeline-card__events-list"
-                      :model-value="getEventsList(te.events)"
-                      @update:model-value="(v) => setEventsList(te, v)"
-                    />
-                    <span class="cap-timeline-card__events-hint">回车或 + 添加一条 · × 删除</span>
-                  </div>
-
-                  <!-- Footer: 删除 -->
-                  <footer class="cap-timeline-card__foot">
-                    <button
-                      type="button"
-                      class="cap-pill is-sm is-danger"
-                      @click="removeTimelineEvent(idx)"
-                    >
-                      删除
-                    </button>
-                  </footer>
-                </article>
-              </n-gi>
-            </n-grid>
-            <n-button size="small" dashed block @click="addTimelineEvent">添加时间线事件</n-button>
-          </n-card>
-        </n-tab-pane>
-
         <!-- 剧情弧线 tab -->
-        <n-tab-pane name="plotArcs" tab="剧情弧线">
+        <n-tab-pane name="plotArcs">
+          <template #tab>
+            <span class="rp-tab-label">
+              <span class="rp-tab-dot" :style="{ background: dotColor('plotArc') }" aria-hidden="true" />
+              剧情弧线
+            </span>
+          </template>
+          <div v-if="stageStatus('plotArc') === 'failed'" class="rp-stage-error">
+            <strong>解析失败:</strong> {{ props.pending?.stages?.plotArc?.errorMessage || '未知错误' }}
+          </div>
+          <div class="rp-stage-actions">
+            <n-button size="small" :disabled="isRetrying('plotArc')" @click="emit('retry-stage', 'plotArc')">
+              {{ isRetrying('plotArc') ? '重新解析中…' : '重新解析此阶段' }}
+            </n-button>
+          </div>
           <!-- 剧情弧线编辑器 -->
           <n-card title="剧情弧线" size="small">
             <n-empty v-if="plotArcs.length === 0" description="暂无剧情弧线" />
@@ -242,21 +279,14 @@
                     <div class="cap-arc-card__head-meta">
                       <span class="cap-arc-card__no">N°&nbsp;{{ String(idx + 1).padStart(2, '0') }}<span class="cap-arc-card__no-sep"> / {{ String(plotArcs.length).padStart(2, '0') }}</span></span>
                       <div class="cap-arc-card__head-chips">
-                        <span class="cap-chip" :class="arcTypeChipClass(arc.type)">
-                          {{ arc.type === 'main' ? '主线' : '支线' }}
+                        <span class="cap-chip" :class="arc.isMainline ? 'is-primary' : ''">
+                          {{ arc.isMainline ? '主线' : '支线' }}
                         </span>
-                        <span class="cap-chip" :class="arcStatusChipClass(arc.status)">
-                          {{ arcStatusLabel(arc.status) }}
+                        <span class="cap-chip" :class="arcActionChipClass(arc.action)">
+                          {{ arcActionLabel(arc.action) }}
                         </span>
-                        <span
-                          v-if="arc.similarToExistingIds && safeJsonParse<string[]>(arc.similarToExistingIds, []).length > 0"
-                          class="cap-chip is-warm"
-                          :title="formatSimilarArcNames(arc.similarToExistingIds)"
-                        >
-                          ⚠ 相似 · {{ formatSimilarArcNames(arc.similarToExistingIds) }}
-                        </span>
-                        <span v-else-if="arc.status === 'closed'" class="cap-chip is-error">
-                          已关闭
+                        <span v-if="arc.isEnd" class="cap-chip is-warm">
+                          尾声
                         </span>
                       </div>
                     </div>
@@ -283,101 +313,15 @@
                     />
                   </div>
 
-                  <!-- 类型 / 状态 (chip-row, 可点改) -->
+                  <!-- 推进内容 -->
                   <div class="cap-arc-card__field">
-                    <span class="cap-arc-card__label">02 · 类型 / 状态</span>
-                    <div class="cap-arc-card__chip-row">
-                      <n-select
-                        v-model:value="arc.type"
-                        :options="arcTypeOptions"
-                        size="small"
-                        style="flex: 1"
-                      />
-                      <n-select
-                        v-model:value="arc.status"
-                        :options="arcStatusOptions"
-                        size="small"
-                        style="flex: 1"
-                      />
-                    </div>
-                  </div>
-
-                  <!-- 进度条: 笔触 visual + 透明 slider + mono % -->
-                  <div class="cap-arc-card__field">
-                    <span class="cap-arc-card__label">03 · 进度</span>
-                    <div class="cap-arc-card__progress">
-                      <div class="cap-arc-card__progress-track" aria-hidden="true">
-                        <div
-                          class="cap-arc-card__progress-fill"
-                          :style="{ width: arc.progress + '%' }"
-                        />
-                      </div>
-                      <n-slider
-                        v-model:value="arc.progress"
-                        :min="0"
-                        :max="100"
-                        :step="1"
-                        class="cap-arc-card__progress-slider"
-                      />
-                      <span class="cap-arc-card__progress-text">{{ String(arc.progress).padStart(2, '0') }}%</span>
-                    </div>
-                  </div>
-
-                  <!-- 当前阶段 -->
-                  <div class="cap-arc-card__field">
-                    <span class="cap-arc-card__label">04 · 当前阶段</span>
+                    <span class="cap-arc-card__label">02 · 推进内容</span>
                     <n-input
-                      v-model:value="arc.currentStage"
-                      placeholder="当前阶段"
-                      size="small"
-                    />
-                  </div>
-
-                  <!-- 下一目标 -->
-                  <div class="cap-arc-card__field">
-                    <span class="cap-arc-card__label">05 · 下一目标</span>
-                    <n-input
-                      v-model:value="arc.nextGoal"
-                      placeholder="下一目标"
-                      size="small"
-                    />
-                  </div>
-
-                  <!-- 摘要: textarea 直接编辑 -->
-                  <div class="cap-arc-card__field">
-                    <span class="cap-arc-card__label">06 · 摘要</span>
-                    <n-input
-                      v-model:value="arc.summary"
+                      v-model:value="arc.content"
                       type="textarea"
                       :rows="2"
-                      placeholder="弧线摘要"
+                      placeholder="本章推进内容"
                       size="small"
-                    />
-                  </div>
-
-                  <!-- 未解悬念 (mono 块) -->
-                  <div class="cap-arc-card__field">
-                    <span class="cap-arc-card__label">07 · 未解悬念</span>
-                    <n-input
-                      v-model:value="arc.unresolved"
-                      type="textarea"
-                      :rows="2"
-                      placeholder='JSON 数组, 如 ["悬念1", "悬念2"]'
-                      size="small"
-                      class="cap-arc-card__mono-input"
-                    />
-                  </div>
-
-                  <!-- 阶段记录 (mono 块) -->
-                  <div class="cap-arc-card__field">
-                    <span class="cap-arc-card__label">08 · 阶段记录</span>
-                    <n-input
-                      v-model:value="arc.stages"
-                      type="textarea"
-                      :rows="5"
-                      placeholder="阶段记录 JSON"
-                      size="small"
-                      class="cap-arc-card__mono-input"
                     />
                   </div>
 
@@ -399,12 +343,55 @@
         </n-tab-pane>
 
         <!-- 图谱 tab -->
-        <n-tab-pane name="graph" tab="图谱">
-          <!-- 图谱编辑器 -->
-          <n-card title="本章图谱" size="small">
+        <n-tab-pane name="graph">
+          <template #tab>
+            <span class="rp-tab-label">
+              <span class="rp-tab-dot" :style="{ background: dotColor('graph') }" aria-hidden="true" />
+              图谱
+            </span>
+          </template>
+          <div v-if="stageStatus('graph') === 'failed'" class="rp-stage-error">
+            <strong>解析失败:</strong> {{ props.pending?.stages?.graph?.errorMessage || '未知错误' }}
+          </div>
+          <div class="rp-stage-actions">
+            <n-button size="small" :disabled="isRetrying('graph')" @click="emit('retry-stage', 'graph')">
+              {{ isRetrying('graph') ? '重新解析中…' : '重新解析本章图谱' }}
+            </n-button>
+          </div>
+
+          <!-- 本章图谱: 编辑器自管 state, 不回传; save/confirm 时通过 chapterGraphRef.getData() 拉回 -->
+          <n-card title="本章图谱" size="small" style="margin-bottom: 16px">
             <EditableGraph
+              ref="chapterGraphRef"
               :initial-graph-data="graphData"
-              @update:graphData="onGraphUpdate"
+            />
+          </n-card>
+
+          <!-- 累计图谱: reviewing 期间数据活在 localData.cumulativeGraph + cumulativeGraphGeneratedAt,
+               与 chapterGraph 走同一个 localData 流。保存走全局「保存调整」按钮。
+               AI 生成后 Build 端点把数据写 pendingArchiveData, 前端同时灌回 localData。 -->
+          <n-card title="累计图谱" size="small">
+            <template #header-extra>
+              <n-space>
+                <n-button
+                  size="small"
+                  type="primary"
+                  :loading="buildingCumulative"
+                  @click="handleBuildCumulative"
+                >
+                  {{ localData.cumulativeGraphGeneratedAt ? '重新生成' : '生成累计图谱' }}
+                </n-button>
+              </n-space>
+            </template>
+            <n-empty
+              v-if="!localData.cumulativeGraphGeneratedAt"
+              description="本章图谱编辑差不多后, 点上面「生成累计图谱」生成。"
+              style="margin: 24px 0"
+            />
+            <EditableGraph
+              v-else
+              ref="cumulativeGraphRef"
+              :initial-graph-data="cumulativeGraphData"
             />
           </n-card>
         </n-tab-pane>
@@ -414,44 +401,102 @@
       <n-space justify="end" style="width: 100%; margin-top: 16px">
         <n-button @click="emit('cancel')">取消</n-button>
         <n-button type="primary" :loading="saving" @click="handleSave">保存调整</n-button>
-        <n-button type="success" :loading="confirming" @click="handleConfirm">确认归档</n-button>
+        <n-button type="success" :loading="archiveRunning ?? false" @click="handleConfirm">确认归档</n-button>
       </n-space>
     </n-space>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import {
   NCard, NSpace, NTabs, NTabPane, NCollapse, NCollapseItem,
   NInput, NInputNumber, NButton, NEmpty, NGrid, NGi, NText,
-  NSelect, NSlider,
-  useDialog
+  NSelect, NAlert,
+  useDialog, useMessage
 } from 'naive-ui'
-import { DEFAULT_TIMELINE_POSITION, formatTimelinePosition, safeJsonParse, validateTimelinePosition } from '@novel-runtime/shared'
-import type { PendingArchiveData } from '@novel-runtime/shared'
 import EditableGraph from '../components/graph/EditableGraph.vue'
+import { cumulativeGraphApi } from '../api/cumulative-graph'
 import DynamicTags from '../components/DynamicTags.vue'
-import TimelinePositionInput from '../components/TimelinePositionInput.vue'
-
-// PendingArchiveData is now imported from @novel-runtime/shared — the
-// single source of truth shared with the server. Adding fields is
-// compile-checked across both apps.
+import { charactersApi } from '../api/characters'
+import { chaptersApi } from '../api/chapters'
+import {
+  fromV4, toV4,
+  type V4PendingArchiveData, type LocalData
+} from './ReviewingPanel.adapter'
 
 const props = defineProps<{
-  chapter: any
-  pendingArchiveData: PendingArchiveData
+  pending: V4PendingArchiveData
+  retryingStages?: Partial<Record<StageName, boolean>>
+  chapterId: string
+  archiveRunning?: boolean
+  // 可选: 指定默认激活的 tab (默认 'characters')。父组件可传入 'memories' 等
+  defaultTab?: string
+  // 可选: archive 端点 409 返回的冲突信息(由父组件持有并传入,用于显示冲突横幅)
+  conflicts?: Array<{
+    writeIndex: number
+    reason: string
+    existingCharacter?: { id: string; slug: string; name: string }
+    aiWrite?: { name: string; key: string }
+    duplicateOfWriteIndex?: number
+  }>
 }>()
 
+const defaultTab = computed(() => props.defaultTab ?? 'characters')
+
+// v4: memory 拆为 memoryExtract (原 4 stage) + memoryOptimize (optimizer 融合)
+type StageName = 'character' | 'memoryExtract' | 'memoryOptimize' | 'plotArc' | 'graph'
+
 const emit = defineEmits<{
-  'save': [data: PendingArchiveData]
-  'confirm': [data: PendingArchiveData]
-  'cancel': []
+  (e: 'save', data: V4PendingArchiveData): void
+  (e: 'confirm', data: V4PendingArchiveData): void
+  (e: 'cancel'): void
+  (e: 'reprepare'): void
+  (e: 'retry-stage', stageName: StageName): void
 }>()
 
 const saving = ref(false)
-const confirming = ref(false)
 const dialog = useDialog()
+const message = useMessage()
+const chapterGraphRef = ref<InstanceType<typeof EditableGraph> | null>(null)
+// 累计图谱 editor 自管草稿, save/confirm 时通过 getData() 拉回 localData
+const cumulativeGraphRef = ref<InstanceType<typeof EditableGraph> | null>(null)
+const buildingCumulative = ref(false)
+
+const localData = ref<LocalData>(fromV4(props.pending))
+
+// 父组件传入新 pending(整章重抽)时重新初始化本地编辑态
+watch(() => props.pending, (next) => {
+  localData.value = fromV4(next)
+})
+
+// 取消自动保存: 所有改动必须手动点 "保存调整" 持久化
+// (原 watch + 800ms 防抖已被删,自动保存让手动按钮失去意义)
+
+// === tab header 状态圆点 ===
+function stageStatus(name: StageName): string {
+  return props.pending?.stages?.[name]?.status ?? 'pending'
+}
+// 哪个 stage 正在重跑,父组件持有状态后通过 prop 传进来
+function isRetrying(name: StageName): boolean {
+  return !!props.retryingStages?.[name]
+}
+function dotColor(name: StageName): string {
+  const status = stageStatus(name)
+  switch (status) {
+    case 'failed':
+    case 'error':
+      return 'var(--color-error)'
+    case 'success':
+    case 'completed':
+      return 'var(--color-positive)'
+    case 'running':
+    case 'pending-ai':
+      return 'var(--color-warm-accent)'
+    default:
+      return 'var(--color-muted-ash)'
+  }
+}
 
 function confirmRemove(content: string, onConfirm: () => void) {
   dialog.warning({
@@ -463,401 +508,268 @@ function confirmRemove(content: string, onConfirm: () => void) {
   })
 }
 
-function normalizePendingData(data: any): PendingArchiveData {
-  const safe = data || {}
-  return {
-    memories: {
-      memories: Array.isArray(safe.memories?.memories) ? safe.memories.memories : [],
-      characterStates: Array.isArray(safe.memories?.characterStates) ? safe.memories.characterStates : [],
-      timelineEvents: Array.isArray(safe.memories?.timelineEvents) ? safe.memories.timelineEvents : [],
-      summary: safe.memories?.summary || null,
-      timelinePosition: typeof safe.memories?.timelinePosition === 'number' ? safe.memories.timelinePosition : null
-    },
-    graph: {
-      mergedGraph: {
-        nodes: Array.isArray(safe.graph?.mergedGraph?.nodes) ? safe.graph.mergedGraph.nodes : [],
-        edges: Array.isArray(safe.graph?.mergedGraph?.edges) ? safe.graph.mergedGraph.edges : [],
-        timestamp: safe.graph?.mergedGraph?.timestamp || new Date().toISOString()
-      },
-      chapterGraph: {
-        nodes: Array.isArray(safe.graph?.chapterGraph?.nodes) ? safe.graph.chapterGraph.nodes : [],
-        edges: Array.isArray(safe.graph?.chapterGraph?.edges) ? safe.graph.chapterGraph.edges : [],
-        timestamp: safe.graph?.chapterGraph?.timestamp || new Date().toISOString()
-      }
-    },
-    plotArcs: Array.isArray(safe.plotArcs) ? safe.plotArcs : [],
-    meta: safe.meta || {}
-  }
+// === 剧情弧线 helper(v3: 推进点 + action + isEnd) ===
+function arcActionLabel(action: string): string {
+  return { create: '新建', update: '推进', close: '关闭' }[action] ?? action
 }
 
-const localData = ref<PendingArchiveData>(normalizePendingData(props.pendingArchiveData))
-const baselineChapterGraph = ref<{ nodes: any[], edges: any[] }>(JSON.parse(JSON.stringify(localData.value.graph.chapterGraph)))
+function arcActionChipClass(action: string): string {
+  return { create: 'is-primary', update: 'is-positive', close: 'is-error' }[action] ?? ''
+}
 
-watch(() => props.pendingArchiveData, (val) => {
-  localData.value = normalizePendingData(val)
-  baselineChapterGraph.value = JSON.parse(JSON.stringify(localData.value.graph.chapterGraph))
-}, { deep: true })
-
+// === computed 与各 tab 用到的派生 ===
+const summary = computed({
+  get: () => localData.value.summary,
+  set: (v: string) => { localData.value.summary = v }
+})
 const memories = computed(() => localData.value.memories.memories)
 const mainMemories = computed(() => memories.value.filter((m: any) => m.tags?.includes('main-plot')))
-const sideMemories = computed(() => memories.value.filter((m: any) => !m.tags?.includes('main-plot') && !isSpecialContent(m.content)))
-
+const sideMemories = computed(() => memories.value.filter((m: any) => !m.tags?.includes('main-plot')))
 const emotions = computed({
-  get: () => getSpecialMemories('情绪：'),
-  set: (val: string[]) => setSpecialMemories('情绪：', val)
+  get: () => localData.value.memories.emotions,
+  set: (v: string[]) => { localData.value.memories.emotions = v }
 })
 const foreshadowing = computed({
-  get: () => getSpecialMemories('伏笔：'),
-  set: (val: string[]) => setSpecialMemories('伏笔：', val)
+  get: () => localData.value.memories.foreshadowing,
+  set: (v: string[]) => { localData.value.memories.foreshadowing = v }
 })
 const relationshipChanges = computed({
-  get: () => getSpecialMemories('关系：'),
-  set: (val: string[]) => setSpecialMemories('关系：', val)
+  get: () => localData.value.memories.relationshipChanges,
+  set: (v: string[]) => { localData.value.memories.relationshipChanges = v }
 })
-
-const summary = computed({
-  get: () => localData.value.memories.summary || '',
-  set: (val: string) => { localData.value.memories.summary = val || null }
-})
-
-const graphData = computed(() => localData.value.graph.chapterGraph)
-
 const characterStates = computed(() => localData.value.memories.characterStates)
-const timelineEvents = computed(() => localData.value.memories.timelineEvents)
 const plotArcs = computed(() => localData.value.plotArcs)
+const graphData = computed(() => localData.value.graph.chapterGraph)
+const cumulativeGraphData = computed(() => localData.value.cumulativeGraph ?? { nodes: [], edges: [] })
 
-const arcTypeOptions = [
-  { label: '主线', value: 'main' },
-  { label: '支线', value: 'side' }
-]
-
-const arcStatusOptions = [
-  { label: '进行中', value: 'active' },
-  { label: '收尾中', value: 'resolving' },
-  { label: '已完成', value: 'completed' },
-  { label: '已关闭', value: 'closed' },
-  { label: '沉寂', value: 'stale' }
-]
-
-/**
- * cap-chip variant 映射 — 5 status 各有视觉语义:
- *   active    → is-positive (sage)  "活"
- *   resolving → is-warm     (terra)  "热"
- *   completed → is-snow     (neutral) "已完结"
- *   closed    → is-error    (calm red) "被合并/关闭"
- *   stale     → is-muted    (ash)     "沉寂"
- */
-function arcStatusLabel(status: string): string {
-  const opt = arcStatusOptions.find(o => o.value === status)
-  return opt?.label || status
-}
-
-function arcStatusChipClass(status: string): string {
-  switch (status) {
-    case 'active': return 'is-positive'
-    case 'resolving': return 'is-warm'
-    case 'completed': return 'is-snow'
-    case 'closed': return 'is-error'
-    case 'stale': return 'is-muted'
-    default: return ''
-  }
-}
-
-function arcTypeChipClass(type: string): string {
-  return type === 'main' ? 'is-warm' : 'is-blue'
-}
-
-/**
- * 解析 similarToExistingIds JSON 数组, 在 plotArcs 里找对应 name。
- * 找不到时退化为 id 前 8 位。
- */
-function formatSimilarArcNames(similarToJson: string | undefined): string {
-  if (!similarToJson) return ''
-  const ids = safeJsonParse<string[]>(similarToJson, [])
-  if (ids.length === 0) return ''
-  return ids.map(id => {
-    const target = plotArcs.value.find((a: any) => a.existingId === id || a.id === id)
-    return target?.name || id.slice(0, 8)
-  }).join(', ')
-}
-
-/**
- * 解析 te.events JSON 字符串 → string[] 给 DynamicTags 渲染用。
- * 解析失败 (非 JSON / 非数组) → 空数组, 允许用户重新输入。
- */
-function getEventsList(json: string | null | undefined): string[] {
-  const parsed = safeJsonParse<unknown>(json, [])
-  return Array.isArray(parsed) ? parsed.filter(v => typeof v === 'string') : []
-}
-
-/**
- * DynamicTags 改值回写: string[] → JSON 字符串存进 te.events。
- */
-function setEventsList(te: any, list: string[]) {
-  te.events = JSON.stringify(list)
-}
-
-/**
- * 渲染 position 人类解读标签, 复用 shared/formatTimelinePosition 拿"第1年第7天 06时"格式。
- * null / 非法 → "未设置"
- */
-function formatPositionLabel(position: number | null | undefined): string {
-  if (position == null || !Number.isFinite(position)) return '未设置'
-  return formatTimelinePosition(position)
-}
-
-/**
- * 渲染"?"按钮的 tooltip: 解释 Y.DDDHH 编码含义。
- * 与 Timeline.vue 的 evt-field__hint 文字保持一致。
- */
-const POSITION_HELP_TEXT = 'Y.DDDHH 编码:整数位=年(负数=前史), 5 位小数=年内第几天(001-365)+小时(00-23)'
-function positionHelpText(): string {
-  return POSITION_HELP_TEXT
-}
-
-/**
- * 计算 position 校验状态, 渲染 validity chip 用。
- * 三态: ok / not-set / invalid
- *   - null / undefined → "未设置" (is-snow 中性)
- *   - validateTimelinePosition.ok=false → "✕ 非法 · {reason}" (is-error)
- *   - 合法 → "✓ 合法" (is-positive)
- */
-type PositionValidity = { label: string; chipClass: string }
-function positionValidity(position: number | null | undefined): PositionValidity {
-  if (position == null) {
-    return { label: '未设置', chipClass: 'is-snow' }
-  }
-  const result = validateTimelinePosition(position)
-  if (!result.ok) {
-    return { label: `✕ 非法 · ${result.reason}`, chipClass: 'is-error' }
-  }
-  return { label: '✓ 合法', chipClass: 'is-positive' }
-}
-
-function isSpecialContent(content?: string): boolean {
-  if (!content) return false
-  return content.startsWith('情绪：') || content.startsWith('伏笔：') || content.startsWith('关系：')
-}
-
-function getSpecialMemories(prefix: string): string[] {
-  return memories.value
-    .filter((m: any) => m.content?.startsWith(prefix))
-    .map((m: any) => m.content.slice(prefix.length))
-}
-
-function setSpecialMemories(prefix: string, values: string[]) {
-  // 移除旧的
-  localData.value.memories.memories = localData.value.memories.memories.filter((m: any) => !m.content?.startsWith(prefix))
-  // 添加新的
-  const chNum = props.chapter.fromChapterNumber ?? props.chapter.number ?? 0
-  for (const v of values) {
-    localData.value.memories.memories.push({
-      storyId: props.chapter.storyId,
-      chapterId: props.chapter.id,
-      fromChapterNumber: chNum,
-      layer: 'chapter',
-      content: `${prefix}${v}`,
-      tags: JSON.stringify(['auto-extracted']),
-      importance: 5
-    })
-  }
-}
-
+// === 各 tab 内的 add/remove 方法(照搬 v2,删除 timeline 相关) ===
 function addMainMemory() {
-  const chNum = props.chapter.fromChapterNumber ?? props.chapter.number ?? 0
-  memories.value.push({
-    storyId: props.chapter.storyId,
-    chapterId: props.chapter.id,
-    fromChapterNumber: chNum,
-    layer: 'chapter',
+  localData.value.memories.memories.push({
     content: '',
-    tags: JSON.stringify(['auto-extracted', 'main-plot']),
-    importance: 7
+    tags: ['main-plot'],
+    importance: 7,
+    fromChapterNumber: Number(props.pending?.meta?.chapterNumber ?? 0)
   })
 }
-
 function addSideMemory() {
-  const chNum = props.chapter.fromChapterNumber ?? props.chapter.number ?? 0
-  memories.value.push({
-    storyId: props.chapter.storyId,
-    chapterId: props.chapter.id,
-    fromChapterNumber: chNum,
-    layer: 'chapter',
+  localData.value.memories.memories.push({
     content: '',
-    tags: JSON.stringify(['auto-extracted']),
-    importance: 5
+    tags: ['side-plot'],
+    importance: 5,
+    fromChapterNumber: Number(props.pending?.meta?.chapterNumber ?? 0)
   })
 }
-
 function removeMemory(mem: any) {
-  confirmRemove('确定要删除这条记忆吗?', () => {
-    const idx = memories.value.indexOf(mem)
-    if (idx >= 0) memories.value.splice(idx, 1)
+  confirmRemove(`删除该记忆?\n\n"${(mem.content || '').slice(0, 60)}"`, () => {
+    const idx = localData.value.memories.memories.indexOf(mem)
+    if (idx >= 0) localData.value.memories.memories.splice(idx, 1)
   })
 }
+// v4: 纠正下拉 — 已加载当前 story 的所有 character,作为下拉选项
+interface CharacterOption { label: string; value: string }
+const existingCharacterOptions = ref<CharacterOption[]>([])
+async function loadExistingCharacters() {
+  if (!props.chapterId) return
+  try {
+    const chapterRes = await chaptersApi.get(props.chapterId)
+    const storyId = chapterRes.data?.data?.storyId
+    if (!storyId) return
+    const list = await charactersApi.list(storyId)
+    existingCharacterOptions.value = (list.data?.data ?? []).map((c: any) => ({
+      label: `${c.name} (${c.slug})`,
+      value: c.id
+    }))
+  } catch {
+    // 静默失败: 纠正下拉空着,用户仍可手动编辑 key/name 触发 resolve 流程
+  }
+}
+function onCorrectCharacter(state: any, correctedId: string | null) {
+  state.characterId = correctedId
+  // 选了已有角色 → 不再新建;不选或清空 → 保留 isNew 让后端走自动建档流程
+  state.isNew = correctedId === null
+}
+onMounted(loadExistingCharacters)
 
 function addCharacterState() {
-  const chNum = props.chapter.fromChapterNumber ?? props.chapter.number ?? 0
-  characterStates.value.push({
-    characterId: '新角色',
-    fromChapterNumber: chNum,
+  localData.value.memories.characterStates.push({
+    characterId: null,
+    name: '新角色',
+    key: '',
     status: '{}',
-    relationships: '{}'
+    relationships: '{}',
+    isNew: true
   })
 }
-
 function removeCharacterState(idx: number) {
-  confirmRemove('确定要删除该角色状态吗?', () => {
-    characterStates.value.splice(idx, 1)
+  confirmRemove('删除该角色状态?', () => {
+    localData.value.memories.characterStates.splice(idx, 1)
   })
 }
-
-function addTimelineEvent() {
-  const chNum = props.chapter.fromChapterNumber ?? props.chapter.number ?? 0
-  timelineEvents.value.push({
-    storyId: props.chapter.storyId,
-    fromChapterNumber: chNum,
-    position: DEFAULT_TIMELINE_POSITION,
-    events: '[]'
-  })
-}
-
-function removeTimelineEvent(idx: number) {
-  confirmRemove('确定要删除该时间线事件吗?', () => {
-    timelineEvents.value.splice(idx, 1)
-  })
-}
-
 function addPlotArc() {
-  plotArcs.value.push({
-    storyId: props.chapter.storyId,
+  localData.value.plotArcs.push({
+    storyId: '',
+    arcId: null,
     name: '新弧线',
-    type: 'side',
-    status: 'active',
-    progress: 0,
-    stages: '[]',
-    currentStage: '',
-    nextGoal: '',
-    unresolved: '[]',
-    summary: '',
-    isNew: true,
-    similarToExistingIds: '[]'
+    isMainline: false,
+    content: '',
+    isEnd: false,
+    action: 'create'
   })
 }
-
 function removePlotArc(idx: number) {
-  confirmRemove('确定要删除该剧情弧线吗?', () => {
-    plotArcs.value.splice(idx, 1)
+  confirmRemove('删除该剧情弧线?', () => {
+    localData.value.plotArcs.splice(idx, 1)
   })
 }
+// 把 EditableGraph 自管的草稿拉回到 localData, 然后再 toV3 发送
+function pullGraphDraftIntoLocalData() {
+  const g = chapterGraphRef.value?.getData()
+  if (g) localData.value.graph.chapterGraph = g
+}
 
-function onGraphUpdate(data: { nodes: any[], edges: any[] }) {
-  localData.value.graph.chapterGraph = {
-    nodes: data.nodes,
-    edges: data.edges,
-    timestamp: new Date().toISOString()
-  }
+function pullCumulativeDraftIntoLocalData() {
+  const g = cumulativeGraphRef.value?.getData()
+  if (g) localData.value.cumulativeGraph = g
+}
 
-  const base = baselineChapterGraph.value
-  const merged = localData.value.graph.mergedGraph
-
-  // 把 draft 格式规范化回 DB 格式
-  function normalizeNode(n: any) {
-    const { id, type, key, label, ...rest } = n
-    return { type, key, label, importance: n.importance ?? 5, data: rest }
-  }
-  function normalizeEdge(e: any) {
-    return {
-      fromType: e.fromType,
-      fromKey: e.fromKey,
-      toType: e.toType,
-      toKey: e.toKey,
-      relation: e.relation,
-      weight: e.weight ?? 1
-    }
-  }
-  function nodeKey(n: any) {
-    return `${n.type}:${n.key}`
-  }
-  function edgeKey(e: any) {
-    return `${e.fromType}:${e.fromKey}:${e.relation}:${e.toType}:${e.toKey}`
-  }
-
-  const baseNodes = new Map((base.nodes || []).map((n: any) => [nodeKey(n), normalizeNode(n)]))
-  const baseEdges = new Set((base.edges || []).map((e: any) => edgeKey(normalizeEdge(e))))
-  const newNodes = new Map(data.nodes.map((n: any) => [nodeKey(n), normalizeNode(n)]))
-  const newEdges = new Set(data.edges.map((e: any) => edgeKey(normalizeEdge(e))))
-
-  // mergedGraph = mergedGraph - baseChapterGraph + newChapterGraph
-  const mergedNodeMap = new Map((merged.nodes || []).map((n: any) => [nodeKey(n), n]))
-  const mergedEdgeList = (merged.edges || []).map((e: any) => ({ key: edgeKey(e), value: e }))
-
-  // 删除旧 chapterGraph 中独有的节点
-  for (const [key, _] of baseNodes) {
-    if (!newNodes.has(key)) {
-      mergedNodeMap.delete(key)
-    }
-  }
-  // 添加/更新新 chapterGraph 中的节点
-  for (const [key, n] of newNodes) {
-    mergedNodeMap.set(key, n)
-  }
-
-  // 删除旧 chapterGraph 中独有的边
-  const remainingEdges = mergedEdgeList.filter(({ key, value }) => {
-    // 如果这条边在 base 中且不在 new 中，则删除
-    if (baseEdges.has(key) && !newEdges.has(key)) return false
-    // 如果这条边关联的节点已被删除，也删除
-    const e = value
-    if (!mergedNodeMap.has(`${e.fromType}:${e.fromKey}`)) return false
-    if (!mergedNodeMap.has(`${e.toType}:${e.toKey}`)) return false
-    return true
-  })
-
-  // 添加新 chapterGraph 中的边
-  const remainingEdgeKeys = new Set(remainingEdges.map(e => e.key))
-  for (const e of data.edges) {
-    const key = edgeKey(normalizeEdge(e))
-    if (!remainingEdgeKeys.has(key)) {
-      remainingEdges.push({ key, value: normalizeEdge(e) })
-      remainingEdgeKeys.add(key)
-    }
-  }
-
-  localData.value.graph.mergedGraph = {
-    nodes: Array.from(mergedNodeMap.values()),
-    edges: remainingEdges.map(e => e.value),
-    timestamp: new Date().toISOString()
+// === 累计图谱: 生成 ===
+async function handleBuildCumulative() {
+  // 先把 chapterGraph editor 自管的草稿拉回 localData, 再用最新 chapterGraph 触发后端累计
+  pullGraphDraftIntoLocalData()
+  const chapterGraph = localData.value.graph.chapterGraph
+  if (!chapterGraph) return
+  buildingCumulative.value = true
+  try {
+    const res: any = await cumulativeGraphApi.build(props.chapterId, chapterGraph)
+    const data = res?.data?.data
+    // AI 结果直接落 localData, 走 pendingArchiveData 流, 与 chapterGraph 同源
+    localData.value.cumulativeGraph = data?.graph ?? { nodes: [], edges: [] }
+    localData.value.cumulativeGraphGeneratedAt = data?.generatedAt ?? new Date().toISOString()
+  } catch (err: any) {
+    const msg = err?.response?.data?.error ?? err?.message ?? '累计图谱生成失败'
+    message.error(msg)
+  } finally {
+    buildingCumulative.value = false
   }
 }
 
-function buildData(): PendingArchiveData {
-  return JSON.parse(JSON.stringify(localData.value))
-}
-
+// === 底部三按钮 ===
 function handleSave() {
+  pullGraphDraftIntoLocalData()
+  pullCumulativeDraftIntoLocalData()
   saving.value = true
-  emit('save', buildData())
-  saving.value = false
+  try { emit('save', toV4(localData.value, props.pending)) }
+  finally { saving.value = false }
 }
-
 function handleConfirm() {
-  confirming.value = true
-  emit('confirm', buildData())
+  // 前置软校验: 累计图谱未生成时拦截 emit, 弹 toast
+  if (!localData.value.cumulativeGraphGeneratedAt) {
+    message.error('请先生成累计图谱再归档')
+    return
+  }
+  pullGraphDraftIntoLocalData()
+  pullCumulativeDraftIntoLocalData()
+  // 注意: 按钮 loading 由父组件 archiveRunning 控制, 这里不再 set confirming
+  emit('confirm', toV4(localData.value, props.pending))
 }
 
-function startConfirm() {
-  confirming.value = true
+// === 记忆 tab 两步进度 helper (v4 split-stage) ===
+function stepDotMark(name: StageName): string {
+  const s = stageStatus(name)
+  if (s === 'success') return '✓'
+  if (s === 'failed') return '✗'
+  return '○'
 }
-
-function stopConfirm() {
-  confirming.value = false
+function stepDotClass(name: StageName): string {
+  const s = stageStatus(name)
+  if (s === 'success') return 'is-positive'
+  if (s === 'failed') return 'is-error'
+  return 'is-muted'
 }
-
-defineExpose({ startConfirm, stopConfirm })
+function handleRestartAllMemory() {
+  // 重跑两步: extract 会自动续跑 optimizer (后端职责)
+  emit('retry-stage', 'memoryExtract')
+}
 </script>
 
 <style scoped>
+/* === tab header 状态圆点 === */
+.rp-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.rp-tab-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* === 记忆 tab 两步进度 (v4 split-stage) ===
+   圆点 + 标签同行, 跟 NButton 重启按钮并排;
+   颜色按 status 切换: success 绿 / failed 红 / 其它灰 */
+.rp-step-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  flex-shrink: 0;
+  border: 1px solid var(--border-default);
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+}
+.rp-step-dot.is-positive {
+  background: var(--color-positive);
+  border-color: var(--color-positive);
+  color: #fff;
+}
+.rp-step-dot.is-error {
+  background: var(--color-error);
+  border-color: var(--color-error);
+  color: #fff;
+}
+.rp-step-dot.is-muted {
+  background: var(--color-stone-gray);
+  border-color: var(--border-subtle);
+  color: var(--text-tertiary);
+}
+.rp-step-label {
+  font-size: 14px;
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+}
+
+/* === stage 失败提示条: 暖底红字 === */
+.rp-stage-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  background: rgba(217, 75, 75, 0.08);
+  border: 1px solid rgba(217, 75, 75, 0.35);
+  color: #a83232;
+  font-size: 13px;
+  line-height: 1.5;
+}
+/* === stage 操作行: 重新解析按钮 (始终可见,失败时与 .rp-stage-error 联动) === */
+.rp-stage-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
 /* === Editorial storyboard entry — plot arc card ===
    卡片像杂志条目: meta (序号 + chips) + 大标题 + 编号字段 eyebrow。
    暖色 canvas 上纯白卡 + 1px pebble border, 无 shadow (继承 .cap-card 的扁平纸张感)。
@@ -1079,231 +991,10 @@ defineExpose({ startConfirm, stopConfirm })
 }
 
 /* =================================================================
-   Editorial storyboard entry — TIMELINE EVENT CARD
+   本章摘要卡片
    ----------------------------------------------------------------
-   与剧情弧线共享 .cap-arc-card 视觉 token (1px pebble border / 6px radius /
-   white card on warm canvas / 18px 20px 16px padding),但骨架对应"时刻表"
-   而非"剧情线":核心身份是 position 坐标,不是 name。
-
-   字段顺序:
-     head  → meta (N° + events count chip) + position hero (mono 编码 + 解读)
-     field → 01 时间编码 (TimelinePositionInput, 可编辑)
-     field → 02 事件列表 (mono textarea, rows=10) + JSON 合法 chip
-     foot  → 删除
-   ================================================================= */
-.cap-timeline-card {
-  position: relative;
-  background: var(--bg-card);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-card);
-  padding: 18px 20px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  transition: border-color 0.18s ease, transform 0.18s ease;
-  min-width: 0;
-}
-.cap-timeline-card:hover {
-  border-color: var(--color-mid-gray);
-  transform: translateY(-1px);
-}
-
-/* === 头部: meta (序号 + chips) — 与剧情弧线对齐 === */
-.cap-timeline-card__head {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.cap-timeline-card__head-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
-  min-height: 22px;
-}
-.cap-timeline-card__head-chips {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.cap-timeline-card__no {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.08em;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-}
-.cap-timeline-card__no-sep {
-  color: var(--color-mid-gray);
-  font-weight: var(--weight-regular);
-}
-/* count chip: 复用 cap-chip is-snow, 但放大数字部分强化"事件数"语义 */
-.cap-timeline-card__count-chip {
-  font-family: var(--font-mono);
-  letter-spacing: 0.04em;
-}
-.cap-timeline-card__count-label {
-  color: var(--text-tertiary);
-  font-weight: var(--weight-regular);
-  text-transform: uppercase;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-}
-.cap-timeline-card__count-value {
-  color: var(--accent-link); /* 与 is-blue chip 调色一致: blueprint 蓝 */
-  font-weight: var(--weight-bold);
-  font-size: 12px;
-}
-
-/* === 顶部时间文本: 裸露 h3, 无装饰层 ===
-   跟剧情弧线 cap-arc-card__title 同一层级 (h3),作为卡片的"标题等价物",
-   但不加 bg-elev + border 装饰 (用户反馈 2026-06-27),让视觉更轻。 */
-.cap-timeline-card__pos-time {
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: 18px;
-  font-weight: var(--weight-semibold);
-  color: var(--text-primary);
-  letter-spacing: 0.04em;
-  line-height: 1.3;
-  word-break: break-word;
-  font-variant-numeric: tabular-nums;
-}
-
-/* === 时间编码 input 行: input + ? + validity 横向并排 ===
-   - input 占 flex 1 (所有可用空间)
-   - ? 问号固定 20px 圆按钮, 鼠标悬浮显示 Y.DDDHH 编码含义
-   - validity chip 固定大小, 不带左侧圆点 (override cap-chip::before)
-   整行在卡片字段下, 与其他字段垂直堆叠节奏一致 */
-.cap-timeline-card__pos-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.cap-timeline-card__pos-input {
-  /*flex: 1 1 auto;*/
-  min-width: 0;
-}
-.cap-timeline-card__pos-help {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: 1px solid var(--border-default);
-  color: var(--text-tertiary);
-  font-size: 12px;
-  font-weight: var(--weight-bold);
-  cursor: help;
-  background: transparent;
-  flex-shrink: 0;
-  font-family: var(--font-mono);
-  line-height: 1;
-  user-select: none;
-  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
-}
-.cap-timeline-card__pos-help:hover,
-.cap-timeline-card__pos-help:focus {
-  border-color: var(--color-mid-gray);
-  color: var(--text-secondary);
-  background: var(--bg-card);
-  outline: none;
-}
-.cap-timeline-card__pos-validity {
-  flex-shrink: 0;
-}
-/* validity chip 去除 cap-chip 默认的左侧圆点 (用户反馈 2026-06-27):
-   这个 chip 是"校验结果"语义, 不需要额外的状态点 (chip 自己的色
-   已经表达了合法 / 非法 / 未设置, 圆点是冗余的)。scoped 到 timeline
-   card 内, 不影响其他 cap-chip。 */
-.cap-timeline-card__pos-validity::before {
-  display: none;
-}
-
-/* === 字段: label + content (与剧情弧线一致) === */
-.cap-timeline-card__field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-.cap-timeline-card__label {
-  font-size: var(--text-caption-size); /* 10px */
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-  line-height: 1;
-}
-
-/* === 事件列表 (DynamicTags 1 列模式: 强制每行 1 个 tag) ===
-   timeline card 的 events 字段用 DynamicTags 但希望 tag 单列堆叠
-   (避免 2 列 card grid 窄卡下 tag 文本被裁)。通过 CSS 强制每个
-   n-tag 100% 宽 + 独占一行, 不影响其他 DynamicTags 用法
-   (emotions / foreshadowing / relationshipChanges 仍走自然 wrap)。
-   - tag 容器: 1px border + 6px radius 围成"列", 跟剧情弧线 card 一致
-   - 每个 n-tag: 100% 宽, 右 margin 0, 底 margin 6px 分隔
-   - tag content: 解除 max-width / nowrap 限制, 让长文本自然换行显示
-   - input (n-dynamic-tags 自带) 仍走 inline, 用户能继续添加新 tag */
-.cap-timeline-card__events-list :deep(.n-dynamic-tags) {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-}
-.cap-timeline-card__events-list :deep(.n-dynamic-tags .n-tag) {
-  max-width: 100%;
-  width: 100%;
-  margin: 0 0 6px 0;
-  height: auto;
-  min-height: 28px;
-  padding: 4px 10px;
-}
-.cap-timeline-card__events-list :deep(.n-dynamic-tags .n-tag__content) {
-  max-width: 100%;
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-  word-break: break-word;
-  line-height: 16px;
-}
-.cap-timeline-card__events-list :deep(.n-dynamic-tags .n-tag__close) {
-  margin-left: 8px;
-  flex-shrink: 0;
-}
-/* 事件列表 hint (DynamicTags 下方提示文字) */
-.cap-timeline-card__events-hint {
-  font-size: 10px;
-  color: var(--text-tertiary);
-  letter-spacing: 0.04em;
-  line-height: 1.4;
-  margin-top: 6px;
-}
-
-/* === 底部: 删除(与剧情弧线对齐) === */
-.cap-timeline-card__foot {
-  margin-top: 2px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border-subtle);
-  display: flex;
-  justify-content: flex-end;
-}
-
-/* =================================================================
-   本章摘要卡片 — 印刷感引文块
-   ----------------------------------------------------------------
-   设计意图 (2026-06-28 用户反馈 "不那么平淡也不那么炫酷"):
-     - banner 下两个常驻卡片原本是裸 n-card + n-input, 与其他 tab 内的
-       n-card 视觉完全一样, 没有层级区分, 显得"平淡"
-     - 这里用"引文 / 印刷感"语义包装: 巨号引号 + 内嵌 textarea + 字符
-       计数 hint, 让用户感觉是在"写一句给读者看的话"而非"填一个表单字段"
-     - 副标 cap-eyebrow + 大字 title (跟 cap-arc-card__title 节奏一致),
-       但走 cream 暖灰底 (`--bg-section`) 与白色卡形成对比, 在 banner 下
-       两块 n-card 区分 "引文" (摘要) vs "表" (角色状态)
+   卡片 + eyebrow + 默认边框 textarea + 字符计数 hint。
+   不再做"印刷感引文"包装, 让"可编辑"是看出来的, 不是猜出来的。
    ================================================================= */
 .cap-summary-card {
   position: relative;
@@ -1336,60 +1027,18 @@ defineExpose({ startConfirm, stopConfirm })
   color: var(--text-primary);
   letter-spacing: -0.005em;
 }
-/* 引文块: 巨号引号 + 内嵌 textarea */
-.cap-summary-card__body {
-  position: relative;
-  padding: 4px 8px 4px 32px;
-}
-.cap-summary-card__quote-mark {
-  position: absolute;
-  left: 0;
-  top: -8px;
-  font-family: var(--font-sans);
-  font-size: 56px;
-  line-height: 1;
-  font-weight: var(--weight-bold);
-  color: var(--accent);
-  opacity: 0.55;
-  user-select: none;
-  pointer-events: none;
-}
-/* 内嵌 textarea: 去边框 + 透明底, 跟卡片白底融成"印在纸上"的感觉 */
-.cap-summary-card__input :deep(textarea) {
-  background: transparent !important;
-  border: none !important;
-  padding: 0 !important;
-  font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 1.65;
-  letter-spacing: 0.01em;
-  color: var(--text-primary);
-  font-weight: var(--weight-regular);
-  resize: vertical;
-  min-height: 60px;
-}
-.cap-summary-card__input :deep(textarea::placeholder) {
-  color: var(--color-placeholder);
-  font-style: italic;
-}
-.cap-summary-card__input :deep(.n-input__border),
-.cap-summary-card__input :deep(.n-input__state-border) {
-  display: none !important;
-}
 .cap-summary-card__foot {
-  margin-top: 4px;
-  padding: 8px 0 0;
+  margin-top: 8px;
+  padding-top: 8px;
   border-top: 1px dashed var(--border-subtle);
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
   font-size: var(--text-caption-size);
-  letter-spacing: 0.04em;
 }
 .cap-summary-card__hint {
   color: var(--text-tertiary);
-  font-style: italic;
 }
 .cap-summary-card__count {
   font-family: var(--font-mono);
@@ -1399,30 +1048,17 @@ defineExpose({ startConfirm, stopConfirm })
 }
 
 /* =================================================================
-   角色 tab 内的角色状态卡片 — 角色表 (跟剧情弧线/时间线卡片同构)
+   角色 tab 内的角色状态卡片 — 角色表 (跟剧情弧线卡片同构)
    ----------------------------------------------------------------
-   设计意图 (2026-06-28, 第三次迭代):
-     - 用户反馈: 角色状态从 banner 下移到第 1 个 tab "角色", 4 tabs → 5 tabs
-     - 角色状态现在是 tab 容器的内容, 不再是 banner 下的 n-card, 所以
-       移除外层 n-card 样式 (.cap-character-card / __head / __title)
-     - 保留 .cap-character-card__item 内层卡片样式 (跟 .cap-arc-card /
-       .cap-timeline-card 同构: 白底 + 1px border + 6px radius + 18px 20px 16px
-       padding + hover 抬升 + cap-rise staggered reveal)
-     - 卡片内 2 字段 (状态 / 关系 JSON) 单列竖排, 节奏与 .cap-arc-card__field 一致
-     - 字段编号: 01 · 状态 / 02 · 关系
-     - 按钮: cap-pill is-sm is-danger (删除) / is-sm is-primary (添加)
-   历史迭代:
-     - 第一次 (banner 下 n-card): 印刷感包装 + cap-eyebrow
-     - 第二次 (2 列 grid + 卡片): 跟剧情弧线/时间线节奏统一
-     - 第三次 (tab-1): 角色状态提升为独立 tab
+   保留 .cap-character-card__item 内层卡片样式 (跟 .cap-arc-card 同构:
+   白底 + 1px border + 6px radius + 18px 20px 16px padding + hover 抬升
+   + cap-rise staggered reveal), 卡片内 2 字段 (状态 / 关系 JSON) 单列竖排。
    ================================================================= */
-/* 2 列 grid (跟剧情弧线 / 时间线卡片同构) */
+/* 2 列 grid (跟剧情弧线卡片同构) */
 .cap-character-card__grid {
   margin-bottom: 12px;
 }
-/* 角色状态卡片 — 与 .cap-arc-card / .cap-timeline-card 同构:
-   白底 + 1px pebble border + 6px radius + 18px 20px 16px padding,
-   hover 时 border 升 mid-gray + translateY(-1px), 进入用 cap-rise staggered reveal */
+/* 角色状态卡片 — 与 .cap-arc-card 同构 */
 .cap-character-card__item {
   position: relative;
   background: var(--bg-card);
@@ -1439,8 +1075,7 @@ defineExpose({ startConfirm, stopConfirm })
   border-color: var(--color-mid-gray);
   transform: translateY(-1px);
 }
-/* 头部: meta (N° 编号) + 大标题等价物 (角色名) + 删除按钮
-   两行布局 — 跟 .cap-arc-card__head (meta + 大标题) 节奏一致 */
+/* 头部: meta (N° 编号) + 大标题等价物 (角色名) + 删除按钮 */
 .cap-character-card__item-head {
   display: flex;
   flex-direction: column;
@@ -1470,8 +1105,7 @@ defineExpose({ startConfirm, stopConfirm })
   flex-shrink: 0;
   align-self: flex-end;
 }
-/* 角色名 — h3 大标题等价物, 但走 inline input 让用户能直接编辑
-   跟 .cap-arc-card__title / .cap-timeline-card__pos-time 节奏一致 */
+/* 角色名 — h3 大标题等价物 */
 .cap-character-card__item-name-wrap {
   margin: 0;
   display: flex;

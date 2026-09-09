@@ -1,17 +1,22 @@
 node_modules
 *.local
+.env
 .env.local
+.env.*.local
 dist
 build
 *.log
 prisma/dev.db
 prisma/dev.db-journal
+.test/
+.reference/
 
 # 运行时上传的封面
 apps/server/uploads/
 
 # superpowers plugin 内部状态目录
 .superpowers/
+.claude/worktrees/
 
 # 测试文本
 .test

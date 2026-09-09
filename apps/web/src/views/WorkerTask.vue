@@ -72,10 +72,8 @@ const form = ref({
 
 const workerTypeOptions = [
   { label: 'Generation（生成）', value: 'generation' },
-  { label: 'Scoring（评分）', value: 'scoring' },
   { label: 'Memory（记忆提取）', value: 'memory' },
   { label: 'Graph（图谱提取）', value: 'graph' },
-  { label: 'Timeline（时间线）', value: 'timeline' },
   { label: 'Rewrite（改写）', value: 'rewrite' }
 ]
 

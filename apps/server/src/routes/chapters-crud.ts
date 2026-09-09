@@ -6,6 +6,7 @@ import {
   DevelopRequestSchema
 } from '@novel-runtime/shared'
 import { parseBody, getOrThrowChapter, getLastChapter } from './_helpers.js'
+import { derivePlotArcStatus, RECENT_END_WINDOW } from '../services/plot-arc-status.js'
 
 /**
  * CRUD 流:list / one / create / update / delete / develop(side story)。
@@ -93,11 +94,6 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
     const chapter = await getOrThrowChapter(app.prisma, chapterId, reply)
     if (chapter === null) return
 
-    // archived 章节只读，不允许任何修改
-    if (chapter.status === 'archived') {
-      return reply.status(400).send({ success: false, error: '已归档章节不可修改' })
-    }
-
     // 禁止直接通过 PUT 修改 status，状态转换必须通过专门接口
     if (body.status !== undefined) {
       return reply.status(400).send({ success: false, error: '不允许直接修改 status 字段' })
@@ -113,17 +109,30 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
     if (body.aiProviderConfigId !== undefined) data.aiProviderConfigId = body.aiProviderConfigId || null
     if (body.pendingArchiveData !== undefined) data.pendingArchiveData = body.pendingArchiveData
 
-    // reviewing 状态只允许调整 content 和 pendingArchiveData
-    if (chapter.status === 'reviewing') {
-      const allowedKeys = ['content', 'pendingArchiveData']
+    // v2: archived 章节只读,不允许任何修改
+    if (chapter.status === 'archived') {
+      return reply.status(400).send({ success: false, error: '已归档章节不可修改' })
+    }
+
+    // v2: 收口到 3 个 status。draft 允许所有字段;
+    // reviewing 仅允许 pendingArchiveData (ReviewingPanel 在 review 中修订后保存)。
+    if (chapter.status === 'draft') {
+      // no-op: full edit allowed
+    } else if (chapter.status === 'reviewing') {
+      const allowedKeys = ['pendingArchiveData']
       const receivedKeys = Object.keys(data)
       const invalidKeys = receivedKeys.filter(k => !allowedKeys.includes(k))
       if (invalidKeys.length > 0) {
         return reply.status(400).send({
           success: false,
-          error: `reviewing 状态不允许修改以下字段：${invalidKeys.join(', ')}`
+          error: `reviewing 状态仅允许更新 pendingArchiveData，不允许修改其他字段：${invalidKeys.join(', ')}`
         })
       }
+    } else {
+      return reply.status(400).send({
+        success: false,
+        error: `当前状态 ${chapter.status} 不允许编辑`
+      })
     }
 
     const updated = await app.prisma.chapter.update({ where: { id: chapterId }, data })
@@ -168,45 +177,62 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
       }
     }
 
-    // 级联清理：删除同 fromChapterNumber 的派生数据
+    // 级联清理 + 删章节：包进事务，任一步失败整体回滚（不再吞错，错误向上冒泡 → 500）
     if (chapter.status === 'archived' && chapter.number > 0) {
-      try {
-        const { count: memCount } = await prisma.memory.deleteMany({
+      const { memCount, bsCount, arcCount } = await prisma.$transaction(async (tx) => {
+        const { count: memCount } = await tx.memory.deleteMany({
           where: { storyId: chapter.storyId, fromChapterNumber: chapter.number }
         })
-        const { count: teCount } = await prisma.timelineEvent.deleteMany({
+        const { count: bsCount } = await tx.characterBranchState.deleteMany({
           where: { storyId: chapter.storyId, fromChapterNumber: chapter.number }
         })
-        const { count: bsCount } = await prisma.characterBranchState.deleteMany({
-          where: { fromChapterNumber: chapter.number }
+        // 剧情弧线级联：firstChapterNumber 相等 → 整条删（级联推进点）；否则删该章的推进点
+        const { count: arcCount } = await tx.plotArc.deleteMany({
+          where: { storyId: chapter.storyId, firstChapterNumber: chapter.number }
         })
-        app.log.info(`[Delete] Cascade cleanup for chapter ${chapter.number}: memory=${memCount}, timeline=${teCount}, branchState=${bsCount}`)
-      } catch (err: any) {
-        app.log.error(`[Delete] Cascade cleanup failed: ${err.message}`)
-      }
+        await tx.plotArcProgressPoint.deleteMany({
+          where: { arc: { storyId: chapter.storyId }, chapterNumber: chapter.number }
+        })
+        // 重推导受影响弧线的状态（删了 isEnd 推进点 → 完成回退为激活/待激活）
+        const affectedArcs = await tx.plotArc.findMany({
+          where: { storyId: chapter.storyId },
+          include: { progressPoints: { orderBy: { chapterNumber: 'desc' } } }
+        })
+        for (const arc of affectedArcs) {
+          if (arc.closedBy) continue
+          const latest = arc.progressPoints[0]
+          const status = derivePlotArcStatus({
+            closedBy: arc.closedBy,
+            latestPoint: latest ? { chapterNumber: latest.chapterNumber, isEnd: latest.isEnd } : null,
+            recentIsEnd: arc.progressPoints.slice(0, RECENT_END_WINDOW).some((p: any) => p.isEnd),
+            firstChapterNumber: arc.firstChapterNumber,
+            currentChapter: chapter.number
+          })
+          if (status !== arc.status) {
+            await tx.plotArc.update({ where: { id: arc.id }, data: { status } })
+          }
+        }
+        // 删章节（事务内最后一步：任一步失败 → 上面所有级联删除全部回滚）
+        await tx.chapter.delete({ where: { id: chapterId } })
+        return { memCount, bsCount, arcCount }
+      })
+      app.log.info(`[Delete] Chapter ${chapter.number} deleted with cascade cleanup: memory=${memCount}, branchState=${bsCount}, plotArc=${arcCount}`)
+    } else {
+      // 非归档章节（draft/reviewing）无派生数据，直接删
+      await prisma.chapter.delete({ where: { id: chapterId } })
     }
 
-    // 删除后重建图谱：用剩余最新章节的 snapshot 回退
-    const { rebuildGraphFromSnapshot } = await import('../services/graph-snapshot.js')
+    // v3 累计图谱以 Chapter.cumulativeGraph JSON 为唯一 source-of-truth,
+    // 不再重建 GraphNode/Edge 表 (两表已 deprecated, 见 prisma/schema.prisma)。
+    // 删章节只移除本章 Chapter 行, 下一章打开时仍读 prev Chapter.cumulativeGraph。
     const prevChapter = await prisma.chapter.findFirst({
       where: { storyId: chapter.storyId, status: 'archived' },
       orderBy: { number: 'desc' }
     })
-    if (prevChapter?.graphSnapshot) {
-      try {
-        const snapshot = safeJsonParse(prevChapter.graphSnapshot, null)
-        if (snapshot) await rebuildGraphFromSnapshot(prisma, chapter.storyId, snapshot)
-        app.log.info(`[Delete] Rebuilt graph from chapter ${prevChapter.number} snapshot`)
-      } catch (err: any) {
-        app.log.error(`[Delete] Graph rebuild failed: ${err.message}`)
-      }
-    } else {
-      await prisma.graphEdge.deleteMany({ where: { storyId: chapter.storyId } })
-      await prisma.graphNode.deleteMany({ where: { storyId: chapter.storyId } })
-      app.log.info(`[Delete] Cleared all graph data for story ${chapter.storyId}`)
-    }
-
-    await prisma.chapter.delete({ where: { id: chapterId } })
+    app.log.info(
+      { storyId: chapter.storyId, deletedChapterNumber: chapter.number, prevChapterNumber: prevChapter?.number },
+      '[Delete] v3 累计图谱以 Chapter.cumulativeGraph JSON 为准, 不重建 GraphNode/Edge 表'
+    )
 
     // 如果这是最后一个章节，清理故事级别的派生数据
     const remainingChapters = await prisma.chapter.count({
@@ -220,16 +246,10 @@ export async function chapterCrudRoutes(app: FastifyInstance) {
         const { count: logCount } = await prisma.promptLog.deleteMany({
           where: { storyId: chapter.storyId }
         })
-        // GraphNode/GraphEdge 已经在上面 else 分支清理，但如果走的是 rebuild 路径没清理，这里兜底
-        const { count: edgeCount } = await prisma.graphEdge.deleteMany({
-          where: { storyId: chapter.storyId }
-        })
-        const { count: nodeCount } = await prisma.graphNode.deleteMany({
-          where: { storyId: chapter.storyId }
-        })
-        app.log.info(`[Delete] Last chapter removed. Cleaned plotArc=${arcCount}, promptLog=${logCount}, graphNode=${nodeCount}, graphEdge=${edgeCount}`)
+        app.log.info(`[Delete] Last chapter removed. Cleaned plotArc=${arcCount}, promptLog=${logCount}`)
       } catch (err: any) {
-        app.log.error(`[Delete] Final cleanup failed: ${err.message}`)
+        // 章节已删、故事已空，此处是尽力而为的垃圾回收；失败只残留孤儿数据，不影响任何后续读取
+        app.log.warn(`[Delete] Final cleanup failed (chapter already deleted, residual orphan data): ${err.message}`)
       }
     }
 

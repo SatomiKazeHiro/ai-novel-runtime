@@ -22,13 +22,10 @@ model Story {
   // 关联
   chapters    Chapter[]
   characters  Character[]
+  branchStates CharacterBranchState[]
   loreItems   LoreItem[]
   memories    Memory[]
-  graphNodes  GraphNode[]
-  graphEdges  GraphEdge[]
-  timelineEvents TimelineEvent[]
   drafts      Draft[]
-  scores      Score[]
   plotArcs    PlotArc[]
   aiProviderConfigs AiProviderConfig[] @relation("AiProviderConfigStory")
   promptLogs       PromptLog[]
@@ -41,13 +38,8 @@ model Story {
 
 enum ChapterStatus {
   draft
-  generating
-  generated
-  scored
-  selected
   reviewing
   archived
-  rejected
 }
 
 // 章节
@@ -77,8 +69,9 @@ model Chapter {
   compiledPrompt    String?  // JSON: { systemMessage, userMessage, meta }
 
   // 图谱相关
-  graphDelta        String?  // JSON: 相对于上一章的图谱变化
-  graphSnapshot     String?  // JSON: 到当前章节的完整图谱快照
+  chapterGraph              String?  // JSON: 本章图谱（gacha 抽取，与累计全局图谱分离）
+  cumulativeGraph           String?  // JSON: 累计到本章的全局图谱（经 N-1 去重）
+  cumulativeGraphGeneratedAt DateTime?  // 用户首次主动生成累计图谱的时间；null = 未生成
 
   // 归档审查：AI 预提取后、用户确认前的中间数据
   pendingArchiveData String?
@@ -96,7 +89,6 @@ model Chapter {
   aiProviderConfig  AiProviderConfig? @relation("ChapterAiProvider", fields: [aiProviderConfigId], references: [id])
   drafts            Draft[]
   memories          Memory[]
-  scores            Score[]
 
   @@index([storyId, parentChapterId])
   @@index([storyId, status])
@@ -114,6 +106,9 @@ model Character {
   identity      String   @default("[]") // JSON string array: 身份标签
   appearance    String   @default("[]") // JSON string array: 外貌标签
   temperament   String   @default("[]") // JSON string array: 气质标签
+  // base 初始状态;第 1 章或番外无 snapshot 时作为 fallback
+  relationships String?
+  status        String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -126,16 +121,21 @@ model Character {
 // 角色分支状态（按章节归档历史保存，删除章节时可回退）
 model CharacterBranchState {
   id                String   @id @default(uuid())
+  storyId           String
   characterId       String
   fromChapterNumber Float?   // 来源章节序号，null 表示初始状态
   status            String   @default("{}") // JSON object: realm, location, etc.
   relationships     String   @default("{}") // JSON object
+  // 衣着快照;解耦实现,后续可整体移除
+  costume String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
+  story             Story     @relation(fields: [storyId], references: [id], onDelete: Cascade)
   character         Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
 
   @@index([characterId, fromChapterNumber])
+  @@index([storyId, fromChapterNumber])
 }
 
 // 世界观条目 (LoreBook)
@@ -155,73 +155,44 @@ model LoreItem {
   @@unique([storyId, category, slug])
 }
 
+enum MemoryLayer {
+  global
+  chapter
+  scene
+  temporary
+}
+
+enum MemoryCategory {
+  relationship_change
+  foreshadowing
+  emotional_change
+  event_memory
+  state
+}
+
 // 记忆
 model Memory {
-  id                String   @id @default(uuid())
+  id                String          @id @default(uuid())
   storyId           String
   chapterId         String?
-  fromChapterNumber Float?   // 来源章节序号（archive 时标记）
-  originUid         String?  // 事件起始UID，如 "1#A3F2"
-  layer             String   // global, chapter, scene, temporary
+  fromChapterNumber Float?          // 来源章节序号（archive 时标记）
+  originUid         String?         // 事件起始UID，如 "1#A3F2"
+  layer             MemoryLayer
+  category          MemoryCategory  @default(event_memory)
   content           String
-  tags              String   @default("[]") // JSON string array
-  importance        Int      @default(5) // 1-10
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  tags              String          @default("[]") // JSON string array（只留来源标记）
+  importance        Int             @default(5)    // 1-10
+  participants      String?         // 参与者姓名，逗号分隔
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
-  story             Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-  chapter           Chapter? @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  story             Story           @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  chapter           Chapter?        @relation(fields: [chapterId], references: [id], onDelete: Cascade)
 
   @@index([storyId, layer])
+  @@index([storyId, category])
   @@index([storyId, fromChapterNumber])
   @@index([storyId, originUid])
-}
-
-// 知识图谱节点
-model GraphNode {
-  id              String   @id @default(uuid())
-  storyId         String
-  type            String   // character, faction, event, realm, item
-  key             String
-  label           String
-  data            String   @default("{}") // JSON
-  createdAt       DateTime @default(now())
-
-  story           Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-  edgesFrom       GraphEdge[] @relation("from")
-  edgesTo         GraphEdge[] @relation("to")
-
-  @@unique([storyId, type, key])
-}
-
-// 知识图谱边
-model GraphEdge {
-  id              String   @id @default(uuid())
-  storyId         String
-  fromId          String
-  toId            String
-  relation        String
-  weight          Int      @default(1)
-  createdAt       DateTime @default(now())
-
-  story           Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-  fromNode        GraphNode @relation("from", fields: [fromId], references: [id], onDelete: Cascade)
-  toNode          GraphNode @relation("to", fields: [toId], references: [id], onDelete: Cascade)
-}
-
-// 时间线事件
-model TimelineEvent {
-  id                String   @id @default(uuid())
-  storyId           String
-  fromChapterNumber Float?   // 来源章节序号（archive 时标记）
-  position          Float    // 实数时间编码 YYYY.MMDD.HH（整数位=年，依次为月/日/时；缺位=0）
-  events            String   @default("[]") // JSON string array of event descriptions
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  story             Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-
-  @@unique([storyId, position])
 }
 
 // 候选/废案
@@ -235,8 +206,7 @@ model Draft {
   content         String
   compiledPrompt  String?  // JSON: { systemMessage, userMessage }
   params          String   @default("{}") // JSON: { temperature, maxTokens, model, runtimeProfileId, callType, durationMs }
-  score           String?  // JSON: 评分结果
-  status          String   @default("generating") // generating, completed, failed, selected, rejected
+  status          String   @default("generating") // generating, completed, failed, rejected (v2: 不再有 'selected'——采纳哪个 draft 只看 Chapter.content 是否匹配)
   errorMessage    String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @default(now()) @updatedAt
@@ -274,7 +244,7 @@ model WorkerTask {
   storyId     String?  // 旧字段，兼容保留，后续废弃
   type        String   @default("custom") // system | custom
   name        String   @default("")  // Task 名称，方便管理
-  workerType  String   // generation | scoring | memory | graph | timeline | rewrite
+  workerType  String   // generation | memory | graph | rewrite
   taskPrompt  String   // Task Layer 内容
   enabled     Boolean  @default(true)
   createdAt   DateTime @default(now())
@@ -288,7 +258,7 @@ model WorkerTask {
 model StoryWorkerBinding {
   id           String   @id @default(uuid())
   storyId      String
-  workerType   String   // generation | scoring | memory | graph | timeline | rewrite
+  workerType   String   // generation | memory | graph | rewrite
   workerTaskId String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -299,52 +269,38 @@ model StoryWorkerBinding {
   @@unique([storyId, workerType])
 }
 
-// 剧情弧线
+// 剧情弧线（v2 重构：事实 + 派生状态）
 model PlotArc {
-  id                    String   @id @default(uuid())
-  storyId               String
-  name                  String   // 弧线名称，如"光明顶之战"
-  type                  String   @default("main") // main | side (AI 可在 update 时翻转)
-  status                String   @default("active") // active | resolving | completed | closed | stale
-  progress              Int      @default(0) // 0-100
-  stages                String   @default("[]") // JSON: [{stage, completed, description}]
-  currentStage          String?  // 当前阶段名称
-  nextGoal              String?  // 下一目标
-  unresolved            String   @default("[]") // JSON: 未解悬念列表
-  summary               String?  // 弧线摘要
-  closedReason          String?  // status='closed' 时填: 'duplicate' 等
-  closedTargetArcId     String?  // status='closed' 时指向被合并到的 arc id
-  lastTouchedChapter    Int?     // 上次被 AI update 推进的章节号 (stale 检测)
-  similarToExistingIds  String   @default("[]") // JSON: ["arc-id-1", ...] (Jaccard tag, UI badge 用)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  storyId            String
+  name               String
+  isMainline         Boolean  @default(false) // 主线/支线
+  status             String   @default("active") // active | inactive | completed | closed（代码推导）
+  firstChapterNumber Int      // 弧线来源章节号
+  closedBy           String?  // user | ai-similar（关闭时填）
+  closedTargetArcId  String?  // AI 相似关闭时指向合并目标
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
-  story                 Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  story          Story                 @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  progressPoints PlotArcProgressPoint[]
 
   @@index([storyId, status])
-  @@index([storyId, status, lastTouchedChapter])
 }
 
-// 评分记录
-model Score {
-  id                    String   @id @default(uuid())
-  storyId               String
-  chapterId             String
-  draftId               String?
-  styleSimilarity       Float?
-  outlineAdherence      Float?
-  sceneMatch            Float?
-  profileConsistency    Float?
-  proseQuality          Float?
-  emotionalTension      Float?
-  pacing                Float?
-  totalScore            Float?
-  comment               String?
-  details               String   @default("{}") // JSON
-  createdAt             DateTime @default(now())
+// 剧情推进点（独立表，每弧线每章最多一条）
+model PlotArcProgressPoint {
+  id            String   @id @default(uuid())
+  arcId         String
+  chapterNumber Int
+  content       String   // 推进内容（核心简练）
+  isEnd         Boolean  @default(false) // 是否「完成」标志（AI 软判断）
+  createdAt     DateTime @default(now())
 
-  story       Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-  chapter     Chapter  @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  arc PlotArc @relation(fields: [arcId], references: [id], onDelete: Cascade)
+
+  @@index([arcId, chapterNumber])
+  @@index([chapterNumber])
 }
 
 // AI Provider 配置
@@ -359,6 +315,7 @@ model AiProviderConfig {
   contextLength Int      @default(64000)
   maxTokens     Int      @default(4096)
   temperature   Float    @default(0.7)
+  thinking      String   @default("auto") // auto | enabled | disabled，思考模式配置
   isDefault     Boolean  @default(false)
   remarks       String?  // 备注/说明
   createdAt     DateTime @default(now())

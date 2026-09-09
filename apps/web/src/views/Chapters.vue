@@ -3,13 +3,11 @@
         v-if="!editor.editMode"
         :tree-data="tree.chapterTree"
         :loading="tree.loading"
-        :selected-id="tree.selectedChapterId"
         :show-create-modal="tree.showCreateModal"
         :create-form="tree.createForm"
         :show-develop-modal="tree.showDevelopModal"
         :develop-form="tree.developForm"
         :develop-force-side-story="tree.developForceSideStory"
-        @select="tree.onNodeSelect"
         @develop="tree.onDevelop"
         @edit="handleOpenEdit"
         @view="handleOpenView"
@@ -22,7 +20,6 @@
     />
     <ChapterEditor
         v-else
-        ref="chapterEditorRef"
         :chapter="editor.currentChapter"
         v-model:edit-title="editor.editTitle"
         v-model:edit-form="editor.editForm"
@@ -31,12 +28,13 @@
         v-model:selected-model-id="editor.selectedModelId"
         :model-options="editor.modelOptions"
         :plot-arcs="editor.plotArcs"
-        :graph-delta="editor.graphDelta"
+        :chapter-graph="editor.chapterGraph"
         :pending-archive-data="editor.pendingArchiveData"
         :saving-content="editor.savingContent"
-        :is-readonly="isReadonly"
         :archiving="archiving"
         :repreparing-archive="repreparingArchive"
+        :retrying-stages="retryingStages"
+        :archive-running="archiveRunning"
         :prompt="prompt"
         :drafts="drafts"
         @back="handleBackToTree"
@@ -47,15 +45,18 @@
         @generate-custom="handleGenerateCustom"
         @adopt-draft="handleAdoptDraft"
         @prepare-archive="handlePrepareArchive"
-        @save-pending-archive="handleSavePendingArchiveData"
         @confirm-archive="handleConfirmArchive"
+        @confirm-archive-with-data="handleConfirmArchiveWithData"
+        @prepare-archive-cancel="handlePrepareArchiveCancel"
+        @save-pending-archive="handleSavePendingArchive"
         @reprepare-archive="handleReprepareArchive"
         @cancel-reviewing="handleCancelReviewing"
+        @retry-stage="handleRetryStage"
     />
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, onMounted, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useDebounceFn } from "@vueuse/core";
 import { useDialog, useMessage } from "naive-ui";
@@ -83,11 +84,14 @@ const debouncedSaveConfig = useDebounceFn(editor.saveConfig, 500);
 const archiving = ref(false);
 // 重新准备归档的 loading 状态(reviewing → reviewing 重试路径)
 const repreparingArchive = ref(false);
-const isReadonly = computed(() => editor.currentChapter?.status === "archived");
+// 归档提交 in-flight 状态(ChapterEditor → ReviewingPanel 确认按钮 loading)
+const archiveRunning = ref(false);
+// 单 stage 重跑 in-flight 标记(per stage 独立 key)
+type StageName = 'character' | 'memoryExtract' | 'memoryOptimize' | 'plotArc' | 'graph'
+
+const retryingStages = ref<Partial<Record<StageName, boolean>>>({});
 const dialog = useDialog();
 const message = useMessage();
-// 引用 ChapterEditor,用于 confirm 流程触发 ReviewingPanel.startConfirm / stopConfirm
-const chapterEditorRef = ref<InstanceType<typeof ChapterEditor> | null>(null);
 
 // ========== 生命周期 ==========
 onMounted(() => {
@@ -150,9 +154,9 @@ async function handleGeneratePrompt() {
 async function handleGenerateDefault() {
     if (!editor.currentChapter || !storyId()) return;
 
-    // 仅在 generated/selected 状态弹 token 成本确认对话框
+    // 仅在非草稿状态弹 token 成本确认对话框(已有候选,再生成属追加)
     // draft 状态是首次生成,直接放行(用户刚点进来,没有"追加"的成本顾虑)
-    if (["generated", "selected"].includes(editor.currentChapter.status)) {
+    if (editor.currentChapter.status !== 'draft') {
         const existingCount = drafts.drafts.length;
         const newCount = 3;
         // 粗估:每候选 ~maxTokens × 1.3 (含 system prompt + 输出冗余)
@@ -201,29 +205,19 @@ async function handleGenerateCustom() {
 
 async function handleAdoptDraft(draft: any) {
     if (!draft.content || !editor.currentChapter) return;
-    const doAdopt = async () => {
-        const content = await drafts.selectDraft(
-            editor.currentChapter!.id,
-            draft.id,
-        );
-        if (content !== null) {
-            editor.editForm.content = content;
-            editor.currentChapter!.content = content;
-            editor.currentChapter!.status = "selected";
+    // v2: 覆盖确认已下沉到 drafts.selectDraft;chapter.status 不再被翻成 selected
+    const content = await drafts.selectDraft(
+        editor.currentChapter.id,
+        draft.id,
+        editor.editForm.content || "",
+    );
+    if (content !== null) {
+        editor.editForm.content = content;
+        editor.currentChapter!.content = content;
+        // 审查中换正文：归档数据（记忆/图谱/弧线）仍是基于旧正文提取的，提醒用户重新解析
+        if (editor.currentChapter.status === 'reviewing') {
+            message.warning('正文已更换。归档数据仍基于旧正文，如需一致请取消审查后重新准备归档');
         }
-    };
-    const currentContent = editor.editForm.content || "";
-    if (currentContent.trim() && currentContent !== draft.content) {
-        dialog.warning({
-            title: "确认覆盖",
-            content: "右侧正文已有内容,采用此版本将覆盖当前正文。是否继续?",
-            positiveText: "覆盖",
-            negativeText: "取消",
-            positiveButtonProps: { type: "primary" },
-            onPositiveClick: doAdopt,
-        });
-    } else {
-        await doAdopt();
     }
 }
 
@@ -274,19 +268,48 @@ function handlePrepareArchive() {
     });
 }
 
-async function handleSavePendingArchiveData(data: any) {
-    await editor.savePendingArchiveData(data);
+async function handleConfirmArchive() {
+    // v3: ReviewingPanel 只读,pendingArchiveData 在 prepareArchive 时已写入 DB。
+    // archive 端点直接读 Chapter.pendingArchiveData 并 commit。
+    const result = await editor.archiveChapter();
+    if (result.success) await handleBackToTree();
 }
 
-async function handleConfirmArchive(data: any) {
-    chapterEditorRef.value?.startConfirm();
+async function handlePrepareArchiveCancel() {
+    // v3: 撤销审查回退到 draft(不删章节)。弹窗确认避免误操作。
+    if (!editor.currentChapter) return;
+    const ok = await new Promise<boolean>((resolve) => {
+        dialog.warning({
+            title: "撤销审查",
+            content: "撤销后将回到草稿状态,本次提取的记忆/图谱/弧线数据会清空(章节本身保留)。是否继续?",
+            positiveText: "撤销",
+            negativeText: "保留审查",
+            positiveButtonProps: { type: "warning" },
+            onPositiveClick: () => resolve(true),
+            onNegativeClick: () => resolve(false),
+            onClose: () => resolve(false),
+        });
+    });
+    if (!ok) return;
+    await editor.prepareArchiveCancel();
+}
+
+async function handleSavePendingArchive(data: any) {
+    // ReviewingPanel 防抖触发或手动点"保存调整"。
+    // data 已是 v3 shape,直接持久化。
+    await editor.savePendingArchiveData(data)
+}
+
+async function handleConfirmArchiveWithData(data: any) {
+    archiveRunning.value = true
     try {
-        const saveResult = await editor.savePendingArchiveData(data);
-        if (!saveResult.success) return;
-        const result = await editor.archiveChapter();
-        if (result.success) await handleBackToTree();
+        // v3: ReviewingPanel 只读,pendingArchiveData 在 prepareArchive 时已写入 DB。
+        const saved = await editor.savePendingArchiveData(data)
+        if (!saved.success) return
+        const result = await editor.archiveChapter()
+        if (result.success) await handleBackToTree()
     } finally {
-        chapterEditorRef.value?.stopConfirm();
+        archiveRunning.value = false
     }
 }
 
@@ -295,6 +318,21 @@ async function handleReprepareArchive() {
     // prepare-archive 端点(后端允许从 reviewing 重试),成功后
     // pendingArchiveData 被新 payload 填上,ReviewingPanel 自动渲染。
     if (repreparingArchive.value) return;
+    // 仲裁 #3：后端 prepare-archive 重试会清空当前 pendingArchiveData
+    // （用户对记忆/图谱/弧线的修订会被丢弃）。先弹窗告知，避免误操作。
+    const ok = await new Promise<boolean>((resolve) => {
+        dialog.warning({
+            title: "重新准备归档",
+            content:
+                "重新准备归档会清空当前归档审查面板中的所有修改（记忆、图谱、剧情弧线等），并基于章节当前正文重新让 AI 提取。\n\n确认继续？",
+            positiveText: "确认重新提取",
+            negativeText: "取消",
+            onPositiveClick: () => resolve(true),
+            onNegativeClick: () => resolve(false),
+            onClose: () => resolve(false),
+        });
+    });
+    if (!ok) return;
     repreparingArchive.value = true;
     try {
         await editor.prepareArchive();
@@ -317,5 +355,16 @@ function handleCancelReviewing() {
             await handleBackToTree();
         },
     });
+}
+
+async function handleRetryStage(stageName: 'character' | 'memoryExtract' | 'memoryOptimize' | 'plotArc' | 'graph') {
+    // 单 stage 重跑: 只重跑指定 stage, 不动其他 stage 结果, 不撤销整章
+    if (retryingStages.value[stageName]) return;
+    retryingStages.value = { ...retryingStages.value, [stageName]: true };
+    try {
+        await editor.retryChapterStage(stageName);
+    } finally {
+        retryingStages.value = { ...retryingStages.value, [stageName]: false };
+    }
 }
 </script>

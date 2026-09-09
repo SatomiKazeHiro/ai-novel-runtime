@@ -9,12 +9,9 @@ export function useDraftManager() {
 
   const drafts = ref<any[]>([])
   const generating = ref(false)
-  const scoringDraftId = ref<string | null>(null)
   const showCustomModal = ref(false)
   const customTemp = ref(0.75)
   const customMaxTokens = ref(4096)
-  const showScoreModal = ref(false)
-  const scoreResult = ref<any>(null)
 
   const pollChapterId = ref<string>('')
 
@@ -69,23 +66,34 @@ export function useDraftManager() {
       startPolling(chapterId)
       return { success: true, tokens: res.data.data.tokens || null, layers: res.data.data.layers || [] }
     } catch (e: any) {
-      // Q#10：后端状态机独占锁失败时返回 409。
-      // 用 warning 而非 error：双击是用户可恢复的并发条件，不是真正的失败。
-      if (e.response?.status === 409) {
-        message.warning('该章节正在生成中，请等待当前任务完成')
-      } else {
-        message.error(e.response?.data?.error || e.message || '生成失败')
-      }
+      message.error(e.response?.data?.error || e.message || '生成失败')
       return { success: false }
     } finally {
       generating.value = false
     }
   }
 
-  async function selectDraft(chapterId: string, draftId: string) {
+  async function selectDraft(chapterId: string, draftId: string, currentContent = '', opts: { confirmIfContentDiffers?: boolean } = { confirmIfContentDiffers: true }) {
+    const draft = drafts.value.find(d => d.id === draftId)
+
+    // v2: 选候选时若 chapter.content 与 draft.content 不同,弹确认窗(默认行为)
+    if (opts.confirmIfContentDiffers && (currentContent || '').trim() && (draft?.content ?? '') !== currentContent) {
+      const ok = await new Promise<boolean>((resolve) => {
+        dialog.warning({
+          title: '覆盖章节正文？',
+          content: '当前章节已有正文。继续将以所选候选内容覆盖。',
+          positiveText: '覆盖',
+          negativeText: '取消',
+          onPositiveClick: () => resolve(true),
+          onNegativeClick: () => resolve(false),
+          onClose: () => resolve(false)
+        })
+      })
+      if (!ok) return null
+    }
+
     try {
       await chaptersApi.selectDraft(chapterId, draftId)
-      const draft = drafts.value.find(d => d.id === draftId)
       const res = await draftsApi.list(chapterId)
       drafts.value = res.data.data || []
       message.success('已采用')
@@ -93,21 +101,6 @@ export function useDraftManager() {
     } catch (e: any) {
       message.error(e.response?.data?.error || '采用失败')
       return null
-    }
-  }
-
-  async function scoreDraft(draftId: string) {
-    if (scoringDraftId.value) return
-    scoringDraftId.value = draftId
-    try {
-      const res = await draftsApi.score(draftId)
-      scoreResult.value = res.data.data?.score || null
-      showScoreModal.value = true
-      message.success('评分完成')
-    } catch (e: any) {
-      message.error(e.response?.data?.error || '评分失败')
-    } finally {
-      scoringDraftId.value = null
     }
   }
 
@@ -130,17 +123,13 @@ export function useDraftManager() {
   return reactive({
     drafts,
     generating,
-    scoringDraftId,
     showCustomModal,
     customTemp,
     customMaxTokens,
-    showScoreModal,
-    scoreResult,
     isPolling,
     loadDrafts,
     generate,
     selectDraft,
-    scoreDraft,
     confirmDeleteDraft,
     stopPolling
   })

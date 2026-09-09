@@ -398,3 +398,112 @@ Max-width 1200px centered container, light theme throughout except one dark deve
   --shadow-sm: rgba(0, 0, 0, 0.1) 0px 2px 8px 0px;
 }
 ```
+
+---
+
+## 决策日志
+
+## v3 记忆系统重设计（2026-07-30, branch `v2/state-machine`）
+
+**Why**: v3 stage 拆分后，记忆抽取、跨章融合、人工审查、归档写库和 prompt 检索之间没有形成闭环：`memory-optimizer.ts` 无调用方，archive confirm 只写 Chapter 图谱列，`searchRelevant` 又会把同一 `originUid` 的多个历史版本一起参与召回。
+
+**What**:
+- `memory-stage` 使用 `buildExtractPrompt(..., { mode: 'memory-only' })`（v3 新增 mode：保留 v2 详细记忆约束 + 跨章上下文 `previousEntitiesBlock`，但删除「任务2：实体与关系提取」段及对应 schema 字段），同时删除 `characterStatusChanges` / `timelinePosition` / `timelineEvents` 死字段，只输出分类 raw 结果与 `summary`。
+- 4 个 stage 并行完成后，在 `prepare-archive` 阶段运行 optimizer；融合结果覆盖 `stages.memory.result.memories`，让用户审查的是最终全局记忆。
+- optimizer 每条输出统一为 `{ content, originUid, importance, type: 'event' | 'state' }`；后端添加 `['auto-extracted', type]`，不再存在 `user-edited` 特殊分支。
+- archive confirm 只负责事务写库，不调用 AI：分类 raw 记忆写 `layer='chapter'`，关键地点写 `layer='scene'`，融合记忆写 `layer='global'`，摘要写 `Chapter.summary`。
+- global 记忆按章累加历史版本，不按 UID update；`searchRelevant` 仅对 `layer='global'` 按 `originUid` 取最新版本，chapter 层不参与 UID 收缩。
+- 删除章节继续按 `fromChapterNumber` 清理该章产生的行；此前版本仍在，检索因此自然回退到前一版本。
+
+**Trade-off**:
+- prepare-archive 多一次同步 AI 调用，进入 reviewing 的等待时间增加；换取用户能在归档前审阅融合结果，archive confirm 保持确定性的 commit-only 行为。
+- global 层保留历史版本会增加存储量；换取删章节无需重算或恢复快照，回退语义由现存版本自然实现。
+- scene 层只供 Memory UI 展示，不注入生成 prompt；chapter 与 global 层职责保持独立，不互相替代。
+
+**How to apply**: 后续修改记忆链路时，以“分类 raw 提取 → prepare 阶段融合 → 人工审查 → commit-only 三层写库 → global UID 最新版本检索”为固定顺序。完整字段、layer、tags 与测试规则见 `docs/superpowers/specs/2026-07-30-v3-memory-system-design.md`。
+
+## v2 状态机重构（2026-07-24, branch `v2/state-machine`）
+
+**Why**: 原 8 态枚举把"候选生成锁"和"章节业务状态"两个独立维度挤进同一个字段，导致 select/prepare-archive 失败时的回滚语义被迫引入 `preLockStatus` 等补丁字段。Worker 与路由相互等待对方写 status 的耦合让 archive 并发场景极易踩坑。
+
+**What**:
+- `ChapterStatus` 收口到 3 值：`draft` / `reviewing` / `archived`
+- 候选生成与章节状态正交：worker 不再 `updateMany` chapter.status
+- `select` 路由不再翻 chapter.status；同章其余 draft 置 `rejected`，选中 draft 的 content 写入 `chapter.content`（v2 删除 `Draft.status='selected'` 标记与 `overrideContent` 标志）
+- 失败的 prepare-archive 统一回退到 `draft`
+- archived 章节不可再生成新候选（UI 层隐藏按钮，路由层兜底 400）
+
+**Trade-off**:
+- 失去"章节正在生成中"的全局可见信号；UI 改用 Draft 层聚合判断
+- 单向 archived 让"取消归档"语义不存在 —— 取消 = 删章节 + 级联清快照
+- migration 单步：老 DB 必须先迁移；期间若有新写入按旧 enum 校验会失败
+
+**How to apply**: 未来新增章节相关功能时，候选相关问题去 Draft 层查，章节业务流转查 `ChapterStatus`，两者不要混用。
+
+**下个 phase 候选 (v3 之前)**：
+- **拆分"归档中"工作流**：当前 `prepare-archive` 一路由串了 4 phase（extract → organize graph → human review → confirm），状态机层面已用 `reviewing` 收口但路由仍单点。v3 应把 4 phase 拆为独立 sub-route 或后台 job，让每步可独立 retry / observability。前端 ReviewingPanel 当前承担了"review" 阶段的 UI，下一步要把"extract / organize" 也搬到前端可见的进度条。
+- **删除 TimelineEvent**（v3 标记，2026-07-24 已写入 schema 注释）：详见下方决策日志"Y3 标记：TimelineEvent 废弃"。
+- **如何开始**：当再次出现"某个 phase 失败要把整个 archive 流程回退"的报告时，就是 v3 的触发信号。
+
+实现细节：5 个 commit × 1 branch，spec 在 `docs/superpowers/specs/2026-07-24-v2-state-machine-design.md`，plan 在 `docs/superpowers/plans/2026-07-24-v2-state-machine.md`。
+
+## v3 归档流水线拆 4 stage（2026-07-25, branch `v3/prepare-archive-stages`）
+
+**Why**: v2 的 `prepare-archive` 单路由串了 4 phase（extract → organize graph → human review → confirm），任一阶段失败都要整个 archive 流程回退。每个阶段是独立 AI 调用、独立的失败语义（AI 格式错误 vs 图谱 token 溢出 vs 用户编辑冲突），耦合在一个 handler 里导致错误提示粒度粗、retry 只能整段重来。
+
+**What**:
+- `Chapter.pendingArchiveData` v3 shape:
+  ```typescript
+  {
+    version: 3,
+    stages: {
+      character: StageState,
+      memory: StageState,
+      plotArc: StageState,
+      graph: StageState
+    },
+    meta: { extractedAt, chapterNumber }
+  }
+  ```
+- 4 stage 服务位于 `apps/server/src/services/stages/`,签名一致:
+  ```typescript
+  async function runXxxStage(app, input): Promise<StageState<XxxStageResult>>
+  ```
+  并行触发 (`Promise.all`),任一失败不影响其他。空结果 = success。
+- `Chapter.chapterGraph` (gacha, 单次 AI 抽取本章) 与 `Chapter.cumulativeGraph` (累计到本章, 经 N-1 去重) 两段式。
+- `buildCumulativeGraph` (`apps/server/src/services/cumulative-graph.ts`):
+  1. 空 chapterGraph → 继承 prev (no AI)
+  2. 首章 → chapterGraph 自身 (no AI)
+  3. 正常 → AI 做 relation 字面归一映射(同义/升级/反转归到一个字面)→ 程序按映射重写 prev + chapterGraph 全部 relation → codeMerge 按五元组 key 合并
+- relation 漂移解决方案: AI dedup 阶段只输出 `mappings: [{from, to, variants, canonical}]`,程序 `applyRelationMapping` 重写边 relation 字面,再交给 `codeMerge` 按 `${fromType}:${fromKey}|${relation}|${toType}:${toKey}` 五元组去重 + weight 累加。原"1 跳邻域 AI 压缩图谱"在跨章 relation 字面漂移(例: c1 收留/决定帮助, c2 收留并帮助, c3 收留)下会让累计图谱累积多条字面不同的边,改用全量 prev 输入 + 映射表方案后能真正合并。
+- v3 删除所有 `updateMany({where: {status: ...}})` 锁。仅依赖状态机自身 + UI 按钮 disabled 防双击。
+
+**Trade-off**:
+- 老的 1 次合并提取拆为 4 次 AI 调用，平均 AI 成本上升，但单 stage 失败可独立重试（前端"重新解析"按钮按 stage 触发）
+- `GraphNode` / `GraphEdge` 工作表过渡期仍写入；GraphView.vue 重写延后到下一个独立 commit（**已完成 2026-07-29**: GraphView 改读 `cumulativeGraphApi`，两表随 migration `20260729000000_drop_graph_node_edge` 删除）
+- 老 v1/v2 blob 无 `version` 字段 → 前端检测后提示"数据格式过旧，请重新准备归档"
+
+详细 stage 边界与 `pendingArchiveData` v3 字段语义见 `docs/LOGIC.md` 中"Stage 边界 (v3)"章节。
+
+## Y3 标记：TimelineEvent 废弃（2026-07-24，仅标记，不实施）
+
+**Why**: TimelineEvent 在当前实现里有两个不可调和的设计缺陷 —
+- **强时间戳假设**：`position` 是 Y.DDDHH 浮点数（年.年内第N天第N小时），预设"故事存在一根绝对时间轴"。无时间设定、时间模糊（"几十年前"）、嵌套叙事、回忆、平行世界等类型下，AI 要么强行编一个无意义的 Y.DDDHH（污染），要么抽不出（丢信息）。
+- **全文注入反模式**：`chapters-generate.ts:74,103` 用 `findMany` 全量拉所有 TimelineEvent 塞进 prompt，与 Memory.semantic recall top-K 形成对比 —— 章节越多 prompt 越长，但绝大多数事件与"当前章节要写什么"无关。
+- **与 Memory 大量重叠**：Memory 已经是检索驱动、容忍模糊、自由文本，能覆盖 timeline 约 80% 的职责。多出来的 20%（"按时间排序的世界事件序列"）对很多故事类型无意义。
+
+**What**: v3 实施时一次性砍掉。具体动作待 v3 brainstorm 时定，目前候选两个方向：
+- A. **完全删除 TimelineEvent 表**，把"事件"作为 Memory 的一个 layer（`layer='event'`）。最简。
+- B. **保留但弱化**：`position` 改可选（null = 时间未定），`chapterNumber` 必填 + 可选 `narrativeTime`（"几天前"、"第一章时"）；注入改 top-K 检索共享 memory 路径。保留序列感。
+
+**Trade-off**:
+- A 失去"按绝对时间排序"能力，对无时间/模糊时间类故事无损失；对有绝对纪年类故事需先确认是否真的需要这能力。
+- B 向后兼容更好，但保留一个 schema 复杂度换 20% 功能。
+- 无论 A/B，都不再承担"独立于 memory 的世界事件索引"这一职责 —— 这是这次决策的核心。
+
+**How to apply**:
+- v2 期间**不动 TimelineEvent 表**（保留向后兼容，已有数据继续可用）。新增 prompt 注入、archive 抽取逻辑继续走 TimelineEvent。
+- **新功能不要依赖 TimelineEvent**（schema 已加 `/// @deprecated` 注释，IDE 会显示）。遇到"需要按时间排序的世界事件"的场景，先评估 semantic memory 是否能覆盖。
+- **前端不要写新 UI 引用 TimelineEvent**。ChapterEditor / ReviewingPanel 中已有的 timeline 视图保留到 v3。
+- v3 启动时连同其他候选（拆分 prepare-archive 工作流）一并规划 migration。
+- **触发条件**：v3 真正开始时。如果项目长期停留在 v2，timeline 也不应急于删除 —— 留着比砍了更安全（数据还在）。

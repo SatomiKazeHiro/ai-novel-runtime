@@ -1,309 +1,276 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createMockApp, callHandler } from '../setup.js'
 
-// Mock the prepareArchiveData service so the route does not hit the real
-// AI extraction path. The actual import in chapters.ts is:
-//   `import { extractAll, prepareArchiveData, type PendingArchiveData } from '../services/combined-extractor.js'`
-// Vitest resolves the mock via the same relative path the route uses.
-vi.mock('../../services/combined-extractor.js', () => ({
-  prepareArchiveData: vi.fn(),
-  extractAll: vi.fn()
+// v3 拆 prepare-archive 为 4 stage 端点 + cancel + archive。
+// 本文件仅覆盖 prepare-archive 端点的状态机预检 (400) 与 updateMany 锁已删除两点。
+// 4 stage 并行写 v3 shape 的副作用已在 prepare-archive-v3.test.ts 覆盖, 此处不重复。
+// cancel 与 archive 端点的专项测试分别落在 Task 3.3 / Task 4.2。
+vi.mock('../../services/stages/character-stage.js', () => ({
+  runCharacterStage: vi.fn()
+}))
+vi.mock('../../services/stages/memory-stage.js', () => ({
+  runMemoryStage: vi.fn()
+}))
+vi.mock('../../services/stages/plot-arc-stage.js', () => ({
+  runPlotArcStage: vi.fn()
+}))
+vi.mock('../../services/stages/graph-extract-stage.js', () => ({
+  runGraphExtractStage: vi.fn()
 }))
 
-import { prepareArchiveData } from '../../services/combined-extractor.js'
+import { runCharacterStage } from '../../services/stages/character-stage.js'
+import { runMemoryStage } from '../../services/stages/memory-stage.js'
+import { runPlotArcStage } from '../../services/stages/plot-arc-stage.js'
+import { runGraphExtractStage } from '../../services/stages/graph-extract-stage.js'
 
-const VALID_PENDING = {
-  memories: { memories: [], characterStates: [], timelineEvents: [], summary: null, timelinePosition: null },
-  graph: {
-    mergedGraph: { nodes: [], edges: [], timestamp: '2026-06-17T00:00:00.000Z' },
-    chapterGraph: { nodes: [], edges: [], timestamp: '2026-06-17T00:00:00.000Z' }
-  },
-  plotArcs: [],
-  meta: { extractedAt: '2026-06-17T00:00:00.000Z', chapterNumber: 1 }
+const ts = '2026-07-25T00:00:00.000Z'
+
+const baseChapter = {
+  id: 'c1',
+  storyId: 's1',
+  isSideStory: false,
+  content: 'a'.repeat(200),
+  outline: 'short outline',
+  number: 1,
+  parentChapterId: null,
+  pendingArchiveData: null,
+  chapterGraph: null,
+  cumulativeGraph: null
 }
 
-describe('prepare-archive route — error rollback', () => {
+/** 让 4 个 stage 都返回 success, 以便穿过 route 的并行段。 */
+function mockAllStagesSuccess() {
+  ;(runCharacterStage as any).mockResolvedValue({
+    status: 'success', result: { characterStates: [] }, completedAt: ts
+  })
+  ;(runMemoryStage as any).mockResolvedValue({
+    status: 'success',
+    result: {
+      mainEvents: [], sideEvents: [], emotions: [], foreshadowing: [],
+      relationshipChanges: [], scenes: [], summary: ''
+    },
+    completedAt: ts
+  })
+  ;(runPlotArcStage as any).mockResolvedValue({
+    status: 'success', result: { plotArcs: [] }, completedAt: ts
+  })
+  ;(runGraphExtractStage as any).mockResolvedValue({
+    status: 'success',
+    result: { chapterGraph: { nodes: [], edges: [], timestamp: ts } },
+    completedAt: ts
+  })
+}
+
+function makePrisma() {
+  return {
+    chapter: {
+      findUnique: vi.fn(),
+      findFirst: vi.fn().mockResolvedValue(null),
+      update: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 })
+    },
+    character: { findMany: vi.fn().mockResolvedValue([]) },
+    characterBranchState: { findMany: vi.fn().mockResolvedValue([]) },
+    plotArc: { findMany: vi.fn().mockResolvedValue([]) }
+  }
+}
+
+async function setupRoutes(mockPrisma: any) {
+  const { chapterRoutes } = await import('../../routes/chapters.js')
+  const built = createMockApp(mockPrisma)
+  await chapterRoutes(built.app)
+  return built.routes
+}
+
+describe('prepare-archive route — v3 status pre-check (no updateMany lock)', () => {
   let mockPrisma: any
   let routes: Record<string, any>
 
   beforeEach(async () => {
     vi.clearAllMocks()
-    mockPrisma = {
-      chapter: {
-        findUnique: vi.fn(),
-        update: vi.fn(),
-        // Task 14: prepare-archive now acquires an atomic updateMany status
-        // lock before calling prepareArchiveData. Default to success so the
-        // rollback test reaches the prepareArchiveData call.
-        updateMany: vi.fn().mockResolvedValue({ count: 1 })
-      }
-    }
-    const { chapterRoutes } = await import('../../routes/chapters.js')
-    const built = createMockApp(mockPrisma)
-    await chapterRoutes(built.app)
-    routes = built.routes
+    mockPrisma = makePrisma()
+    routes = await setupRoutes(mockPrisma)
   })
 
-  it('rolls back chapter.status to selected when prepareArchiveData throws', async () => {
+  it('returns 400 when chapter.status is archived (pre-check rejects archived)', async () => {
+    // v3: 状态机预检 — 非法入口在 findUnique 后立刻 400,
+    // 不依赖 updateMany 锁竞争路径。archived → 不可 prepare。
     mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'c1',
-      storyId: 's1',
-      status: 'selected',
-      isSideStory: false,
-      content: 'a'.repeat(200),
-      outline: 'short outline',
-      number: 1,
-      parentChapterId: null,
-      story: { id: 's1' }
-    })
-    mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'selected' })
-    ;(prepareArchiveData as any).mockRejectedValue(new Error('AI extraction failed'))
-
-    const result = await callHandler(
-      routes,
-      'POST',
-      '/api/chapters/:chapterId/prepare-archive',
-      undefined,
-      { chapterId: 'c1' }
-    )
-
-    // After a thrown prepareArchiveData, the route must attempt to roll
-    // chapter.status back to 'selected'. The rollback update is what the
-    // task is verifying — without it, the chapter is left in 'selected'
-    // (status update to 'reviewing' is AFTER prepareArchiveData in the
-    // current code, so without rollback it stays 'selected', which is
-    // actually fine — but the test guards future reordering where the
-    // status flip might move ahead of the AI call).
-    const rollbackCall = mockPrisma.chapter.update.mock.calls.find(
-      (call: any[]) =>
-        call[0]?.where?.id === 'c1' &&
-        call[0]?.data?.status === 'selected'
-    )
-    expect(rollbackCall).toBeDefined()
-
-    expect(result.status).toBe(500)
-    expect(result.body).toEqual(
-      expect.objectContaining({ success: false })
-    )
-  })
-})
-
-describe('prepare-archive route — re-prepare from reviewing (Q#11)', () => {
-  // 用户场景：上次 prepare-archive 失败把 chapter 卡在 reviewing +
-  // pendingArchiveData=null，唯一的恢复按钮是删除章节。现在需要支持从
-  // reviewing 状态重新触发 prepare-archive（覆盖 pendingArchiveData），
-  // 让用户修了 AI 配置后能继续归档，不用丢章节。
-
-  let mockPrisma: any
-  let routes: Record<string, any>
-
-  beforeEach(async () => {
-    vi.clearAllMocks()
-    mockPrisma = {
-      chapter: {
-        findUnique: vi.fn(),
-        update: vi.fn(),
-        updateMany: vi.fn().mockResolvedValue({ count: 1 })
-      }
-    }
-    const { chapterRoutes } = await import('../../routes/chapters.js')
-    const built = createMockApp(mockPrisma)
-    await chapterRoutes(built.app)
-    routes = built.routes
-  })
-
-  it('accepts reviewing state — does not 409 when chapter.status is reviewing', async () => {
-    // 旧的 updateMany 锁只接受 status='selected'。Reviewing 状态会拿到
-    // count=0，被 409 拒掉。新行为允许从 reviewing 重试。
-    mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'c1',
-      storyId: 's1',
-      status: 'reviewing',
-      isSideStory: false,
-      content: 'a'.repeat(200),
-      outline: 'short outline',
-      number: 1,
-      parentChapterId: null,
-      pendingArchiveData: null,
-      story: { id: 's1' }
-    })
-    ;(prepareArchiveData as any).mockResolvedValue(VALID_PENDING)
-
-    const result = await callHandler(
-      routes,
-      'POST',
-      '/api/chapters/:chapterId/prepare-archive',
-      undefined,
-      { chapterId: 'c1' }
-    )
-
-    // 路由成功路径用 bare return (Fastify 默认 200)，不显式 set status。
-    // 所以这里只看：不是 409 + body.success=true。
-    expect(result.status).not.toBe(409)
-    expect(result.body).toEqual(expect.objectContaining({ success: true }))
-  })
-
-  it('uses updateMany where status IN (selected, reviewing) — rejects only illegal statuses', async () => {
-    mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'c1',
-      storyId: 's1',
-      status: 'reviewing',
-      isSideStory: false,
-      content: 'a'.repeat(200),
-      outline: 'short outline',
-      number: 1,
-      parentChapterId: null,
-      pendingArchiveData: null,
-      story: { id: 's1' }
-    })
-    ;(prepareArchiveData as any).mockResolvedValue(VALID_PENDING)
-
-    await callHandler(
-      routes,
-      'POST',
-      '/api/chapters/:chapterId/prepare-archive',
-      undefined,
-      { chapterId: 'c1' }
-    )
-
-    // 锁必须接受 reviewing，否则 409
-    const lockCall = mockPrisma.chapter.updateMany.mock.calls.find(
-      (call: any[]) =>
-        call[0]?.where?.id === 'c1' &&
-        call[0]?.data?.status === 'reviewing'
-    )
-    expect(lockCall).toBeDefined()
-    // where.status 应该是 { in: [...] } 结构
-    expect(lockCall[0].where.status).toEqual({ in: ['selected', 'reviewing'] })
-  })
-
-  it('rejects status=generated with 400 — illegal transition caught by pre-check', async () => {
-    // 回归测试：其他状态（generated, scored, archived）仍要被拒掉。
-    // pre-check 在 updateMany 锁之前用 400 拦掉（更清晰的错误信息），
-    // 409 只用于并发竞态。
-    mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'c1',
-      storyId: 's1',
-      status: 'generated',
-      isSideStory: false,
-      content: 'a'.repeat(200),
-      outline: 'short outline',
-      number: 1,
-      parentChapterId: null,
-      story: { id: 's1' }
+      ...baseChapter,
+      status: 'archived'
     })
 
     const result = await callHandler(
-      routes,
-      'POST',
-      '/api/chapters/:chapterId/prepare-archive',
-      undefined,
-      { chapterId: 'c1' }
+      routes, 'POST', '/api/chapters/:chapterId/prepare-archive',
+      undefined, { chapterId: 'c1' }
     )
 
     expect(result.status).toBe(400)
+    expect(result.body.error).toContain('archived')
+
+    // 预检失败后不应有任何 chapter.update 调用 (无锁竞争, 无副作用)
+    expect(mockPrisma.chapter.update).not.toHaveBeenCalled()
+    // v3 彻底移除 updateMany 锁: 全程不应有 updateMany 调用
+    expect(mockPrisma.chapter.updateMany).not.toHaveBeenCalled()
   })
 
-  it('clears stale pendingArchiveData on re-prepare so the new payload can take over', async () => {
-    // 用户场景：reviewing + 有 stale/损坏的 pendingArchiveData。重试时
-    // 必须先清掉，否则会保留脏数据。updateMany 的 data 应该包含
-    // pendingArchiveData: null。
+  it('uses updateMany optimistic lock on final write-back (from draft)', async () => {
+    // v4: 最终写回用 updateMany 乐观锁（where status='reviewing'），防止覆盖 cancel。
+    mockAllStagesSuccess()
     mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'c1',
-      storyId: 's1',
-      status: 'reviewing',
-      isSideStory: false,
-      content: 'a'.repeat(200),
-      outline: 'short outline',
-      number: 1,
-      parentChapterId: null,
-      pendingArchiveData: '"stale"',
-      story: { id: 's1' }
+      ...baseChapter,
+      status: 'draft'
     })
-    ;(prepareArchiveData as any).mockResolvedValue(VALID_PENDING)
 
     await callHandler(
-      routes,
-      'POST',
-      '/api/chapters/:chapterId/prepare-archive',
-      undefined,
-      { chapterId: 'c1' }
+      routes, 'POST', '/api/chapters/:chapterId/prepare-archive',
+      undefined, { chapterId: 'c1' }
     )
 
-    const lockCall = mockPrisma.chapter.updateMany.mock.calls.find(
-      (call: any[]) => call[0]?.where?.id === 'c1'
-    )
-    expect(lockCall).toBeDefined()
-    expect(lockCall[0].data.pendingArchiveData).toBeNull()
+    expect(mockPrisma.chapter.updateMany).toHaveBeenCalledWith({
+      where: { id: 'c1', status: 'reviewing' },
+      data: expect.objectContaining({ status: 'reviewing', pendingArchiveData: expect.any(String) })
+    })
   })
 
-  it('rolls back to reviewing (not selected) when re-prepare from reviewing fails', async () => {
-    // 关键：不破坏 reviewing 状态的"可重试"语义。如果回滚总是 selected，
-    // 用户就只能在 selected 状态重试，无法从 reviewing 直接 retry。
+  it('uses updateMany optimistic lock when re-preparing from reviewing', async () => {
+    mockAllStagesSuccess()
     mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'c1',
-      storyId: 's1',
+      ...baseChapter,
       status: 'reviewing',
-      isSideStory: false,
-      content: 'a'.repeat(200),
-      outline: 'short outline',
-      number: 1,
-      parentChapterId: null,
-      pendingArchiveData: null,
-      story: { id: 's1' }
+      pendingArchiveData: '"stale"'
     })
-    mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'reviewing' })
-    ;(prepareArchiveData as any).mockRejectedValue(new Error('AI extraction still failing'))
 
     await callHandler(
-      routes,
-      'POST',
-      '/api/chapters/:chapterId/prepare-archive',
-      undefined,
-      { chapterId: 'c1' }
+      routes, 'POST', '/api/chapters/:chapterId/prepare-archive',
+      undefined, { chapterId: 'c1' }
     )
 
-    // 回滚必须把 status 改回 'reviewing'（原状态），不是 'selected'
-    const rollbackCall = mockPrisma.chapter.update.mock.calls.find(
+    expect(mockPrisma.chapter.updateMany).toHaveBeenCalledWith({
+      where: { id: 'c1', status: 'reviewing' },
+      data: expect.objectContaining({ status: 'reviewing', pendingArchiveData: expect.any(String) })
+    })
+  })
+
+  it('clears stale pendingArchiveData via update, then writes back via updateMany optimistic lock', async () => {
+    // re-prepare: 第一波 update 清 pendingArchiveData（无锁），最终写回用 updateMany 乐观锁。
+    mockAllStagesSuccess()
+    mockPrisma.chapter.findUnique.mockResolvedValue({
+      ...baseChapter,
+      status: 'reviewing',
+      pendingArchiveData: '"stale"'
+    })
+
+    await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/prepare-archive',
+      undefined, { chapterId: 'c1' }
+    )
+
+    // 第一波 update 应包含 pendingArchiveData: null + status: reviewing
+    const clearCall = mockPrisma.chapter.update.mock.calls.find(
       (call: any[]) =>
         call[0]?.where?.id === 'c1' &&
-        (call[0]?.data?.status === 'reviewing' || call[0]?.data?.status === 'selected')
+        call[0]?.data?.pendingArchiveData === null
     )
-    expect(rollbackCall).toBeDefined()
-    expect(rollbackCall[0].data.status).toBe('reviewing')
-  })
+    expect(clearCall).toBeDefined()
+    expect(clearCall[0].data.status).toBe('reviewing')
 
-  it('rolls back to selected (not reviewing) when first-time prepare fails from selected', async () => {
-    // 回归测试：原始行为 — selected → 失败 → 回滚 selected。如果新逻辑
-    // 错误地总是用 'reviewing' 当 preLockStatus 默认值，这个测试会失败。
-    mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'c1',
-      storyId: 's1',
-      status: 'selected',
-      isSideStory: false,
-      content: 'a'.repeat(200),
-      outline: 'short outline',
-      number: 1,
-      parentChapterId: null,
-      story: { id: 's1' }
-    })
-    mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'selected' })
-    ;(prepareArchiveData as any).mockRejectedValue(new Error('AI extraction failed'))
-
-    await callHandler(
-      routes,
-      'POST',
-      '/api/chapters/:chapterId/prepare-archive',
-      undefined,
-      { chapterId: 'c1' }
-    )
-
-    const rollbackCall = mockPrisma.chapter.update.mock.calls.find(
+    // 最终写回走 updateMany 乐观锁
+    const finalUpdateCall = mockPrisma.chapter.updateMany.mock.calls.find(
       (call: any[]) =>
         call[0]?.where?.id === 'c1' &&
-        (call[0]?.data?.status === 'reviewing' || call[0]?.data?.status === 'selected')
+        typeof call[0]?.data?.pendingArchiveData === 'string'
     )
-    expect(rollbackCall).toBeDefined()
-    expect(rollbackCall[0].data.status).toBe('selected')
+    expect(finalUpdateCall).toBeDefined()
+    expect(finalUpdateCall[0].data.pendingArchiveData).not.toBe('')
+    expect(JSON.parse(finalUpdateCall[0].data.pendingArchiveData).version).toBe(4)
+  })
+
+  it('accepts draft state without 409 — no updateMany race barrier', async () => {
+    // 反例: 旧版本曾用 409 表示 updateMany count=0 (并发抢走)。
+    // v3 删掉了 lock, 也不再有 409 path; 错误的入口状态才返回 400。
+    mockAllStagesSuccess()
+    mockPrisma.chapter.findUnique.mockResolvedValue({
+      ...baseChapter,
+      status: 'draft'
+    })
+
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/prepare-archive',
+      undefined, { chapterId: 'c1' }
+    )
+
+    expect(result.status).not.toBe(409)
+  })
+})
+
+describe('prepare-archive route — v3 short-circuits', () => {
+  let mockPrisma: any
+  let routes: Record<string, any>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockPrisma = makePrisma()
+    routes = await setupRoutes(mockPrisma)
+  })
+
+  it('returns 400 when content is shorter than outline without invoking stages or updates', async () => {
+    mockPrisma.chapter.findUnique.mockResolvedValue({
+      ...baseChapter,
+      status: 'draft',
+      content: 'short',
+      outline: 'a longer outline'
+    })
+
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/prepare-archive',
+      undefined, { chapterId: 'c1' }
+    )
+
+    expect(result.status).toBe(400)
+    expect(runCharacterStage).not.toHaveBeenCalled()
+    expect(runMemoryStage).not.toHaveBeenCalled()
+    expect(runPlotArcStage).not.toHaveBeenCalled()
+    expect(runGraphExtractStage).not.toHaveBeenCalled()
+    expect(mockPrisma.chapter.update).not.toHaveBeenCalled()
+    expect(mockPrisma.chapter.updateMany).not.toHaveBeenCalled()
+  })
+
+  it('side story short-circuits to archived without invoking stages', async () => {
+    mockPrisma.chapter.findUnique.mockResolvedValue({
+      ...baseChapter,
+      status: 'draft',
+      isSideStory: true
+    })
+
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/prepare-archive',
+      undefined, { chapterId: 'c1' }
+    )
+
+    expect(result.body).toEqual(expect.objectContaining({
+      success: true,
+      data: expect.objectContaining({ sideStory: true, status: 'archived' })
+    }))
+    const updateCall = mockPrisma.chapter.update.mock.calls[0]
+    expect(updateCall[0].data.status).toBe('archived')
+  })
+
+  it('chapter with no content short-circuits to archived without invoking stages', async () => {
+    mockPrisma.chapter.findUnique.mockResolvedValue({
+      ...baseChapter,
+      status: 'draft',
+      content: ''
+    })
+
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/prepare-archive',
+      undefined, { chapterId: 'c1' }
+    )
+
+    expect(result.body).toEqual(expect.objectContaining({
+      success: true,
+      data: expect.objectContaining({ noContent: true, status: 'archived' })
+    }))
   })
 })

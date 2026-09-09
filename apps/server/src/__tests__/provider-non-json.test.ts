@@ -192,4 +192,74 @@ describe('OpenAICompatibleProvider — non-JSON response diagnostics', () => {
       {}
     )).rejects.toThrow(/deepseek API error \(503\): Service Unavailable/)
   })
+
+  it('prefers content over reasoning_content when both are present', async () => {
+    // reasoning_content 不再 fallback (4KB 阈值清理), content 优先; 但
+    // reasoning_content 仍可能被上游填, extractContent 只读 content 字段,
+    // 不应该被 reasoning_content 污染。
+    mockFetch(200, 'application/json', JSON.stringify({
+      choices: [{
+        message: {
+          content: '正常 content 输出',
+          reasoning_content: '{"should":"not","be":"used"}'
+        },
+        finish_reason: 'stop'
+      }]
+    }))
+
+    const provider = new OpenAICompatibleProvider({
+      name: 'deepseek', apiKey: 'sk-test', model: 'deepseek-chat'
+    })
+
+    const content = await provider.generateWithRuntime(
+      { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
+      {}
+    )
+    expect(content).toBe('正常 content 输出')
+  })
+
+  it('throws empty content when content is empty even if reasoning_content has data (no fallback)', async () => {
+    // 4KB 阈值清理后: reasoning_content 不再 fallback, content 为空就抛
+    // "empty content" 错。thinking 三态配置已在请求端尽量阻止上游产生
+    // reasoning_content; 这里不再做兜底, 让上层拿到明确错误 (而不是
+    // 把"纯思考过程"误当作答案回退)。
+    mockFetch(200, 'application/json', JSON.stringify({
+      choices: [{
+        message: {
+          content: '',
+          reasoning_content: '{"memories":[{"content":"测试记忆","originUid":"NEW","importance":5,"type":"event"}]}'
+        },
+        finish_reason: 'stop'
+      }],
+      model: 'deepseek-v4-flash'
+    }))
+
+    const provider = new OpenAICompatibleProvider({
+      name: 'deepseek', apiKey: 'sk-test', model: 'deepseek-v4-flash'
+    })
+
+    await expect(provider.generateWithRuntime(
+      { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
+      {}
+    )).rejects.toThrow(/empty content.*finish_reason=stop/)
+  })
+
+  it('still throws empty-content error when both content and reasoning_content are empty', async () => {
+    // 回归测试: 两个字段都为空时, 仍然要抛诊断错误 (上游真正故障)。
+    mockFetch(200, 'application/json', JSON.stringify({
+      choices: [{
+        message: { content: '', reasoning_content: '' },
+        finish_reason: 'stop'
+      }]
+    }))
+
+    const provider = new OpenAICompatibleProvider({
+      name: 'deepseek', apiKey: 'sk-test', model: 'deepseek-v4-flash'
+    })
+
+    await expect(provider.generateWithRuntime(
+      { systemMessage: 'sys', userMessage: 'usr', meta: { systemTokens: 1, userTokens: 1, totalTokens: 2 } },
+      {}
+    )).rejects.toThrow(/empty content.*finish_reason=stop/)
+  })
 })

@@ -81,19 +81,15 @@ const allTasks = ref<any[]>([])
 
 const selectedTaskIds = ref<Record<string, string | null>>({
   generation: null,
-  scoring: null,
   memory: null,
   graph: null,
-  timeline: null,
   rewrite: null
 })
 
 const workerConfigs = [
   { workerType: 'generation', label: 'Generation（章节生成）' },
-  { workerType: 'scoring', label: 'Scoring（内容评分）' },
   { workerType: 'memory', label: 'Memory（记忆提取）' },
   { workerType: 'graph', label: 'Graph（图谱提取）' },
-  { workerType: 'timeline', label: 'Timeline（时间线提取）' },
   { workerType: 'rewrite', label: 'Rewrite（改写润色）' }
 ]
 

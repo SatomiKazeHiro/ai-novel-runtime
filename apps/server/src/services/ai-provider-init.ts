@@ -11,7 +11,8 @@ export async function getProviderById(prisma: any, id: string) {
       baseUrl: config.baseUrl || undefined,
       model: config.model,
       maxTokens: config.maxTokens,
-      temperature: config.temperature
+      temperature: config.temperature,
+      thinking: config.thinking ?? 'auto'
     }),
     config
   }
@@ -90,6 +91,7 @@ export async function initAiProviderConfig(app: FastifyInstance) {
 
   if (existing) {
     // 始终从 .env 同步 apiKey，方便修改 Key 后重启生效
+    // 注意：thinking 字段是用户偏好，不随 .env 同步覆盖
     if (existing.apiKey !== apiKey) {
       await app.prisma.aiProviderConfig.update({
         where: { id: existing.id },
@@ -112,6 +114,7 @@ export async function initAiProviderConfig(app: FastifyInstance) {
       contextLength,
       maxTokens: 4096,
       temperature: 0.7,
+      thinking: 'auto',
       isDefault: true
     }
   })

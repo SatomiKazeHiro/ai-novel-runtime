@@ -9,8 +9,19 @@ const AI_PROVIDER_SAFE_SELECT = {
   id: true, name: true, model: true, baseUrl: true,
   isDefault: true, remarks: true, type: true,
   maxTokens: true, temperature: true, contextLength: true,
+  thinking: true,
   createdAt: true, updatedAt: true
 } as const
+
+const THINKING_VALUES = ['auto', 'enabled', 'disabled'] as const
+type ThinkingMode = (typeof THINKING_VALUES)[number]
+
+function normalizeThinking(value: unknown): ThinkingMode {
+  if (typeof value !== 'string' || !(THINKING_VALUES as readonly string[]).includes(value)) {
+    throw new Error(`thinking 必须是 ${THINKING_VALUES.join(' | ')}`)
+  }
+  return value as ThinkingMode
+}
 
 export async function aiProviderRoutes(app: FastifyInstance) {
   // GET /api/ai-providers — 列表（apiKey 排除以防泄漏）
@@ -37,6 +48,12 @@ export async function aiProviderRoutes(app: FastifyInstance) {
   // POST /api/ai-providers — 创建
   app.post('/api/ai-providers', async (request, reply) => {
     const body = request.body as any
+    let thinking: ThinkingMode
+    try {
+      thinking = normalizeThinking(body.thinking ?? 'auto')
+    } catch (err: any) {
+      return reply.status(400).send({ success: false, error: err.message })
+    }
     const data: any = {
       name: body.name,
       apiKey: body.apiKey || null,
@@ -45,6 +62,7 @@ export async function aiProviderRoutes(app: FastifyInstance) {
       contextLength: body.contextLength ?? 64000,
       maxTokens: body.maxTokens ?? 4096,
       temperature: body.temperature ?? 0.7,
+      thinking,
       isDefault: body.isDefault ?? false,
       remarks: body.remarks || null
     }
@@ -87,6 +105,13 @@ export async function aiProviderRoutes(app: FastifyInstance) {
     if (body.temperature !== undefined) data.temperature = body.temperature
     if (body.isDefault !== undefined) data.isDefault = body.isDefault
     if (body.remarks !== undefined) data.remarks = body.remarks || null
+    if (body.thinking !== undefined) {
+      try {
+        data.thinking = normalizeThinking(body.thinking)
+      } catch (err: any) {
+        return reply.status(400).send({ success: false, error: err.message })
+      }
+    }
 
     // 如果设为默认，取消其他默认
     if (data.isDefault) {
@@ -134,7 +159,7 @@ export async function aiProviderRoutes(app: FastifyInstance) {
   // POST /api/ai-providers/test — 检测连通性
   app.post('/api/ai-providers/test', async (request, reply) => {
     const body = request.body as any
-    const { name, apiKey, baseUrl, model, id } = body
+    const { name, apiKey, baseUrl, model, id, thinking } = body
 
     if (!name || !model) {
       return reply.status(400).send({ success: false, error: '模型商和模型名称不能为空' })
@@ -156,8 +181,23 @@ export async function aiProviderRoutes(app: FastifyInstance) {
       return reply.status(400).send({ success: false, error: 'API Key 未配置' })
     }
 
+    let normalizedThinking: ThinkingMode = 'auto'
+    if (thinking !== undefined) {
+      try {
+        normalizedThinking = normalizeThinking(thinking)
+      } catch (err: any) {
+        return reply.status(400).send({ success: false, error: err.message })
+      }
+    }
+
     try {
-      const provider = createProvider({ name, apiKey: finalApiKey, baseUrl: baseUrl || undefined, model })
+      const provider = createProvider({
+        name,
+        apiKey: finalApiKey,
+        baseUrl: baseUrl || undefined,
+        model,
+        thinking: normalizedThinking
+      })
       const result = await provider.testConnection()
       return result
     } catch (err: any) {

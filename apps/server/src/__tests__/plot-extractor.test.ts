@@ -1,277 +1,113 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { commitPlotArcWrites } from '../services/plot-extractor.js'
-import type { PendingPlotArcWrite } from '@novel-runtime/shared'
+import { describe, it, expect, vi } from 'vitest'
+import { commitPlotArcWrites, getActivePlotArcs } from '../services/plot-extractor.js'
+import type { PlotArcWriteRow } from '../services/plot-consolidator.js'
 
-/**
- * commitPlotArcWrites — Jaccard 兜底 + lastTouchedChapter 刷新 + stale 检测
- * (2026-06-27 P2 引入)
- *
- * 数据流: plot-consolidator → PendingPlotArcWrite[] → commitPlotArcWrites → DB
- *
- * 测试用 mock tx 而非真实 Prisma (Prisma SQLite 测试需要 schema generate + migrate,
- * 见 apps/server/vitest.config.ts 的现有测试惯例 — 优先 mock)。
- */
-
-function buildTx(existingArcs: Array<{ id: string; name: string; summary?: string | null; status?: string; lastTouchedChapter?: number | null }> = []) {
-  const allArcs: any[] = existingArcs.map((a, i) => ({
-    id: a.id,
-    name: a.name,
-    summary: a.summary ?? '',
-    status: a.status ?? 'active',
-    lastTouchedChapter: a.lastTouchedChapter ?? null,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    _idx: i
-  }))
-
-  const tx: any = {
-    plotArc: {
-      findMany: vi.fn().mockImplementation((args: any) => {
-        // 第一次调用: Jaccard existing 列表 (select id/name/summary)
-        // 第二次调用: stale 候选 (where status in [active, resolving])
-        if (args?.select && Object.keys(args.select).every(k => ['id', 'name', 'summary'].includes(k))) {
-          return Promise.resolve(allArcs.map(a => ({ id: a.id, name: a.name, summary: a.summary })))
-        }
-        // 复刻 Prisma where.status.in 过滤 (stale 扫描只查 active/resolving)
-        const allowedStatuses: string[] | undefined = args?.where?.status?.in
-        const filtered = allowedStatuses
-          ? allArcs.filter(a => allowedStatuses.includes(a.status))
-          : allArcs
-        return Promise.resolve(filtered)
-      }),
-      create: vi.fn().mockImplementation((args: any) => {
-        const created = {
-          id: `new-${allArcs.length}`,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          _idx: allArcs.length,
-          ...args.data
-        }
-        allArcs.push(created)
-        return Promise.resolve(created)
-      }),
-      update: vi.fn().mockImplementation((args: any) => {
-        const target = allArcs.find(a => a.id === args.where.id)
-        if (!target) throw new Error(`Mock: arc ${args.where.id} not found`)
-        Object.assign(target, args.data)
-        return Promise.resolve(target)
-      })
-    }
-  }
-  return { tx, allArcs }
-}
-
-function buildWrite(overrides: Partial<PendingPlotArcWrite> = {}): PendingPlotArcWrite {
+function makeTx(arcs: any[] = []) {
   return {
-    storyId: 's1',
-    name: '新弧线',
-    type: 'side',
-    status: 'active',
-    progress: 5,
-    stages: '[]',
-    currentStage: '初始',
-    nextGoal: '待推进',
-    unresolved: '[]',
-    summary: '新弧线摘要',
-    isNew: true,
-    ...overrides
-  }
+    plotArc: {
+      create: vi.fn().mockResolvedValue({ id: 'new-arc-id' }),
+      update: vi.fn().mockResolvedValue({}),
+      findMany: vi.fn().mockResolvedValue(arcs)
+    },
+    plotArcProgressPoint: { create: vi.fn().mockResolvedValue({}) }
+  } as any
 }
 
-// ============================================================================
-// Jaccard 兜底: 相似 new arc 写入 similarToExistingIds
-// ============================================================================
-
-describe('commitPlotArcWrites — Jaccard 兜底 (new arc 相似度)', () => {
-  beforeEach(() => vi.clearAllMocks())
-
-  it('new arc name 与 existing 高度相似 (Jaccard ≥ 0.7) → similarToExistingIds 写入 existing id', async () => {
-    // 用长文本保证 BPE token 重叠率足够高 (cl100k_base 中文短串易触发 < 0.5,
-    // 见 spec §11 风险表 "Jaccard 短字符串不稳定"; 此处用 > 30 token 稳定测)
-    const existingSummary = 'The protagonist enters the ancient mountain temple to seek the lost cultivation manual and encounters the guardian spirit'
-    const newSummary = 'The protagonist enters the ancient mountain temple to seek the lost cultivation manual and fights the guardian spirit in a fierce battle'
-    const { tx, allArcs } = buildTx([
-      { id: 'existing-1', name: 'Mountain Cultivation Journey', summary: existingSummary }
-    ])
-
-    await commitPlotArcWrites(tx, 10, [buildWrite({
-      name: 'Mountain Cultivation Journey',
-      summary: newSummary
-    })])
-
-    const created = allArcs.find(a => a.name === 'Mountain Cultivation Journey' && a._idx === 1)
-    expect(created).toBeDefined()
-    expect(JSON.parse(created!.similarToExistingIds)).toContain('existing-1')
+describe('commitPlotArcWrites', () => {
+  it('create → 建弧线 + 建推进点', async () => {
+    const tx = makeTx()
+    const writes: PlotArcWriteRow[] = [
+      { storyId: 's1', arcId: null, name: 'X', isMainline: true, content: 'c', isEnd: false, action: 'create' }
+    ]
+    await commitPlotArcWrites(tx, 's1', 3, writes)
+    expect(tx.plotArc.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ firstChapterNumber: 3, status: 'active', name: 'X', isMainline: true })
+    })
+    expect(tx.plotArcProgressPoint.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ arcId: 'new-arc-id', chapterNumber: 3, content: 'c', isEnd: false })
+    })
   })
 
-  it('new arc name 完全无关 → similarToExistingIds = []', async () => {
-    const { tx, allArcs } = buildTx([
-      { id: 'existing-1', name: 'Mountain Cultivation Journey', summary: 'The protagonist trains in the ancient temple' }
-    ])
-
-    await commitPlotArcWrites(tx, 10, [buildWrite({
-      name: 'Hidden Demonic Cult Revival',
-      summary: 'The villain sect resurfaces with a new dark lord who commands shadow armies'
-    })])
-
-    const created = allArcs[allArcs.length - 1]
-    expect(JSON.parse(created.similarToExistingIds)).toEqual([])
+  it('update → 建推进点（不建弧线）', async () => {
+    const tx = makeTx()
+    const writes: PlotArcWriteRow[] = [
+      { storyId: 's1', arcId: 'a1', name: 'X', isMainline: true, content: '推进', isEnd: false, action: 'update' }
+    ]
+    await commitPlotArcWrites(tx, 's1', 5, writes)
+    expect(tx.plotArc.create).not.toHaveBeenCalled()
+    expect(tx.plotArcProgressPoint.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ arcId: 'a1', chapterNumber: 5, content: '推进' })
+    })
   })
 
-  it('new arc name 相似但 summary 完全不同 → Jaccard < 0.7 不命中', async () => {
-    const { tx, allArcs } = buildTx([
-      { id: 'existing-1', name: 'Mountain Cultivation Journey', summary: 'The protagonist trains in the ancient temple seeking the lost manual' }
-    ])
-
-    // name 同但 summary 几乎完全无关 → Jaccard 主要看 token 重合会 < 0.7
-    await commitPlotArcWrites(tx, 10, [buildWrite({
-      name: 'Mountain Cultivation Journey',
-      summary: 'A completely different storyline about a wandering merchant selling exotic goods in the marketplace'
-    })])
-
-    const created = allArcs[allArcs.length - 1]
-    expect(JSON.parse(created.similarToExistingIds)).toEqual([])
-  })
-})
-
-// ============================================================================
-// lastTouchedChapter 刷新: 仅 AI update 路径
-// ============================================================================
-
-describe('commitPlotArcWrites — lastTouchedChapter 刷新', () => {
-  beforeEach(() => vi.clearAllMocks())
-
-  it('existing arc + source=ai-update → update 路径刷 lastTouchedChapter=chapterNumber', async () => {
-    const { tx, allArcs } = buildTx([
-      { id: 'existing-1', name: '推进弧线', summary: 'x', lastTouchedChapter: 5 }
-    ])
-
-    await commitPlotArcWrites(tx, 10, [buildWrite({
-      isNew: false,
-      existingId: 'existing-1',
-      name: '推进弧线',
-      summary: '本章推进',
-      source: 'ai-update'
-    })])
-
-    expect(allArcs.find(a => a.id === 'existing-1')!.lastTouchedChapter).toBe(10)
+  it('close → 标记关闭 + closedBy=ai-similar', async () => {
+    const tx = makeTx()
+    const writes: PlotArcWriteRow[] = [
+      { storyId: 's1', arcId: 'a1', name: '', isMainline: false, content: '', isEnd: false, action: 'close', targetArcId: 'a2' }
+    ]
+    await commitPlotArcWrites(tx, 's1', 5, writes)
+    expect(tx.plotArc.update).toHaveBeenCalledWith({
+      where: { id: 'a1' },
+      data: { status: 'closed', closedBy: 'ai-similar', closedTargetArcId: 'a2' }
+    })
   })
 
-  it('existing arc + source=carry-forward → update 路径不刷 lastTouchedChapter', async () => {
-    const { tx, allArcs } = buildTx([
-      { id: 'existing-1', name: '未推进', summary: 'x', lastTouchedChapter: 5 }
+  it('isEnd 且 >5 章无更新 → 状态推导为 completed', async () => {
+    const tx = makeTx([
+      { id: 'a1', closedBy: null, firstChapterNumber: 1, status: 'active', progressPoints: [{ chapterNumber: 3, isEnd: true }] }
     ])
-
-    await commitPlotArcWrites(tx, 10, [buildWrite({
-      isNew: false,
-      existingId: 'existing-1',
-      name: '未推进',
-      summary: 'x',
-      source: 'carry-forward'
-    })])
-
-    expect(allArcs.find(a => a.id === 'existing-1')!.lastTouchedChapter).toBe(5)
+    await commitPlotArcWrites(tx, 's1', 10, [])
+    expect(tx.plotArc.update).toHaveBeenCalledWith({ where: { id: 'a1' }, data: { status: 'completed' } })
   })
 
-  it('new arc → 创建时 lastTouchedChapter = chapterNumber', async () => {
-    const { tx, allArcs } = buildTx([])
+  it('无 isEnd 且 >5 章无更新 → 状态推导为 inactive', async () => {
+    const tx = makeTx([
+      { id: 'a1', closedBy: null, firstChapterNumber: 1, status: 'active', progressPoints: [{ chapterNumber: 3, isEnd: false }] }
+    ])
+    await commitPlotArcWrites(tx, 's1', 10, [])
+    expect(tx.plotArc.update).toHaveBeenCalledWith({ where: { id: 'a1' }, data: { status: 'inactive' } })
+  })
 
-    await commitPlotArcWrites(tx, 10, [buildWrite({
-      isNew: true,
-      name: '全新弧线'
-    })])
-
-    expect(allArcs[allArcs.length - 1].lastTouchedChapter).toBe(10)
+  it('closedBy 有值 → 跳过状态推导（终态）', async () => {
+    const tx = makeTx([
+      { id: 'a1', closedBy: 'user', firstChapterNumber: 1, status: 'closed', progressPoints: [] }
+    ])
+    await commitPlotArcWrites(tx, 's1', 10, [])
+    expect(tx.plotArc.update).not.toHaveBeenCalled()
   })
 })
 
-// ============================================================================
-// stale 检测: 上次推进距今 > STALE_THRESHOLD 自动转 stale
-// ============================================================================
-
-describe('commitPlotArcWrites — stale 自动检测', () => {
-  beforeEach(() => vi.clearAllMocks())
-
-  it('active arc 上次推进在 chapter 5, 当前 11 → 转 stale (差 6 > 5)', async () => {
-    const { tx, allArcs } = buildTx([
-      { id: 'existing-1', name: '老弧线', status: 'active', lastTouchedChapter: 5 }
-    ])
-
-    await commitPlotArcWrites(tx, 11, [])
-
-    expect(allArcs.find(a => a.id === 'existing-1')!.status).toBe('stale')
+describe('getActivePlotArcs', () => {
+  it('只注入 active 弧线，含推进点集合', async () => {
+    const prisma = {
+      plotArc: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'a1', name: '李凡修仙', isMainline: true,
+            progressPoints: [
+              { chapterNumber: 1, content: '拜入玄天宗', isEnd: false },
+              { chapterNumber: 5, content: '突破练气', isEnd: false }
+            ]
+          }
+        ])
+      }
+    }
+    const text = await getActivePlotArcs(prisma, 's1')
+    expect(prisma.plotArc.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { storyId: 's1', status: 'active' } }))
+    expect(text).toContain('[主线] 李凡修仙')
+    expect(text).toContain('第1章: 拜入玄天宗')
+    expect(text).toContain('第5章: 突破练气')
   })
 
-  it('active arc 上次推进在 chapter 7, 当前 11 → 不转 stale (差 4 ≤ 5)', async () => {
-    const { tx, allArcs } = buildTx([
-      { id: 'existing-1', name: '活跃', status: 'active', lastTouchedChapter: 7 }
-    ])
-
-    await commitPlotArcWrites(tx, 11, [])
-
-    expect(allArcs.find(a => a.id === 'existing-1')!.status).toBe('active')
-  })
-
-  it('completed arc 上次推进在 chapter 1, 当前 11 → 不转 stale (completed 不参与扫描)', async () => {
-    const { tx, allArcs } = buildTx([
-      { id: 'existing-1', name: '已完结', status: 'completed', lastTouchedChapter: 1 }
-    ])
-
-    await commitPlotArcWrites(tx, 11, [])
-
-    expect(allArcs.find(a => a.id === 'existing-1')!.status).toBe('completed')
-  })
-
-  it('active arc lastTouchedChapter=null → 视为 0, chapter=11 > 5 → 转 stale', async () => {
-    const { tx, allArcs } = buildTx([
-      { id: 'existing-1', name: '未启动', status: 'active', lastTouchedChapter: null }
-    ])
-
-    await commitPlotArcWrites(tx, 11, [])
-
-    expect(allArcs.find(a => a.id === 'existing-1')!.status).toBe('stale')
-  })
-
-  it('已是 stale → 不重复触发 (扫描 where status in [active, resolving])', async () => {
-    const { tx, allArcs } = buildTx([
-      { id: 'existing-1', name: '已沉寂', status: 'stale', lastTouchedChapter: 1 }
-    ])
-
-    await commitPlotArcWrites(tx, 11, [])
-
-    // 已有 stale 不应被 update
-    expect(tx.plotArc.update).not.toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'existing-1' } })
-    )
-  })
-})
-
-// ============================================================================
-// closed 字段透传
-// ============================================================================
-
-describe('commitPlotArcWrites — closed 字段透传', () => {
-  beforeEach(() => vi.clearAllMocks())
-
-  it('AI update status=closed + closedReason=duplicate + closedTargetArcId → 写入', async () => {
-    const { tx, allArcs } = buildTx([
-      { id: 'existing-target', name: '保留条', summary: 'x', status: 'active', lastTouchedChapter: 5 },
-      { id: 'existing-closed', name: '重复条', summary: 'x', status: 'active', lastTouchedChapter: 5 }
-    ])
-
-    await commitPlotArcWrites(tx, 10, [buildWrite({
-      isNew: false,
-      existingId: 'existing-closed',
-      name: '重复条',
-      status: 'closed',
-      closedReason: 'duplicate',
-      closedTargetArcId: 'existing-target',
-      source: 'ai-update'
-    })])
-
-    const closed = allArcs.find(a => a.id === 'existing-closed')!
-    expect(closed.status).toBe('closed')
-    expect(closed.closedReason).toBe('duplicate')
-    expect(closed.closedTargetArcId).toBe('existing-target')
+  it('isEnd 推进点标注「可能到尾声」', async () => {
+    const prisma = {
+      plotArc: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 'a1', name: 'X', isMainline: false, progressPoints: [{ chapterNumber: 3, content: '收尾', isEnd: true }] }
+        ])
+      }
+    }
+    const text = await getActivePlotArcs(prisma, 's1')
+    expect(text).toContain('（可能到尾声）')
   })
 })

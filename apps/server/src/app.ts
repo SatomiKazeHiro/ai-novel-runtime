@@ -11,16 +11,14 @@ import { storyRoutes } from './routes/stories.js'
 import { coverRoutes } from './routes/covers.js'
 import { characterRoutes } from './routes/characters.js'
 import { loreRoutes } from './routes/lore.js'
-import { timelineRoutes } from './routes/timeline.js'
 import { chapterRoutes } from './routes/chapters.js'
 import { promptLogRoutes } from './routes/prompt-logs.js'
 import { draftRoutes } from './routes/drafts.js'
-import { graphRoutes } from './routes/graph.js'
 import { memoryRoutes } from './routes/memories.js'
-import { scoreRoutes } from './routes/scores.js'
 import { runtimeProfileRoutes } from './routes/runtime-profile.js'
 import { workerTaskRoutes } from './routes/worker-task.js'
 import { aiProviderRoutes } from './routes/ai-provider.js'
+import { plotArcRoutes } from './routes/plot-arcs.js'
 import { initAiProviderConfig } from './services/ai-provider-init.js'
 import { initRuntimeProfile } from './services/runtime-profile-init.js'
 import { initWorkerTasks } from './services/worker-task-init.js'
@@ -72,16 +70,14 @@ export async function buildApp() {
   await app.register(coverRoutes)
   await app.register(characterRoutes)
   await app.register(loreRoutes)
-  await app.register(timelineRoutes)
   await app.register(chapterRoutes)
   await app.register(draftRoutes)
-  await app.register(graphRoutes)
   await app.register(memoryRoutes)
-  await app.register(scoreRoutes)
   await app.register(runtimeProfileRoutes)
   await app.register(workerTaskRoutes)
   await app.register(aiProviderRoutes)
   await app.register(promptLogRoutes)
+  await app.register(plotArcRoutes)
 
   // Global error handler
   app.setErrorHandler((error: any, request, reply) => {

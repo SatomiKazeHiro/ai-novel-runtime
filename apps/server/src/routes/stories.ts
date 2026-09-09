@@ -86,8 +86,7 @@ export async function storyRoutes(app: FastifyInstance) {
       include: {
         chapters: { orderBy: { number: 'asc' } },
         characters: true,
-        loreItems: true,
-        timelineEvents: { orderBy: { position: 'asc' } }
+        loreItems: true
       }
     })
     if (!story) return reply.status(404).send({ success: false, error: 'Story not found' })
@@ -167,19 +166,6 @@ export async function storyRoutes(app: FastifyInstance) {
       }
       return reply.status(500).send({ success: false, error: err.message || 'Internal Server Error' })
     }
-  })
-
-  // GET /stories/:id/plot-arcs
-  app.get('/:id/plot-arcs', async (request, reply) => {
-    const { id } = request.params as any
-    const arcs = await app.prisma.plotArc.findMany({
-      where: { storyId: id },
-      orderBy: [
-        { type: 'asc' },
-        { progress: 'desc' }
-      ]
-    })
-    return { success: true, data: arcs }
   })
 
   // DELETE /stories/:id

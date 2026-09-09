@@ -40,7 +40,7 @@
 - **主线**：只能从当前最新章节继续发展，序号严格递增（`1 → 2 → 3`），形成线性主线
 - **番外**：`isSideStory = true`，可从任意章节创建，序号为小数（如 `1.01`、`1.02`），形成支线效果
 - 根章节 `parentChapterId = null`
-- 删除 `archived` 章节会级联删除同 `fromChapterNumber` 的记忆、时间线、角色状态，并从上一章 snapshot 重建图谱
+- 删除 `archived` 章节会级联删除同 `fromChapterNumber` 的记忆、角色状态，并从上一章 snapshot 重建图谱
 
 ---
 
@@ -82,7 +82,7 @@
 | 开发 | SQLite（零配置启动，`file:./dev.db`） |
 | 生产 | PostgreSQL（切换仅需改 `.env` + `prisma/schema.prisma` 的 `provider`） |
 
-主要模型：`Story`、`Chapter`、`Draft`、`Character`、`CharacterBranchState`、`LoreItem`、`Memory`、`GraphNode`、`GraphEdge`、`TimelineEvent`、`PlotArc`、`RuntimeProfile`、`WorkerTask`、`AiProviderConfig`、`PromptLog`、`Score`。
+主要模型：`Story`、`Chapter`、`Draft`、`Character`、`CharacterBranchState`、`LoreItem`、`Memory`、`PlotArc`、`RuntimeProfile`、`WorkerTask`、`AiProviderConfig`、`PromptLog`。（`GraphNode`/`GraphEdge` 已在 v3 删除，图谱数据存 `Chapter.chapterGraph`/`cumulativeGraph` JSON 列。）
 
 ### 2.4 共享包
 
@@ -93,7 +93,6 @@
 | `@novel-runtime/prompt-runtime` | `packages/prompt-runtime` | Prompt 组装管道 + Token 预算管理 |
 | `@novel-runtime/memory-engine` | `packages/memory-engine` | 记忆提取、语义搜索、Prompt 格式化 |
 | `@novel-runtime/knowledge-graph` | `packages/knowledge-graph` | 内存图服务（graphology 封装） |
-| `@novel-runtime/scoring-engine` | `packages/scoring-engine` | 规则评分引擎（AI 评分在服务端实现） |
 
 所有包的 `tsconfig.json` 统一：`target: ES2022`、`module: NodeNext`、`strict: true`、生成 `.d.ts` + sourceMap。
 
@@ -178,8 +177,7 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 │   ├── ai-provider/     # LLM Provider 抽象 + Runtime Prompt 编译器
 │   ├── prompt-runtime/  # Prompt 组装管道 + Token 预算
 │   ├── memory-engine/   # 记忆提取、语义搜索、格式化
-│   ├── knowledge-graph/ # 内存图服务
-│   ├── scoring-engine/  # 规则评分引擎
+│   └── knowledge-graph/ # 内存图服务
 ├── prisma/
 │   ├── schema.prisma    # Prisma 数据模型（16 个模型）
 │   ├── migrations/      # 迁移文件（按时间顺序命名）
@@ -200,12 +198,10 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 | `stories.ts` | `/api/stories` | CRUD + plot-arcs 查询 + chapter-tree |
 | `characters.ts` | `/api/stories/:storyId/characters` + `/api/characters/:charId` | 角色 CRUD + `CharacterBranchState` 历史 |
 | `lore.ts` | `/api/stories/:storyId/lore` + `/api/lore/:itemId` | 世界观设定 CRUD |
-| `timeline.ts` | `/api/stories/:storyId/timeline` + `/api/timeline/:eventId` | 时间线事件 CRUD |
-| `chapters-{crud,generate,archive,tree}.ts` + `_helpers.ts` | `/api/stories/:storyId/chapters`, `/api/chapters/:chapterId/...` | **最复杂**(P3 拆分):crud(基础 CRUD) / generate(preview + generate + select + develop) / archive(prepare-archive + archive 确认 + 事务) / tree(chapter-tree) |
+| `chapters-{crud,generate,archive,tree}.ts` + `_helpers.ts` | `/api/stories/:storyId/chapters`, `/api/chapters/:chapterId/...` | **最复杂**(P3 拆分):crud(基础 CRUD) / generate(preview + generate + select + develop) / archive(prepare-archive + archive 确认 + 事务) / tree(chapter-tree)。**v2**:`ChapterStatus` 收口到 3 值(`draft`/`reviewing`/`archived`);generate/select **不再翻 `chapter.status`**(只写 `Draft.status`,`archived` 章节兜底 400);prepare-archive 的独占锁条件为 `status ∈ [draft, reviewing]`,AI 提取失败回退 `draft` |
 | `drafts.ts` | `/api/chapters/:chapterId/drafts`, `/api/drafts/:draftId` | 草稿 CRUD |
 | `graph.ts` | `/api/stories/:storyId/graph`, `/api/chapters/:chapterId/graph-snapshot` | 知识图谱查询 + 手动增删节点/边 |
 | `memories.ts` | `/api/stories/:storyId/memory` | 记忆查询 + 创建 |
-| `scores.ts` | `/api/drafts/:draftId/score`, `/api/stories/:storyId/scores` | AI + 规则双引擎评分 |
 | `runtime-profile.ts` | `/api/runtime-profiles` | 写作人格 CRUD |
 | `worker-task.ts` | `/api/worker-tasks` | Worker 任务模板 CRUD |
 | `ai-provider.ts` | `/api/ai-providers` | AI 提供商配置 CRUD + 默认设置 |
@@ -221,15 +217,11 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 | `ai-call-logger.ts` | **统一 AI 调用封装**：自动记录 `promptLog`（成功/失败均异步写入），返回 content 或抛出错误 |
 | `runtime-loader.ts` | 加载 `RuntimeBase` 和 `WorkerTask`（按 Story → 全局默认 → 硬编码回退） |
 | `runtime-profile-init.ts` | 启动时扫描 `seeds/profiles/*.yaml` 导入 `runtimeProfile`(YAML 解析失败立即报错) |
-| `generate-processor.ts` | 队列处理器：循环为每个 draft 调用 AI，更新 `draft.content` 和状态 |
-| `combined-extractor.ts` | **归档核心**：一次 AI 调用同时提取记忆 + 图谱 + 剧情弧线 |
-| `graph-extractor.ts` | 从章节提取图谱节点/边（`importance >= 6`），保存到 `graphNode`/`graphEdge` |
-| `graph-organizer.ts` | AI 合并上一章全局图谱 + 本章提取 → 生成新的 `mergedGraph` + `chapterGraph` |
-| `graph-snapshot.ts` | 将 `mergedGraph` 保存为 `chapter.graphSnapshot`，`chapterGraph` 保存为 `graphDelta` |
-| `memory-extractor.ts` | 提取结构化记忆（主线/支线/情绪/伏笔/关系/状态/场景/摘要），Jaccard 去重后存入 `memory` 表 |
-| `memory-organizer.ts` | 归档后 AI 整理记忆：merge/update/delete/keep，有 Jaccard > 0.5 保守校验 |
-| `memory-optimizer.ts` | **阶段 4 全局记忆融合**：`archive` 路由事务提交后调用,把上一章 global 记忆 + 本章 chapter 记忆喂 AI 生成下一章 global 快照;失败不阻塞归档。`chapters-archive.ts:3` import `optimizeMemories` |
-| `memory-compressor.ts` | 每 5 章自动压缩 chapter 记忆为 global 摘要；AI 压缩失败则降级为简单合并 |
+| `generate-processor.ts` | 队列处理器：循环为每个 draft 调用 AI，更新 `draft.content` 和 `Draft.status`。**v2**：只读写 `Draft.status`（跳过 `rejected`/`completed`/`failed` 三种用户决定/已完成态；不再有 `selected` 状态），**不读不写 `Chapter.status`**——候选生成与章节状态正交 |
+| `stages/` (character/memory/plot-arc/graph-extract) | **v3 归档核心**：4 个 stage 并行提取角色状态/记忆/弧线/本章图谱，结果落 `pendingArchiveData.stages[name]` |
+| `cumulative-graph.ts` | 用户主动触发累计图谱合并（relation 映射归一 + codeMerge 五元组去重），写 `pendingArchiveData.cumulativeGraph` |
+| `graph-snapshot.ts` | 图谱快照数据结构（GraphNodeSnapshot / GraphEdgeSnapshot / GraphSnapshot） |
+| `memory-optimizer.ts` | 全局记忆融合（v2 阶段 4）：把上一章 global 记忆 + 本章 chapter 记忆喂 AI 生成下一章 global 快照。**v3 当前无调用点**（archive gate stub 尚未接回），函数保留待重新接入 |
 | `plot-extractor.ts` | 提取/更新剧情弧线（`plotArc`），维护 stages/unresolved；`getActivePlotArcs()` 供 Prompt 注入 |
 
 ### 4.4 队列系统
@@ -242,7 +234,6 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 | 队列 | 任务名 | 状态 |
 |------|--------|------|
 | `generateQueue` | `generate-chapter` | ✅ 已注册并运行 |
-| `scoreQueue` | `score-draft` | ⚠️ 已定义但未注册处理器 |
 | `memoryQueue` | `update-memory` | ⚠️ 已定义但未注册处理器 |
 
 ### 4.5 前端双 Layout 路由
@@ -250,7 +241,7 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 | Layout | 路径示例 | 页面 |
 |--------|----------|------|
 | `SimpleLayout` | `/dashboard`、`/stories`、`/runtime-profiles`、`/worker-tasks`、`/model-manager` | 全局管理页 |
-| `NovelDesignLayout` | `/novel-design/:storyId/characters`、`.../chapters`、`.../graph`、`.../memory`、`.../timeline`、`.../prompt-logs` | 小说内页（带侧边栏） |
+| `NovelDesignLayout` | `/novel-design/:storyId/characters`、`.../chapters`、`.../graph`、`.../memory`、`.../prompt-logs` | 小说内页（带侧边栏） |
 
 旧路由已做重定向：`/characters` → `/stories` 等。
 
@@ -259,7 +250,6 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 `src/api/*.ts` 按领域封装，每个模块导出一个对象，包含该领域的 CRUD 函数。例如：
 - `storiesApi.list()`、`storiesApi.create(data)`
 - `chaptersApi.generate(chapterId, params)`
-- `draftsApi.score(draftId)`
 - `graphApi.createNode(storyId, data)`
 
 ---
@@ -293,7 +283,7 @@ pnpm db:seed          # 运行种子脚本（tsx prisma/seed.ts）
 
 ### 5.3 JSON 字段处理
 
-Prisma 的 JSON 字段（`personality`、`metadata`、`params`、`settings`、`graphSnapshot`、`graphDelta`、`score` 等）在路由层**手动 `JSON.stringify` / `JSON.parse`**。前端拿到后也常需 `JSON.parse`。
+Prisma 的 JSON 字段（`personality`、`metadata`、`params`、`settings`、`pendingArchiveData`、`chapterGraph`、`cumulativeGraph` 等）在路由层**手动 `JSON.stringify` / `JSON.parse`**。前端拿到后也常需 `JSON.parse`。
 
 ### 5.4 AI 调用规范
 
@@ -315,24 +305,19 @@ Prisma 的 JSON 字段（`personality`、`metadata`、`params`、`settings`、`g
 3. 全局默认 Profile
 4. 硬编码兜底
 
-### 5.6 归档事务
+### 5.6 归档流程（v3）
 
-归档流程采用**四阶段 + 真实事务**策略：
+归档流程 = 并行提取 + 人工审查 + 落列：
 
-1. **提取阶段**（`extractAll`）：纯 AI 调用，不写数据库
-2. **整理阶段**（`organizeGraph`）：纯 AI 调用，整理知识图谱
-3. **事务写入阶段**（`prisma.$transaction`）：所有数据库操作一次性提交
-   - Memory、CharacterBranchState、TimelineEvent
-   - Chapter.summary
-   - PlotArc
-   - GraphNode/GraphEdge、Chapter.graphSnapshot/graphDelta
-   - Chapter.status = 'archived'
-4. **优化阶段**（`optimizeMemories`）：生成全局记忆，失败不阻塞归档
+1. **提取阶段**（`prepare-archive`）：4 个 stage（character/memory/plot-arc/graph-extract）并行 AI 调用，结果写 `Chapter.pendingArchiveData`（version=3），状态变 `reviewing`。不写衍生表、不写图谱列
+2. **累计图谱**（`cumulative-graph/build`）：用户主动触发，合并结果写 `pendingArchiveData.cumulativeGraph`
+3. **人工审查**（`ReviewingPanel.vue`）：编辑经 `chaptersApi.update({ pendingArchiveData })` 写回；cancel 回退 `draft` 并清 `pendingArchiveData`
+4. **落列阶段**（`archive` confirm）：校验全 stage success + 累计图谱已生成 → 图谱数据从 `pendingArchiveData` 拷到 `Chapter.chapterGraph`/`cumulativeGraph`/`cumulativeGraphGeneratedAt` 三列 → 清 `pendingArchiveData` → status=`archived`
 
 **保证**：
-- 阶段 1/2 失败 → 没有任何数据写入
-- 阶段 3 失败 → 事务回滚，数据零变更
-- 阶段 4 失败 → 归档已成功，仅全局记忆优化未执行
+- reviewing 期间所有图谱数据只活在 `pendingArchiveData`，三列保持 null
+- 单 stage 失败不影响其他 stage，failed 状态落 payload 可按 stage 重试
+- 衍生表（Memory/CharacterBranchState/PlotArc）事务写入与 `optimizeMemories` 重接为后续工作（当前 archive 是 gate stub）
 
 ### 5.7 Naive UI 组件导入
 
@@ -350,7 +335,7 @@ Prisma 的 JSON 字段（`personality`、`metadata`、`params`、`settings`、`g
 ## 6. 测试说明
 
 - **测试框架**：Vitest（根目录 + 各包 devDependencies）
-- **当前状态**：已有测试,集中在 `apps/server/src/__tests__/`(vitest 后端,e.g. `combined-extractor.test.ts` / `graph-organizer-neighborhood.test.ts` / `chapters-zod-validation.test.ts` / `chapters-concurrency.test.ts` 等 9 个文件);`packages/ai-provider` 也有 `runtime-compiler.test.ts`(13 个 case)
+- **当前状态**：已有测试,集中在 `apps/server/src/__tests__/`(vitest 后端,e.g. `chapters-zod-validation.test.ts` / `chapters-concurrency.test.ts` / `stages-*.test.ts` / `cumulative-graph.test.ts` / `prepare-archive-v3.test.ts` 等);`packages/ai-provider` 也有 `runtime-compiler.test.ts`(13 个 case)
 - 根目录 `pnpm test` 会递归执行各包的 test 脚本;`apps/server` 的 `pretest` hook 会先 build 所有 packages 避免 stale dist
 
 **建议**：新增测试时放在与被测代码同级或 `__tests__` 目录，使用 Vitest 的 API。TDD 优先 — 写失败测试 → 写实现 → 重构。
@@ -417,7 +402,7 @@ DEEPSEEK_CONTEXT_LENGTH=64000
 - `packages/shared` 的 `estimateTokens`（启发式，无依赖）—— 仅供 `prompt-runtime/budget.ts` 在 `js-tiktoken` 不可用时 fallback
 - `packages/{shared,memory-engine,prompt-runtime}` 3 个包**保留** `js-tiktoken` 直接装，因结构性原因（dep cycle / token ID API / model-aware encoding）无法切到 `countTokens`。详见 `KNOWN-ISSUES.md` 第 10 条。
 - `prompt-runtime/budget.ts` 用 `encodingForModel(model)` + heuristic fallback，model-aware 路径（不是单纯 `cl100k_base`）
-- `memory-engine` / `memory-extractor` / `memory-organizer` 直接使用 `js-tiktoken` 做 `encode()`（用于 Jaccard 相似度计算，token ID 数组，非单纯计数）
+- `memory-engine` 直接使用 `js-tiktoken` 做 `encode()`（用于 Jaccard 相似度计算，token ID 数组，非单纯计数）
 
 ---
 
@@ -430,14 +415,12 @@ DEEPSEEK_CONTEXT_LENGTH=64000
 | 角色管理 | `apps/server/src/routes/characters.ts` | `apps/web/src/views/Characters.vue` |
 | 知识图谱 | `apps/server/src/routes/graph.ts` | `apps/web/src/views/Graph.vue` |
 | 记忆管理 | `apps/server/src/routes/memories.ts` | `apps/web/src/views/Memory.vue` |
-| 时间线 | `apps/server/src/routes/timeline.ts` | `apps/web/src/views/Timeline.vue` |
 | 写作人格 | `apps/server/src/routes/runtime-profile.ts` | `apps/web/src/views/RuntimeProfile.vue` |
 | 模型管理 | `apps/server/src/routes/ai-provider.ts` | `apps/web/src/views/ModelManager.vue` |
 | Prompt 日志 | `apps/server/src/routes/prompt-logs.ts` | `apps/web/src/views/PromptLogs.vue` |
 | 写作人格加载 | `apps/server/src/services/runtime-loader.ts` | — |
 | Worker Task 加载 | `apps/server/src/services/runtime-loader.ts` | — |
-| 合并提取器 | `apps/server/src/services/combined-extractor.ts` | — |
-| 记忆整理 | `apps/server/src/services/memory-organizer.ts` | — |
+| v3 归档 stage（4 stage 并行） | `apps/server/src/services/stages/{character,memory,plot-arc,graph-extract}-stage.ts` | — |
 | Prompt Pipeline | `packages/prompt-runtime/src/index.ts` | — |
 | 预算缩放 | `packages/shared/src/index.ts` (`scaleBudget`) | — |
 

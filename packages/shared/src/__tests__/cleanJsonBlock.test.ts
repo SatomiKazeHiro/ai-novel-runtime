@@ -49,10 +49,10 @@ describe('cleanJsonBlock — AI JSON repair', () => {
     })
 
     it('handles full payload structure (user full case)', () => {
-      const raw = '{"memories":{"mainEvents":[{"description":"测试","participants":["张三"],"importance": &nbsp;7}]}}'
+      const raw = '{"memories":{"mainEvents":[{"description":"测试","importance": &nbsp;7}]}}'
       const fixed = cleanJsonBlock(raw)
       expect(JSON.parse(fixed)).toEqual({
-        memories: { mainEvents: [{ description: '测试', participants: ['张三'], importance: '&nbsp;7' }] }
+        memories: { mainEvents: [{ description: '测试', importance: '&nbsp;7' }] }
       })
     })
   })

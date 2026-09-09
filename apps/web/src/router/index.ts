@@ -5,9 +5,9 @@ import Dashboard from '../views/Dashboard.vue'
 import Stories from '../views/Stories.vue'
 import Characters from '../views/Characters.vue'
 import LoreBook from '../views/LoreBook.vue'
-import Timeline from '../views/Timeline.vue'
 import Chapters from '../views/Chapters.vue'
 import Graph from '../views/Graph.vue'
+import PlotArcs from '../views/PlotArcs.vue'
 import Memory from '../views/Memory.vue'
 import RuntimeProfile from '../views/RuntimeProfile.vue'
 import WorkerTask from '../views/WorkerTask.vue'
@@ -37,8 +37,8 @@ const routes = [
       { path: 'chapters', name: 'Chapters', component: Chapters },
       { path: 'reader', name: 'ChapterReader', component: ChapterReader },
       { path: 'graph', name: 'Graph', component: Graph },
+      { path: 'plot-arcs', name: 'PlotArcs', component: PlotArcs },
       { path: 'memory', name: 'Memory', component: Memory },
-      { path: 'timeline', name: 'Timeline', component: Timeline },
       { path: 'worker-tasks', name: 'StoryWorkerTasks', component: StoryWorkerTask },
       { path: 'prompt-logs', name: 'PromptLogs', component: PromptLogs }
     ]
@@ -49,7 +49,6 @@ const routes = [
   { path: '/chapters', redirect: '/stories' },
   { path: '/graph', redirect: '/stories' },
   { path: '/memory', redirect: '/stories' },
-  { path: '/timeline', redirect: '/stories' },
   { path: '/runtime-profile', redirect: '/runtime-profiles' },
   { path: '/worker-task', redirect: '/worker-tasks' },
   // 旧 novel-design 无 storyId 路由重定向到小说管理

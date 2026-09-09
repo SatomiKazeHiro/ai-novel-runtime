@@ -9,11 +9,7 @@ describe('chapters select route — chapterId isolation', () => {
     mockPrisma = {
       chapter: {
         findUnique: vi.fn(),
-        update: vi.fn(),
-        // Task 14: select route now acquires an atomic updateMany status
-        // lock before the transaction. Default to success so this test
-        // reaches the original transaction assertions.
-        updateMany: vi.fn().mockResolvedValue({ count: 1 })
+        update: vi.fn()
       },
       draft: {
         findUnique: vi.fn(),
@@ -30,7 +26,7 @@ describe('chapters select route — chapterId isolation', () => {
 
   it('returns 404 when draft belongs to a different chapter', async () => {
     mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'chapterB', status: 'generated'
+      id: 'chapterB', status: 'draft'
     })
     // Without chapterId filter, current code returns the draft regardless of
     // its chapterId. With the compound (id, chapterId) filter, findUnique
@@ -66,14 +62,13 @@ describe('chapters select route — chapterId isolation', () => {
 
   it('accepts draft that belongs to the same chapter', async () => {
     mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'chapterA', status: 'generated'
+      id: 'chapterA', status: 'draft'
     })
     mockPrisma.draft.findUnique.mockResolvedValue({
-      id: 'draft_1', chapterId: 'chapterA', content: 'hello'
+      id: 'draft_1', chapterId: 'chapterA', content: 'hello', status: 'completed'
     })
     mockPrisma.draft.updateMany.mockResolvedValue({ count: 2 })
-    mockPrisma.draft.update.mockResolvedValue({ id: 'draft_1', status: 'selected' })
-    mockPrisma.chapter.update.mockResolvedValue({ id: 'chapterA', status: 'selected' })
+    mockPrisma.chapter.update.mockResolvedValue({ id: 'chapterA', status: 'draft' })
 
     const result = await callHandler(
       routes,
@@ -83,7 +78,7 @@ describe('chapters select route — chapterId isolation', () => {
       { chapterId: 'chapterA' }
     )
 
-    expect(mockPrisma.$transaction).toHaveBeenCalled()
+    expect(mockPrisma.chapter.update).toHaveBeenCalledWith({ where: { id: 'chapterA' }, data: { content: 'hello' } })
     // Route uses bare return — callHandler captures the handler's return value.
     expect(result.body).toEqual({ success: true })
   })

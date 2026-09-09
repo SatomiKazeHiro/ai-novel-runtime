@@ -1,36 +1,34 @@
 <template>
   <div>
-    <header class="page-head">
-      <div class="page-head__text">
-        <span class="cap-eyebrow is-accent">EDIT GRAPH</span>
-        <h1 class="page-head__title">本章图谱</h1>
-        <p class="page-head__lede cap-body-sm">
-          校对本章抽出的实体与关系 — 点选节点 / 边后右侧操作可用。
-        </p>
-      </div>
-      <div class="page-head__actions">
-        <button
-          class="cap-pill is-sm"
-          :disabled="!selectedNode && !selectedEdge"
-          @click="handleDelete"
-        >
-          删除选中
-        </button>
-        <button
-          class="cap-pill is-sm"
-          :disabled="!selectedNode"
-          @click="openEditNode"
-        >
-          编辑节点
-        </button>
-        <button
-          class="cap-pill is-sm is-primary"
-          @click="showNodeModal = true"
-        >
-          + 添加节点
-        </button>
-      </div>
-    </header>
+    <div class="editable-graph__actions">
+      <button
+        class="cap-pill is-sm"
+        :disabled="!selectedNode && !selectedEdge"
+        @click="handleDelete"
+      >
+        删除选中
+      </button>
+      <button
+        class="cap-pill is-sm"
+        :disabled="!selectedNode"
+        @click="openEditNode"
+      >
+        编辑节点
+      </button>
+      <button
+        class="cap-pill is-sm"
+        :disabled="!selectedEdge"
+        @click="openEditEdge"
+      >
+        编辑关系
+      </button>
+      <button
+        class="cap-pill is-sm is-primary"
+        @click="showNodeModal = true"
+      >
+        + 添加节点
+      </button>
+    </div>
 
     <div class="editable-graph__toolbar">
       <GraphLegend />
@@ -106,6 +104,27 @@
         </n-space>
       </template>
     </n-modal>
+
+    <!-- 编辑关系弹窗 -->
+    <n-modal v-model:show="showEditEdgeModal" title="编辑关系" preset="card" style="width: 500px">
+      <n-form :model="editEdgeForm" label-placement="left" label-width="80">
+        <n-form-item label="源节点">
+          <n-input :value="editEdgeForm.sourceLabel" disabled />
+        </n-form-item>
+        <n-form-item label="目标节点">
+          <n-input :value="editEdgeForm.targetLabel" disabled />
+        </n-form-item>
+        <n-form-item label="关系" required>
+          <n-input v-model:value="editEdgeForm.relation" placeholder="如：隶属、对抗、师徒、配偶" />
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showEditEdgeModal = false">取消</n-button>
+          <n-button type="primary" @click="handleUpdateEdge">保存</n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -127,23 +146,22 @@ const props = defineProps<{
 }>()
 const themeStore = useThemeStore()
 
-const emit = defineEmits<{
-  'update:graphData': [data: GraphData<any, any>]
-}>()
-
-// draft 模式下的本地编辑数据
+// 自管 state, 不 emit: 父组件通过 ref.getData() 在 save/confirm 时拉回最新草稿。
+// 不再用 @update:graphData 回传, 避免形成 prop echo 循环触发 cytoscape.init() 重布局抖动。
 const draftGraphData = ref<GraphData<any, any>>({ nodes: [], edges: [] })
 const cyContainer = ref<HTMLDivElement>()
 
 const showNodeModal = ref(false)
 const showEdgeModal = ref(false)
 const showEditNodeModal = ref(false)
+const showEditEdgeModal = ref(false)
 const selectedNode = ref<{ id: string; label: string; key: string; type: string } | null>(null)
 const selectedEdge = ref<{ id: string; source: string; target: string; relation: string } | null>(null)
 
 const nodeForm = ref({ type: 'character', key: '', label: '' })
 const edgeForm = ref({ targetId: '', relation: '' })
 const editNodeForm = ref({ id: '', type: 'character', key: '', label: '' })
+const editEdgeForm = ref({ sourceLabel: '', targetLabel: '', relation: '' })
 
 const nodeTypeOptions = [
   { label: '角色', value: 'character' },
@@ -192,13 +210,24 @@ function loadDraftGraph(raw?: GraphData<any, any> | null) {
   draftGraphData.value = toGraphData(raw.nodes, raw.edges)
 }
 
+// 把视口中心 (像素) 转换成 cytoscape 模型坐标, 用于 addNode 时定位新节点
+function viewportCenterPosition(): { x: number; y: number } | undefined {
+  const container = cyContainer.value
+  const instance = cytoscape.getInstance()
+  if (!container || !instance) return undefined
+  const w = container.clientWidth
+  const h = container.clientHeight
+  const pan = instance.pan()
+  const zoom = instance.zoom()
+  return { x: (-pan.x + w / 2) / zoom, y: (-pan.y + h / 2) / zoom }
+}
+
 async function handleCreateNode() {
   const newNode = {
     id: `${nodeForm.value.type}:${nodeForm.value.key}`,
     type: nodeForm.value.type,
     key: nodeForm.value.key,
-    label: nodeForm.value.label,
-    importance: 5
+    label: nodeForm.value.label
   }
   draftGraphData.value = {
     nodes: [...(draftGraphData.value?.nodes || []), newNode],
@@ -206,9 +235,7 @@ async function handleCreateNode() {
   }
   showNodeModal.value = false
   nodeForm.value = { type: 'character', key: '', label: '' }
-  emit('update:graphData', draftGraphData.value)
-  await nextTick()
-  cytoscape.init()
+  cytoscape.addNode(newNode, viewportCenterPosition())
 }
 
 function cancelEdge() {
@@ -240,9 +267,7 @@ async function handleCreateEdge() {
     edges: [...(draftGraphData.value?.edges || []), newEdge]
   }
   cancelEdge()
-  emit('update:graphData', draftGraphData.value)
-  await nextTick()
-  cytoscape.init()
+  cytoscape.addEdge(newEdge)
 }
 
 function openEditNode() {
@@ -254,6 +279,22 @@ function openEditNode() {
     label: selectedNode.value.label
   }
   showEditNodeModal.value = true
+}
+
+function openEditEdge() {
+  if (!selectedEdge.value) return
+  const src = draftGraphData.value?.nodes.find((n: any) =>
+    `${n.type}:${n.key}` === selectedEdge.value!.source
+  )
+  const tgt = draftGraphData.value?.nodes.find((n: any) =>
+    `${n.type}:${n.key}` === selectedEdge.value!.target
+  )
+  editEdgeForm.value = {
+    sourceLabel: src?.label || selectedEdge.value!.source,
+    targetLabel: tgt?.label || selectedEdge.value!.target,
+    relation: selectedEdge.value!.relation
+  }
+  showEditEdgeModal.value = true
 }
 
 async function handleUpdateNode() {
@@ -293,9 +334,31 @@ async function handleUpdateNode() {
 
   showEditNodeModal.value = false
   selectedNode.value = null
-  emit('update:graphData', draftGraphData.value)
-  await nextTick()
-  cytoscape.init()
+  cytoscape.updateNode(oldId, {
+    type: editNodeForm.value.type,
+    key: editNodeForm.value.key,
+    label: editNodeForm.value.label
+  })
+}
+
+async function handleUpdateEdge() {
+  if (!selectedEdge.value || !draftGraphData.value) return
+  const oldId = selectedEdge.value.id
+  const newRelation = editEdgeForm.value.relation.trim()
+  if (!newRelation) return
+
+  draftGraphData.value = {
+    ...draftGraphData.value,
+    edges: draftGraphData.value.edges.map((e: any) => {
+      if (`${e.source}-${e.relation}-${e.target}` !== oldId) return e
+      return { ...e, relation: newRelation }
+    })
+  }
+
+  showEditEdgeModal.value = false
+  selectedEdge.value = null
+  editEdgeForm.value = { sourceLabel: '', targetLabel: '', relation: '' }
+  cytoscape.updateEdge(oldId, newRelation)
 }
 
 async function handleDelete() {
@@ -309,28 +372,38 @@ async function handleDelete() {
       edges: draftGraphData.value.edges.filter((e: any) => e.source !== nodeId && e.target !== nodeId)
     }
     selectedNode.value = null
+    cytoscape.removeNode(nodeId)
   } else if (edgeId) {
     draftGraphData.value = {
       ...draftGraphData.value,
       edges: draftGraphData.value.edges.filter((e: any) => `${e.source}-${e.relation}-${e.target}` !== edgeId)
     }
     selectedEdge.value = null
+    cytoscape.removeEdge(edgeId)
   } else {
     return
   }
-
-  emit('update:graphData', draftGraphData.value)
-  await nextTick()
-  cytoscape.init()
 }
 
 watch(() => props.initialGraphData, (val) => {
   loadDraftGraph(val)
   nextTick(() => cytoscape.init())
 }, { immediate: true, deep: true })
+
+// 父组件 save/confirm 时通过 ref 拉回本地草稿
+defineExpose({
+  getData: () => draftGraphData.value
+})
 </script>
 
 <style scoped>
+.editable-graph__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
 .editable-graph__toolbar {
   display: flex;
   align-items: center;

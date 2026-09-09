@@ -9,7 +9,6 @@ describe('generate route — compiledPrompt validation', () => {
     vi.clearAllMocks()
     mockPrisma = createMockPrisma({
       loreItem: { findMany: vi.fn().mockResolvedValue([]) },
-      timelineEvent: { findMany: vi.fn().mockResolvedValue([]) },
       plotArc: { findMany: vi.fn().mockResolvedValue([]) },
       characterBranchState: { findMany: vi.fn().mockResolvedValue([]) },
       memory: { findMany: vi.fn().mockResolvedValue([]) },

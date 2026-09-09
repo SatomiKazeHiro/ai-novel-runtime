@@ -35,26 +35,13 @@ export interface PendingCharacterStateWrite {
 }
 
 /**
- * A timeline event write. `events` is a JSON-encoded string array.
- * `position` is the YYYY.MMDD.HH 实数编码 (整数位=年, 小数位依次为月/日/时).
- */
-export interface PendingTimelineEventWrite {
-  storyId: string
-  fromChapterNumber: number
-  position: number
-  events: string
-}
-
-/**
- * All memory-related writes bundled together. Matches the server-side
- * `ArchiveMemoryData` from `apps/server/src/services/memory-extractor.ts`.
+ * All memory-related writes bundled together. (Legacy v2 shape — v3 archive
+ * routes results through `PendingArchiveDataV3.stages` instead.)
  */
 export interface PendingMemories {
   memories: PendingMemoryWrite[]
   characterStates: PendingCharacterStateWrite[]
-  timelineEvents: PendingTimelineEventWrite[]
   summary: string | null
-  timelinePosition: number | null
 }
 
 /**
@@ -188,19 +175,10 @@ export const PendingCharacterStateWriteSchema = z.object({
   relationships: z.string()
 })
 
-export const PendingTimelineEventWriteSchema = z.object({
-  storyId: z.string(),
-  fromChapterNumber: z.number(),
-  position: z.number(),
-  events: z.string()
-})
-
 export const PendingMemoriesSchema = z.object({
   memories: z.array(PendingMemoryWriteSchema),
   characterStates: z.array(PendingCharacterStateWriteSchema),
-  timelineEvents: z.array(PendingTimelineEventWriteSchema),
-  summary: z.string().nullable(),
-  timelinePosition: z.number().nullable()
+  summary: z.string().nullable()
 })
 
 export const PendingGraphNodeSchema = z.object({
@@ -258,7 +236,6 @@ export const PendingArchiveDataSchema = z.object({
 // TypeScript 类型(zod 推导),与上面 interface 平行
 export type PendingMemoryWriteZ = z.infer<typeof PendingMemoryWriteSchema>
 export type PendingCharacterStateWriteZ = z.infer<typeof PendingCharacterStateWriteSchema>
-export type PendingTimelineEventWriteZ = z.infer<typeof PendingTimelineEventWriteSchema>
 export type PendingMemoriesZ = z.infer<typeof PendingMemoriesSchema>
 export type PendingGraphNodeZ = z.infer<typeof PendingGraphNodeSchema>
 export type PendingGraphEdgeZ = z.infer<typeof PendingGraphEdgeSchema>
@@ -266,3 +243,117 @@ export type PendingGraphSnapshotZ = z.infer<typeof PendingGraphSnapshotSchema>
 export type PendingPlotArcWriteZ = z.infer<typeof PendingPlotArcWriteSchema>
 export type PendingArchiveMetaZ = z.infer<typeof PendingArchiveMetaSchema>
 export type PendingArchiveDataZ = z.infer<typeof PendingArchiveDataSchema>
+
+// =================================================================
+// v3 shape (2026-07-25 引入)
+// 把单一 PendingArchiveData 拆为 4 个独立 stage 状态。
+// 老 v1/v2 blob 无 `version` 字段 → 前端检测为老 shape,提示用户重新 prepare-archive。
+// =================================================================
+
+export interface PendingStageState {
+  status: 'pending' | 'running' | 'success' | 'failed'
+  result?: unknown
+  errorMessage?: string
+  completedAt?: string
+}
+
+export interface PendingArchiveDataV3 {
+  version: 3
+  stages: {
+    character: PendingStageState
+    memory: PendingStageState
+    plotArc: PendingStageState
+    graph: PendingStageState
+  }
+  // 累计图谱数据 (AI 生成 + 用户编辑) 在 reviewing 期间只活在 pendingArchiveData 这两个字段,
+  // Chapter.cumulativeGraph / cumulativeGraphGeneratedAt 列始终为 null,
+  // archive confirm 时从这俩字段拷到列。知识图谱页面只查 archived, 读列即可。
+  cumulativeGraph?: PendingGraphSnapshot
+  cumulativeGraphGeneratedAt?: string
+  meta: {
+    extractedAt: string
+    chapterNumber: number
+  }
+}
+
+export const PendingStageStateSchema = z.object({
+  status: z.enum(['pending', 'running', 'success', 'failed']),
+  result: z.unknown().optional(),
+  errorMessage: z.string().optional(),
+  completedAt: z.string().optional()
+}).passthrough()
+
+export const PendingArchiveDataV3Schema = z.object({
+  version: z.literal(3),
+  stages: z.object({
+    character: PendingStageStateSchema,
+    memory: PendingStageStateSchema,
+    plotArc: PendingStageStateSchema,
+    graph: PendingStageStateSchema
+  }),
+  cumulativeGraph: PendingGraphSnapshotSchema.optional(),
+  cumulativeGraphGeneratedAt: z.string().optional(),
+  meta: z.object({
+    extractedAt: z.string(),
+    chapterNumber: z.number()
+  })
+}).passthrough()
+
+export type PendingArchiveDataV3Z = z.infer<typeof PendingArchiveDataV3Schema>
+
+// =================================================================
+// v4 shape (2026-07-31 引入)
+// 把 v3 的 memory stage 拆为 memoryExtract + memoryOptimize 两个独立 stage:
+//   - memoryExtract: 仅做 raw 提取 (mainEvents/sideEvents/...)
+//   - memoryOptimize: 仅做跨章融合 (memories[] layer='global')
+// 两者解耦后,raw 抽取失败 optimizer 不白跑,optimizer 失败 raw 抽取不浪费。
+// v3 数据直接拒绝 (archive confirm version !== 4 报 400)。
+// =================================================================
+
+export const RetryStageNameSchema = z.enum([
+  'character',
+  'memoryExtract',
+  'memoryOptimize',
+  'plotArc',
+  'graph'
+])
+export type RetryStageName = z.infer<typeof RetryStageNameSchema>
+
+export interface PendingArchiveDataV4 {
+  version: 4
+  stages: {
+    character: PendingStageState
+    memoryExtract: PendingStageState
+    memoryOptimize: PendingStageState
+    plotArc: PendingStageState
+    graph: PendingStageState
+  }
+  // 累计图谱数据 (AI 生成 + 用户编辑) 在 reviewing 期间只活在 pendingArchiveData 这两个字段,
+  // Chapter.cumulativeGraph / cumulativeGraphGeneratedAt 列始终为 null,
+  // archive confirm 时从这俩字段拷到列。知识图谱页面只查 archived, 读列即可。
+  cumulativeGraph?: PendingGraphSnapshot
+  cumulativeGraphGeneratedAt?: string
+  meta: {
+    extractedAt: string
+    chapterNumber: number
+  }
+}
+
+export const PendingArchiveDataV4Schema = z.object({
+  version: z.literal(4),
+  stages: z.object({
+    character: PendingStageStateSchema,
+    memoryExtract: PendingStageStateSchema,
+    memoryOptimize: PendingStageStateSchema,
+    plotArc: PendingStageStateSchema,
+    graph: PendingStageStateSchema
+  }),
+  cumulativeGraph: PendingGraphSnapshotSchema.optional(),
+  cumulativeGraphGeneratedAt: z.string().optional(),
+  meta: z.object({
+    extractedAt: z.string(),
+    chapterNumber: z.number()
+  })
+}).passthrough()
+
+export type PendingArchiveDataV4Z = z.infer<typeof PendingArchiveDataV4Schema>

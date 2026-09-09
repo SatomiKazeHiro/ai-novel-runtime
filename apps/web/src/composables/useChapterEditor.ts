@@ -10,7 +10,6 @@ export function useChapterEditor(storyId: () => string | undefined) {
 
   const editMode = ref(false)
   const currentChapter = ref<any>(null)
-  const selectedChapterId = ref('')
   const editTitle = ref('')
   const selectedProfileId = ref<string | null>(null)
   const profileOptions = ref<any[]>([])
@@ -18,8 +17,8 @@ export function useChapterEditor(storyId: () => string | undefined) {
   const modelOptions = ref<any[]>([])
   const editForm = ref({ outline: '', content: '', sceneLocation: '', sceneMood: '', sceneGoal: '' })
   const plotArcs = ref<any[]>([])
-  const graphDelta = ref<any>(null)
-  const pendingArchiveData = ref<any>(null)
+  const chapterGraph = ref<any>(null)
+  const pendingArchiveData = ref<any>(null)  // v4 shape: { version: 4, stages: {...}, meta }
   const savingContent = ref(false)
 
   async function loadProfiles() {
@@ -44,7 +43,6 @@ export function useChapterEditor(storyId: () => string | undefined) {
 
   async function openEdit(row: any) {
     currentChapter.value = row
-    selectedChapterId.value = row.id
     editTitle.value = row.title || ''
     selectedProfileId.value = row.runtimeProfileId || null
     selectedModelId.value = row.aiProviderConfigId || null
@@ -64,9 +62,9 @@ export function useChapterEditor(storyId: () => string | undefined) {
     }
 
     // 加载图谱变化
-    graphDelta.value = null
-    if (row.status === 'archived' && row.graphDelta) {
-      try { graphDelta.value = JSON.parse(row.graphDelta) } catch { graphDelta.value = null }
+    chapterGraph.value = null
+    if (row.status === 'archived' && row.chapterGraph) {
+      try { chapterGraph.value = JSON.parse(row.chapterGraph) } catch { chapterGraph.value = null }
     }
 
     // 加载待归档数据
@@ -84,9 +82,8 @@ export function useChapterEditor(storyId: () => string | undefined) {
   function backToTree() {
     editMode.value = false
     currentChapter.value = null
-    selectedChapterId.value = ''
     plotArcs.value = []
-    graphDelta.value = null
+    chapterGraph.value = null
     pendingArchiveData.value = null
   }
 
@@ -138,10 +135,10 @@ export function useChapterEditor(storyId: () => string | undefined) {
 
   async function prepareArchive() {
     if (!currentChapter.value) return { success: false }
-    // 允许 selected（首次）和 reviewing（重试：上一次提取失败导致
-    // pendingArchiveData 损坏 / null）两种状态进入 prepare-archive。
+    // v2: 允许 draft（首次，有 content 即可）和 reviewing（重试：上一次提取
+    // 失败导致 pendingArchiveData 损坏 / null）两种状态进入 prepare-archive。
     // 后端路由的 updateMany 锁也接受这两种状态。
-    if (currentChapter.value.status !== 'selected' &&
+    if (currentChapter.value.status !== 'draft' &&
         currentChapter.value.status !== 'reviewing') {
       message.warning('当前状态不支持准备归档')
       return { success: false }
@@ -175,9 +172,8 @@ export function useChapterEditor(storyId: () => string | undefined) {
       const json = JSON.stringify(data)
       const res = await chaptersApi.update(currentChapter.value.id, { pendingArchiveData: json })
       if (res.data.success) {
-        currentChapter.value.pendingArchiveData = json
         pendingArchiveData.value = data
-        message.success('归档数据已保存')
+        // 自动防抖保存静默,不弹 toast (避免编辑→撤销→编辑循环刷屏)
         return { success: true }
       } else {
         message.error(res.data.error || '保存归档数据失败')
@@ -185,6 +181,31 @@ export function useChapterEditor(storyId: () => string | undefined) {
       }
     } catch (e: any) {
       message.error(e.response?.data?.error || '保存归档数据失败')
+      return { success: false }
+    }
+  }
+
+  async function prepareArchiveCancel() {
+    if (!currentChapter.value) return { success: false }
+    if (currentChapter.value.status !== 'reviewing') {
+      message.warning('只有 reviewing 状态可以撤销审查')
+      return { success: false }
+    }
+    try {
+      const res = await chaptersApi.prepareArchiveCancel(currentChapter.value.id)
+      if (res.data.success) {
+        currentChapter.value.status = 'draft'
+        currentChapter.value.pendingArchiveData = null
+        currentChapter.value.chapterGraph = null
+        pendingArchiveData.value = null
+        message.success('已撤销审查，回到草稿')
+        return { success: true }
+      } else {
+        message.error(res.data.error || '撤销审查失败')
+        return { success: false }
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.error || '撤销审查失败')
       return { success: false }
     }
   }
@@ -212,10 +233,34 @@ export function useChapterEditor(storyId: () => string | undefined) {
     }
   }
 
+  async function retryChapterStage(
+    stageName: 'character' | 'memoryExtract' | 'memoryOptimize' | 'plotArc' | 'graph'
+  ) {
+    if (!currentChapter.value) return { success: false }
+    if (currentChapter.value.status !== 'reviewing') {
+      message.warning('只有 reviewing 状态可以重跑 stage')
+      return { success: false }
+    }
+    try {
+      const res = await chaptersApi.retryStage(currentChapter.value.id, stageName)
+      if (res.data.success) {
+        // 后端返回的 data 是更新后的完整 pendingArchiveData
+        pendingArchiveData.value = res.data.data
+        message.success(`${stageName} 重跑完成`)
+        return { success: true }
+      } else {
+        message.error(res.data.error || `${stageName} 重跑失败`)
+        return { success: false }
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.error || `${stageName} 重跑失败`)
+      return { success: false }
+    }
+  }
+
   return reactive({
     editMode,
     currentChapter,
-    selectedChapterId,
     editTitle,
     selectedProfileId,
     profileOptions,
@@ -223,7 +268,7 @@ export function useChapterEditor(storyId: () => string | undefined) {
     modelOptions,
     editForm,
     plotArcs,
-    graphDelta,
+    chapterGraph,
     pendingArchiveData,
     savingContent,
     loadProfiles,
@@ -234,6 +279,8 @@ export function useChapterEditor(storyId: () => string | undefined) {
     saveContent,
     savePendingArchiveData,
     prepareArchive,
-    archiveChapter
+    prepareArchiveCancel,
+    archiveChapter,
+    retryChapterStage
   })
 }

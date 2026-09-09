@@ -1,30 +1,121 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createMockApp, callHandler, createMockPrisma } from '../setup.js'
 
-// Mock the prepareArchiveData service so the route does not hit the real
-// AI extraction path. Matches the vi.mock in prepare-archive.test.ts.
-vi.mock('../../services/combined-extractor.js', () => ({
-  prepareArchiveData: vi.fn(),
-  extractAll: vi.fn()
-}))
+describe('generate route — v2 orthogonal to chapter status (3-value enum)', () => {
+  let mockPrisma: any
+  let routes: Record<string, any>
 
-// Mock the memory optimizer so the archive route does not hit AI.
-vi.mock('../../services/memory-optimizer.js', () => ({
-  optimizeMemories: vi.fn().mockResolvedValue(0)
-}))
-
-// Mock the graph snapshot helper so the archive route does not touch
-// the real graphNode/graphEdge write paths.
-vi.mock('../../services/graph-snapshot.js', () => ({
-  saveGraphSnapshotAndDelta: vi.fn().mockResolvedValue({
-    snapshot: { nodes: [], edges: [], timestamp: '' },
-    delta: { nodes: [], edges: [], timestamp: '' }
+  beforeEach(async () => {
+    mockPrisma = createMockPrisma({
+      loreItem: { findMany: vi.fn().mockResolvedValue([]) },
+      plotArc: { findMany: vi.fn().mockResolvedValue([]) },
+      characterBranchState: { findMany: vi.fn().mockResolvedValue([]) },
+      memory: { findMany: vi.fn().mockResolvedValue([]) },
+      character: { findMany: vi.fn().mockResolvedValue([]) },
+      runtimeProfile: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        findFirst: vi.fn().mockResolvedValue(null)
+      },
+      storyWorkerBinding: {
+        findUnique: vi.fn().mockResolvedValue(null)
+      },
+      workerTask: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        findFirst: vi.fn().mockResolvedValue(null)
+      },
+      aiProviderConfig: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([])
+      }
+    })
+    const { chapterRoutes } = await import('../../routes/chapters.js')
+    const built = createMockApp(mockPrisma)
+    await chapterRoutes(built.app)
+    routes = built.routes
   })
-}))
 
-import { prepareArchiveData } from '../../services/combined-extractor.js'
+  function setupChapter(status: string) {
+    mockPrisma.chapter.findUnique.mockResolvedValue({
+      id: 'c1',
+      storyId: 's1',
+      status,
+      content: status === 'reviewing' ? 'existing content' : '',
+      outline: 'outline',
+      title: 'Title',
+      sceneLocation: '',
+      sceneMood: '',
+      sceneGoal: '',
+      number: 1,
+      isSideStory: false,
+      story: { id: 's1', title: 'Story', description: '' }
+    })
+    mockPrisma.draft.count.mockResolvedValue(0)
+    mockPrisma.draft.create.mockResolvedValue({ id: 'd1' })
+  }
 
-describe('select route — status-exclusive lock (Q#10 follow-up)', () => {
+  it('rejects archived status with 400 (only blocked state)', async () => {
+    setupChapter('archived')
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/generate', {}, { chapterId: 'c1' }
+    )
+    expect(result.status).toBe(400)
+    expect(result.body.error).toMatch(/已归档章节不能生成新草稿/)
+  })
+
+  it('accepts draft status (orthogonal — no lock)', async () => {
+    setupChapter('draft')
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/generate', {}, { chapterId: 'c1' }
+    )
+    expect(result.status).not.toBe(400)
+    expect(mockPrisma.draft.create).toHaveBeenCalled()
+  })
+
+  it('accepts reviewing status (orthogonal — no lock)', async () => {
+    setupChapter('reviewing')
+    const result = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/generate', {}, { chapterId: 'c1' }
+    )
+    // v2: draft adds even when reviewing — fine, candidates are independent of chapter.status
+    expect(result.status).not.toBe(400)
+    expect(mockPrisma.draft.create).toHaveBeenCalled()
+  })
+
+  it('does NOT delete existing drafts (additive only — spec §2.1.4)', async () => {
+    setupChapter('draft')
+    await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/generate', {}, { chapterId: 'c1' }
+    )
+    expect(mockPrisma.draft.deleteMany).not.toHaveBeenCalled()
+  })
+
+  it('concurrent double-click produces 2 batches of drafts (no chapter.status lock)', async () => {
+    // v2 故意不加锁: 同一 chapter 并发两次 generate → 各入队一批 draft,
+    // 默认 candidateCount=3, 所以两次请求 → 6 个 draft 创建调用。
+    setupChapter('draft')
+    mockPrisma.draft.count.mockResolvedValue(0)
+
+    const result1 = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/generate', {}, { chapterId: 'c1' }
+    )
+    const result2 = await callHandler(
+      routes, 'POST', '/api/chapters/:chapterId/generate', {}, { chapterId: 'c1' }
+    )
+
+    // 两次都不应 409, 也不应 400
+    expect(result1.status).not.toBe(400)
+    expect(result2.status).not.toBe(400)
+    // 两次都创建了 draft (各 candidateCount 个, 默认 3)
+    expect(mockPrisma.draft.create.mock.calls.length).toBeGreaterThanOrEqual(6)
+    // 没有调用 chapter.update 去翻 status (只写 compiledPrompt)
+    const statusFlips = mockPrisma.chapter.update.mock.calls.filter(
+      (c: any[]) => c[0]?.data?.status !== undefined
+    )
+    expect(statusFlips).toHaveLength(0)
+  })
+})
+
+describe('select route — v2 orthogonal to chapter status (3-value enum)', () => {
   let mockPrisma: any
   let routes: Record<string, any>
 
@@ -49,240 +140,83 @@ describe('select route — status-exclusive lock (Q#10 follow-up)', () => {
     routes = built.routes
   })
 
-  it('returns 409 when status lock fails (chapter not in generated/scored)', async () => {
-    // findUnique reads the chapter as 'generated' (stale view), but a concurrent
-    // request has already flipped it to 'selected' between the read and the
-    // updateMany — the atomic lock must reject this submission with 409.
+  it('accepts draft status (v2 — orthogonal)', async () => {
     mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'c1', status: 'generated'
+      id: 'c1', status: 'draft', content: 'old'
     })
     mockPrisma.draft.findUnique.mockResolvedValue({
-      id: 'd1', chapterId: 'c1', content: 'text', chapter: { id: 'c1' }
+      id: 'd_new', chapterId: 'c1', content: 'new content', status: 'completed'
     })
-    // The atomic updateMany reports 0 rows flipped — the precondition
-    // `status IN ('generated','scored')` failed.
-    mockPrisma.chapter.updateMany.mockResolvedValue({ count: 0 })
-
-    const result = await callHandler(
-      routes,
-      'POST',
-      '/api/chapters/:chapterId/select',
-      { draftId: 'd1' },
-      { chapterId: 'c1' }
-    )
-
-    expect(result.status).toBe(409)
-    expect(result.body).toEqual(
-      expect.objectContaining({ success: false })
-    )
-    // No transaction should run — the second concurrent submission must be
-    // rejected before any side effects.
-    expect(mockPrisma.$transaction).not.toHaveBeenCalled()
-  })
-
-  it('proceeds when lock succeeds (count=1)', async () => {
-    mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'c1', status: 'generated'
-    })
-    mockPrisma.draft.findUnique.mockResolvedValue({
-      id: 'd1', chapterId: 'c1', content: 'text', chapter: { id: 'c1' }
-    })
-    mockPrisma.chapter.updateMany.mockResolvedValue({ count: 1 })
     mockPrisma.draft.updateMany.mockResolvedValue({ count: 1 })
-    mockPrisma.draft.update.mockResolvedValue({ id: 'd1', status: 'selected' })
-    mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'selected' })
+    mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'draft' })
 
     const result = await callHandler(
-      routes,
-      'POST',
-      '/api/chapters/:chapterId/select',
-      { draftId: 'd1' },
-      { chapterId: 'c1' }
+      routes, 'POST', '/api/chapters/:chapterId/select',
+      { draftId: 'd_new' }, { chapterId: 'c1' }
     )
 
-    expect(result.status).not.toBe(409)
-    expect(mockPrisma.$transaction).toHaveBeenCalled()
-    expect(result.body).toEqual({ success: true })
-  })
-})
-
-describe('prepare-archive route — status-exclusive lock (Q#10 follow-up)', () => {
-  let mockPrisma: any
-  let routes: Record<string, any>
-
-  beforeEach(async () => {
-    vi.clearAllMocks()
-    mockPrisma = {
-      chapter: {
-        findUnique: vi.fn(),
-        update: vi.fn(),
-        updateMany: vi.fn()
-      }
-    }
-    const { chapterRoutes } = await import('../../routes/chapters.js')
-    const built = createMockApp(mockPrisma)
-    await chapterRoutes(built.app)
-    routes = built.routes
+    expect(result.status).not.toBe(400)
+    expect(mockPrisma.chapter.update).toHaveBeenCalled()
   })
 
-  it('returns 409 when status lock fails (chapter not in selected)', async () => {
-    // findUnique reads the chapter as 'selected' (stale view), but a concurrent
-    // request has already flipped it to 'reviewing' between the read and the
-    // updateMany — the atomic lock must reject this submission with 409,
-    // preventing a 2× AI extraction call.
+  it('accepts reviewing status (v2 — orthogonal)', async () => {
     mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'c1',
-      storyId: 's1',
-      status: 'selected',
-      isSideStory: false,
-      content: 'a'.repeat(200),
-      outline: 'short outline',
-      number: 1,
-      parentChapterId: null,
-      story: { id: 's1' }
+      id: 'c1', status: 'reviewing', content: 'old'
     })
-    // The atomic updateMany reports 0 rows flipped — the precondition
-    // `status='selected'` failed.
-    mockPrisma.chapter.updateMany.mockResolvedValue({ count: 0 })
-
-    const result = await callHandler(
-      routes,
-      'POST',
-      '/api/chapters/:chapterId/prepare-archive',
-      undefined,
-      { chapterId: 'c1' }
-    )
-
-    expect(result.status).toBe(409)
-    expect(result.body).toEqual(
-      expect.objectContaining({ success: false })
-    )
-    // prepareArchiveData must NOT be called — the second concurrent submission
-    // must be rejected before any AI extraction runs.
-    expect(prepareArchiveData).not.toHaveBeenCalled()
-  })
-
-  it('proceeds when lock succeeds (count=1)', async () => {
-    mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'c1',
-      storyId: 's1',
-      status: 'selected',
-      isSideStory: false,
-      content: 'a'.repeat(200),
-      outline: 'short outline',
-      number: 1,
-      parentChapterId: null,
-      story: { id: 's1' }
+    mockPrisma.draft.findUnique.mockResolvedValue({
+      id: 'd_new', chapterId: 'c1', content: 'new content', status: 'completed'
     })
-    mockPrisma.chapter.updateMany.mockResolvedValue({ count: 1 })
-    ;(prepareArchiveData as any).mockResolvedValue({
-      memories: { items: [], summary: '' },
-      graph: { mergedGraph: { nodes: [], edges: [], timestamp: '' }, chapterGraph: { nodes: [], edges: [], timestamp: '' } },
-      plotArcs: { toCreate: [], toUpdate: [] }
-    })
+    mockPrisma.draft.updateMany.mockResolvedValue({ count: 1 })
     mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'reviewing' })
 
     const result = await callHandler(
-      routes,
-      'POST',
-      '/api/chapters/:chapterId/prepare-archive',
-      undefined,
-      { chapterId: 'c1' }
+      routes, 'POST', '/api/chapters/:chapterId/select',
+      { draftId: 'd_new' }, { chapterId: 'c1' }
     )
 
-    expect(result.status).not.toBe(409)
-    expect(prepareArchiveData).toHaveBeenCalledTimes(1)
-  })
-})
-
-describe('archive route — status-exclusive lock (Q#10 follow-up)', () => {
-  let mockPrisma: any
-  let routes: Record<string, any>
-
-  beforeEach(async () => {
-    vi.clearAllMocks()
-    mockPrisma = {
-      chapter: {
-        findUnique: vi.fn(),
-        update: vi.fn(),
-        updateMany: vi.fn()
-      },
-      $transaction: vi.fn(async (fn: any) => fn(mockPrisma))
-    }
-    const { chapterRoutes } = await import('../../routes/chapters.js')
-    const built = createMockApp(mockPrisma)
-    await chapterRoutes(built.app)
-    routes = built.routes
+    expect(result.status).not.toBe(400)
+    expect(mockPrisma.chapter.update).toHaveBeenCalled()
   })
 
-  it('returns 409 when status lock fails (chapter not in reviewing)', async () => {
-    // findUnique reads the chapter as 'reviewing' (stale view), but a concurrent
-    // request has already flipped it to 'archived' between the read and the
-    // updateMany — the atomic lock must reject this submission with 409,
-    // preventing duplicate Memory/TimelineEvent/PlotArc/GraphNode/GraphEdge
-    // writes from two concurrent transactions.
+  it('rejects archived status with 400', async () => {
     mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'c1',
-      storyId: 's1',
-      status: 'reviewing',
-      isSideStory: false,
-      content: 'a'.repeat(200),
-      number: 1,
-      pendingArchiveData: JSON.stringify({
-        memories: { items: [], summary: '' },
-        graph: { mergedGraph: { nodes: [], edges: [], timestamp: '' }, chapterGraph: { nodes: [], edges: [], timestamp: '' } },
-        plotArcs: { toCreate: [], toUpdate: [] }
-      }),
-      story: { id: 's1' }
+      id: 'c1', status: 'archived'
     })
-    // The atomic updateMany reports 0 rows flipped — the precondition
-    // `status='reviewing'` failed.
-    mockPrisma.chapter.updateMany.mockResolvedValue({ count: 0 })
 
     const result = await callHandler(
-      routes,
-      'POST',
-      '/api/chapters/:chapterId/archive',
-      undefined,
-      { chapterId: 'c1' }
+      routes, 'POST', '/api/chapters/:chapterId/select',
+      { draftId: 'd1' }, { chapterId: 'c1' }
     )
 
-    expect(result.status).toBe(409)
-    expect(result.body).toEqual(
-      expect.objectContaining({ success: false })
-    )
-    // No transaction should run — duplicate writes must be impossible.
-    expect(mockPrisma.$transaction).not.toHaveBeenCalled()
+    expect(result.status).toBe(400)
+    expect(result.body.error).toMatch(/已归档章节不能选择新候选/)
   })
 
-  it('proceeds when lock succeeds (count=1)', async () => {
+  it('writes Chapter.content and does not flip chapter.status', async () => {
     mockPrisma.chapter.findUnique.mockResolvedValue({
-      id: 'c1',
-      storyId: 's1',
-      status: 'reviewing',
-      isSideStory: false,
-      content: 'a'.repeat(200),
-      number: 1,
-      pendingArchiveData: JSON.stringify({
-        memories: { items: [], summary: '' },
-        graph: { mergedGraph: { nodes: [], edges: [], timestamp: '' }, chapterGraph: { nodes: [], edges: [], timestamp: '' } },
-        plotArcs: { toCreate: [], toUpdate: [] }
-      }),
-      story: { id: 's1' }
+      id: 'c1', status: 'draft', content: 'old'
     })
-    mockPrisma.chapter.updateMany.mockResolvedValue({ count: 1 })
-    mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'archived' })
+    mockPrisma.draft.findUnique.mockResolvedValue({
+      id: 'd_new', chapterId: 'c1', content: 'new content', status: 'completed'
+    })
+    mockPrisma.draft.updateMany.mockResolvedValue({ count: 1 })
+    mockPrisma.chapter.update.mockResolvedValue({ id: 'c1', status: 'draft' })
 
     const result = await callHandler(
-      routes,
-      'POST',
-      '/api/chapters/:chapterId/archive',
-      undefined,
-      { chapterId: 'c1' }
+      routes, 'POST', '/api/chapters/:chapterId/select',
+      { draftId: 'd_new' }, { chapterId: 'c1' }
     )
 
-    expect(result.status).not.toBe(409)
-    // Transaction must run exactly once.
-    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1)
+    expect(result.status).not.toBe(400)
+    // v2: select 总是写 Chapter.content
+    expect(mockPrisma.chapter.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'c1' },
+        data: expect.objectContaining({ content: 'new content' })
+      })
+    )
+    // 验证 chapter.update 不带 status 翻转
+    const updateCall = mockPrisma.chapter.update.mock.calls[0]
+    expect(updateCall[0].data.status).toBeUndefined()
   })
 })

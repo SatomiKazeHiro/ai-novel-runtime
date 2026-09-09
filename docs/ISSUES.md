@@ -23,8 +23,9 @@
   6. AI 收到的 prompt 里没有本章原始记忆，全局融合实质空跑
 - **Root cause hypothesis:** **原 Agent 误解了用户原意**。用户的设计意图是"归档后数据应该沉寂，给下一章作为参考"（即所有 memory 平等进入 AI 融合），但原 Agent 自行决定加 `user-edited` tag 试图"保护用户改过的内容"——这与"沉寂"原则冲突。`buildData` 本身也缺 baseline 对比能力（line 224 `baselineChapterGraph` 只覆盖 graph 不覆盖 memory 列表），无法区分"用户实际改过"和"用户看过"，所以一刀切给所有 memory 加 tag。
 - **Blast radius:** 所有走过 reviewing 流程的章节。跨章积累。global 记忆层无法反映实际剧情进展，下一章 prompt 拿不到正确的"上一章发生了什么"。
-- **用户决策（2026-06-16）：** 彻底移除 `user-edited` 标记注入。删除 `ReviewingPanel.vue:458-463` 的 tag 循环；`memory-optimizer.ts:60-64` 的 `userEditedMemories` 分支保留但不触发。
-- **Status:** [RESOLVED 2026-06-16 by c98d582]
+- **用户决策（2026-06-16）：** 彻底移除 `ReviewingPanel` 的 `user-edited` 标记注入。
+- **二次拍板（2026-07-30）：** 连同 `memory-optimizer.ts` 中保留的 `userEditedMemories` 特殊分支一起删除；用户编辑后的记忆与 AI 输出平等进入融合。详见 `docs/superpowers/specs/2026-07-30-v3-memory-system-design.md` D6。
+- **Status:** [RESOLVED 2026-06-16 by c98d582; v3 设计收口 2026-07-30]
 
 ### 章节内容截断到 8000 字，AI 看不到后半部分
 - **File:line:** `apps/server/src/services/combined-extractor.ts:148`
@@ -66,17 +67,16 @@
 - **Status:** [RESOLVED 2026-06-16 by dba2ba1]
 
 ### `prepare-archive` 路由无 try/catch 包裹 `prepareArchiveData`
-- **File:line:** `apps/server/src/routes/chapters.ts:585`
-- **Symptom:** `const pending = await prepareArchiveData(...)` 直接 throw。`organizeGraph` 抛错（line 119 `throw err`）会冒泡到 Fastify 全局错误处理 → 500。前端 `prepareArchive` 收到 500，但 `chapter.status` 仍为 `selected`（line 602-608 在抛错后不执行）。
+- **File:line:** `apps/server/src/routes/chapters-archive.ts:80-102`
+- **Symptom:** `const pending = await prepareArchiveData(...)` 直接 throw。`organizeGraph` 抛错会冒泡到 Fastify 全局错误处理 → 500。
 - **Repro:**
   1. 让 AI 返回 graph 整理结果但 JSON 格式损坏（修改 prompt 让 AI 输出 markdown 包裹的 JSON）
-  2. `organizeGraph` line 96 `JSON.parse` 抛错
-  3. 冒泡 → `prepare-archive` 路由 500
-  4. 前端 `useChapterEditor.ts:158` catch 错误，`currentChapter.value.status` 仍为 `selected`，message.error 提示
-  5. 用户可以重试（重新点"准备归档"），但每次都会重跑 `extractAll`（浪费 token）
-- **Root cause hypothesis:** 与同文件 `archive` 路由（line 657-704）有完整 try/catch 形成对比——`archive` 路由事务+`optimizeMemories` 都有保护。`prepare-archive` 路由作者**忘了**对 `prepareArchiveData` 加保护。
+  2. `organizeGraph` 内 `JSON.parse` 抛错
+  3. 冒泡 → `prepare-archive` 路由 catch
+  4. 用户可以重试（重新点"准备归档"），但每次都会重跑 `extractAll`（浪费 token）
+- **Root cause hypothesis:** 与同文件 `archive` 路由有完整 try/catch 形成对比。`prepare-archive` 路由早期**忘了**对 `prepareArchiveData` 加保护。
 - **Blast radius:** 任何 `organizeGraph` 抛错的章节。出现概率取决于 AI 输出格式稳定性。
-- **Status:** [RESOLVED 2026-06-16 by 09092ae]
+- **Status:** [RESOLVED 2026-06-16 by 09092ae] · **REVISIT 2026-07-24（v2）：** 现在 try/catch 内统一把 `chapter.status` 回退到 **`draft`**（不再回 `selected`，`selected` enum 值已删）+ 清 `pendingArchiveData`（`chapters-archive.ts:93-96`），让用户能再编辑大纲/正文后重试。
 
 ### `ai-provider.ts` GET 路由不排除 `apiKey` 字段 → 明文 Key 泄漏
 - **File:line:** `apps/server/src/routes/ai-provider.ts:6-11`（列表）+ `apps/server/src/routes/ai-provider.ts:14-22`（默认）
@@ -136,14 +136,14 @@
 
 | # | 议题 | 用户决策(2026-06-16) | 后续方向 | Status |
 |---|------|----------------------|----------|--------|
-| 1 | `ChapterStatus` shared const 缺 `generating` + `reviewing`；前端 `statusTagType` 缺 `scored` + `rejected` | 未明确表态；按整体接受态度处理 | 把 `generating` + `reviewing` 加到 `packages/shared/src/index.ts:3-10`；`apps/web/src/views/Chapters.vue:1057` `statusTagType` 同步补 `scored` + `rejected`；删除 `as any` / 硬编码字符串 | RESOLVED 2026-06-16 by d2034a6 |
+| 1 | `ChapterStatus` shared const 缺 `generating` + `reviewing`；前端 `statusTagType` 缺 `scored` + `rejected` | 未明确表态；按整体接受态度处理 | 把 `generating` + `reviewing` 加到 `packages/shared/src/index.ts:3-10`；`apps/web/src/views/Chapters.vue:1057` `statusTagType` 同步补 `scored` + `rejected`；删除 `as any` / 硬编码字符串 | RESOLVED 2026-06-16 by d2034a6 · **REVISIT 2026-07-24：v2 反方向收口到 3 值（`draft`/`reviewing`/`archived`），删掉 `generating`/`generated`/`scored`/`selected`/`rejected` 5 个值。三层定义（schema / shared / 前端 `chapter-status.ts`）现全部一致，Q1 彻底解决** |
 | 3 | `assertStatusTransition` helper 死代码（定义后无调用） | 从优化/可维护角度取舍 | 二选一：① 删除 helper（`chapters.ts:29-37`）和 `VALID_STATUS_TRANSITIONS` 表；② 改造为路由层统一接入（`chapters.ts:388, 517, 551, 630` 全部改用 helper）。倾向 ① 直至需要集中校验时再回填 | RESOLVED 2026-06-16 by f0bb424 + 6528301 |
 | 5 | 前端 `JSON.parse(res.data.data)` 二次解析（`useChapterEditor.ts:150`） | 统一就统一 | 后端统一返回对象（已经是）；前端 `useChapterEditor.ts:150` 改为 `res.data.data`；DB 字段读取路径（`useChapterEditor.ts:74-81`、`chapters.ts:646`）保留 `safeJsonParse`，因为 DB `String?` 列存的是 JSON 文本 | RESOLVED 2026-06-16 by dba2ba1 |
 | 6 | `PendingArchiveData` 前后端各定义一份 | 共享一份 | 把 interface 移到 `packages/shared/src/index.ts`（或新建 `packages/shared/src/archive.ts`）；前后端 import 同一份；加 `as const` 字段 | RESOLVED 2026-06-16 by d2034a6 (Q1 同 commit,共享 `PendingArchiveData` 在 `packages/shared/src/archive.ts:130`) |
-| 7 | `prepare-archive` 路由无 try/catch | 处理避免 UI 断片 | 加 try/catch 包裹 `prepareArchiveData`（`chapters.ts:585`）；catch 内把 `chapter.status` 改回 `selected`（撤销 line 605 的状态转换），返回明确错误信息；前端 `useChapterEditor.ts:158` catch 显示具体失败原因 | RESOLVED 2026-06-16 by 09092ae |
+| 7 | `prepare-archive` 路由无 try/catch | 处理避免 UI 断片 | 加 try/catch 包裹 `prepareArchiveData`（`chapters.ts:585`）；catch 内把 `chapter.status` 改回 `selected`（撤销 line 605 的状态转换），返回明确错误信息；前端 `useChapterEditor.ts:158` catch 显示具体失败原因 | RESOLVED 2026-06-16 by 09092ae · **REVISIT 2026-07-24（v2）：catch 内改为回退 `draft`（`selected` enum 已删），见上方 [P0 已修] 对应条目** |
 | 8 | `select` 路由不校验 `draft.chapterId === chapterId` | 严格优化 | `chapters.ts:524-527` 改 `where: { id: body.draftId, chapterId }`；事务内二次校验 `draft.chapterId === chapterId`；不匹配返回 404（不暴露 draft 是否存在） | RESOLVED 2026-06-16 by 116247c |
 | 9 | `generate` 路由接受 raw `compiledPrompt` 无 zod | 找稳健/易读/易扩展的方案 | 引入 zod：① `apps/web/src/api/chapters.ts` 出口用 `CompiledPromptSchema.parse()` 校验；② 后端 `chapters.ts:432` 入参 `CompiledPromptSchema.parse(body.compiledPrompt)`，失败返回 400 + 字段级错误。schema 定义在 `packages/shared/src/chapter-prompt.ts` | RESOLVED 2026-06-16 by 47e0d2c + 8ce9eaa (**SPEC 修正**：原 spec 误标 OPEN,实施时经 git log 校对确认已修) |
-| 10 | `generate` 路由并发无保护（`status === 'draft'` 时双击会创建 2 批 draft） | 优化避免脏数据 | 用 chapter 行状态机独占锁：`generate` 路由 `update: { where: { id: chapterId, status: 'draft' }, data: { status: 'generating' } }` 受影响行数 0 → 返回 409 Conflict；不加 schema 字段（用户选"状态机独占锁"） | RESOLVED 2026-06-16 by 510a656 + 5f80270 |
+| 10 | `generate` 路由并发无保护（`status === 'draft'` 时双击会创建 2 批 draft） | 优化避免脏数据 | 用 chapter 行状态机独占锁：`generate` 路由 `update: { where: { id: chapterId, status: 'draft' }, data: { status: 'generating' } }` 受影响行数 0 → 返回 409 Conflict；不加 schema 字段（用户选"状态机独占锁"） | RESOLVED 2026-06-16 by 510a656 + 5f80270 · **REVISIT 2026-07-24（v2）：RESOLVED-by-解锁，不再 RESOLVED-by-加锁。** v2 把候选生成与 `chapter.status` 解耦：`generate` 不再翻 chapter.status，也就没有跨字段独占锁。设计上接受双击并发产生 2 批 draft——用户看到候选数翻倍但**无脏状态**（`chapters-generate.ts:155-157` 注释固化）。锁只保留在 `prepare-archive`/`archive`。 |
 
 > Q2(importance 4-7 vs 1-10,保留现状不强制统一)是"行为漂移(接受)"类,无 commit 提交修复,不再列入 [Q 决策 - 已修],见文末说明。
 > Q4(`buildData` `user-edited` 移除)已并入 [P0 已修] #1(`c98d582` 同 commit),不重复列。
@@ -166,6 +166,40 @@ SPEC 修正说明:Q9(zod 接入)在 spec「背景」节中误标 OPEN,实施时�
 - **Root cause hypothesis:** 缺 `onBeforeUnmount` 钩子,`cy` 实例在组件 unmount 后未清理,残留的事件 listener 仍在引用已销毁的 instance。
 - **Fix:** 加 `onBeforeUnmount` + `removeAllListeners()` + `destroy()` + `cy = null`,确保组件销毁时彻底释放 cytoscape 实例。P5 解耦后该路径迁入共享 hook `useCytoscapeLifecycle.ts:destroy()`,`GraphView.vue` (display) 与 `EditableGraph.vue` (editable) 都通过 `init()` / `destroy()` 复用同一份 unmount 路径,行为一致。
 - **Status:** [RESOLVED 2026-06-17 by 4def263,2026-06-22 P5 解耦后保留修复路径 by 18fdd45 + 4434cb3]
+
+### `memory-optimizer` AI 返回空内容时静默 return [] → prepare-archive 标 success,跨章融合空跑
+- **File:line:** `apps/server/src/services/memory-optimizer.ts:155`(`runOptimize` 函数入口附近的 silent return)
+- **Symptom:** AI 返回空字符串(典型 V4 reasoning 模式污染: content 留空, reasoning_content 8KB+ 思考)时, optimizer 静默 return `[]`, prepare-archive 把 `memory` stage 标 success, archive confirm 拿到空 global 记忆, 跨章融合实质空跑。用户无感知。
+- **Root cause hypothesis:** 防御式 silent return 把 AI 异常吞了, 违反"不隐瞒给用户"原则(`memory-optimizer.ts` 旧注释说要"logger 一下"但实际 logger 也无)。
+- **Fix:** provider 返回空内容时 throw 替代 silent return; prepare-archive catch 把 `stages.memory.status='failed'` + `errorMessage` 落库, ReviewingPanel「重跑」按钮显失败原因。
+- **Status:** [RESOLVED 2026-07-31 by 5eb4efc]
+
+### DeepSeek V4-Flash thinking 模式把 JSON 输出塞进 `reasoning_content` 字段,`content` 留空
+- **File:line:** `packages/ai-provider/src/index.ts:122`(`REASONING_MAX_LENGTH_FOR_FALLBACK = 4096`)+ `extractContent()`
+- **Symptom:** 切换到 `deepseek-v4-flash` 模型后, generate / memory_stage 等调用偶发返回"empty content"; JSON.parse 失败污染上游诊断。
+- **Root cause hypothesis:** V4 reasoning 模式下, content 字段被空置, 答案塞 reasoning_content 字段。这是 V4 上游行为, 不是 bug。修前 generate 直接返回 null/空字符串, 上层 `cleanJsonBlock` 抛"empty content"通用错, 看不出是 thinking 模式。
+- **Fix (临时):** `extractContent` content 空时 fallback reasoning_content; 太长 (>4KB) 抛"reasoning_content too long, 疑似纯思考, 关 thinking mode 或换模型"诊断, 让用户能区分"empty content" vs "thinking 模式未给答案"。
+- **注意:** **4KB 阈值本身是经验数(见 [设计债] 节)**。当前是治标方案。
+- **Status:** [RESOLVED 2026-07-31 by 5eb4efc (临时); 后续按 A 方案删除 fallback]
+
+### `archive` confirm 时 Prisma 抛"Argument `status`: Invalid value provided. Expected String, provided Object" → 整 $transaction rollback
+- **File:line:** `apps/server/src/services/character-extractor.ts:38`(`commitCharacterBranchStateWrites` 边界)
+- **Symptom:** archive 确认时整 transaction 抛错 rollback, 章节保持 reviewing, 用户看到 500。
+- **Root cause hypothesis:** `CharacterBranchState.status` / `relationships` 是 `String` 列(存 JSON 文本)。prompt 写 `"status": "<JSON 对象>"`, character-stage 解析 JSON 后 `w.status` 实际是 Object。`commitCharacterBranchStateWrites` 直接透传给 Prisma, Prisma 拒绝 Object 类型入 String 列。**类型契约 vs prompt 措辞 vs 实际数据三者不一致**:`CharacterStateRow.status: string`(类型) + `<JSON 对象>`(prompt) + `{...}`(实际数据)。
+- **Fix:** 边界统一 `JSON.stringify`, `typeof === 'string'` 时不重复编码(防测试 fixture 双重编码)。同步放宽 `CharacterStateRow.status/relationships` 类型到 `string | object` + prompt 改明确(举 JSON 对象例子 + "必须是 JSON 对象, 不是字符串")。
+- **Status:** [RESOLVED 2026-07-31 by 2a2fd1b]
+
+### [Feature] AI Provider thinking 三态配置 — 让用户显式控制上游 thinking 行为
+- **Files:**
+  - `prisma/schema.prisma` `AiProviderConfig.thinking String @default("auto")` + migration `20260731000000_add_ai_provider_thinking`
+  - `packages/ai-provider/src/index.ts:33` `ThinkingMode` 类型 + `:57` `shouldDisableThinking` 纯函数 + `:160` `callCompletions` 入口统一注入
+  - `apps/server/src/services/ai-provider-init.ts` `getProviderById` 透传 `thinking`, `initAiProviderConfig` 不覆盖用户偏好
+  - `apps/server/src/routes/ai-provider.ts` `normalizeThinking` 校验(必须 `auto|enabled|disabled`)+ `AI_PROVIDER_SAFE_SELECT` 加 `thinking: true`
+  - `apps/web/src/views/ModelManager.vue` 表单加三态 radio(自动/启用/关闭)
+- **动机:** 业务方当前不需 thinking(自动运行批量生成 + 后台归档), 早期 V3 时代默认不关心 thinking 行为。切换到 V4-Flash(reasoning 模型)后, AI 经常把答案塞 `reasoning_content` + `content` 留空,导致 generate / memory_stage 偶发返回空内容。手动调 thinking 不直观(API 字段不暴露),需要 UI 显式配置。
+- **行为:** `auto` 模式默认对 DeepSeek 模型发送 `{ thinking: { type: 'disabled' } }` 关上游 reasoning;`enabled` 永远不发送(让上游按自身默认);`disabled` 永远发送关参数(部分非 DeepSeek 模型也支持)。
+- **附带:** 让 [设计债] 节的 4KB fallback 实际触发频率降到接近 0(请求端先关, 上游不产 reasoning_content, 兜底路径基本不进)。
+- **Status:** [已落 2026-07-31 by 95ea5bb]
 
 ---
 
@@ -266,10 +300,55 @@ SPEC 修正说明:Q9(zod 接入)在 spec「背景」节中误标 OPEN,实施时�
 
 ---
 
+## [P2 follow-up] GraphView.vue 重写消费 chapterGraph/cumulativeGraph
+
+**Status:** [RESOLVED 2026-07-29, v3/prepare-archive-stages 分支]
+
+**Context:** v3 重命名 `graphDelta/graphSnapshot` → `chapterGraph/cumulativeGraph`（commit 1）。
+当时 GraphView.vue 仍读 `GraphNode` / `GraphEdge` 工作表。
+
+**Resolution:**
+- `GraphView.vue` 已改读 v3 `cumulativeGraphApi`（commit adc7df9），只查 `archived` 章节的三列
+- `GraphNode` / `GraphEdge` 表已删（migration `20260729000000_drop_graph_node_edge`），`routes/graph.ts` / `api/graph.ts` 一并删除
+- `graph-snapshot.ts` 收口后只剩 `GraphNodeSnapshot` / `GraphEdgeSnapshot` / `GraphSnapshot` 三个 interface（`expandNeighborhood` / `ExpandOptions` / `NeighborhoodResult` 已删）
+- v2 死代码 7 个源文件 + 7 个测试 + 2 份过时脚本于 2026-07-30 一次性清理
+
+---
+
+## [设计债]
+
+> 不是 bug,但留有"未来要解决"的设计缺陷。**与 [Bug fix 备忘] 的区别**:这些是"先临时能跑,知道有更好方案",已记录但未立即执行。
+
+### ~~`REASONING_MAX_LENGTH_FOR_FALLBACK = 4096` 是经验阈值,非原则限制~~ [已清理 2026-08-02]
+- **File:line:** `packages/ai-provider/src/index.ts:122`(原 `OpenAICompatibleProvider.REASONING_MAX_LENGTH_FOR_FALLBACK = 4096`)+ `extractContent()` 原 line 130-148
+- **历史问题:** 4KB 是"短 reasoning_content 是答案, 长 reasoning_content 是思考过程"的经验判断,不是原则限制。本质是**用魔法数替用户决定"什么时候算 answer / 什么时候算 thinking"**。两类失败模式都被这个数字掩盖:
+  1. AI 真实答案 < 4KB 但实际是"碎片式"思考的某段切片,被错认成答案给上层 `JSON.parse(cleanJsonBlock(...))` → 失败污染诊断
+  2. AI 真实答案 > 4KB 但确实是答案,被错认成 thinking 抛错 → 用户在 UI 看到"reasoning_content too long"但实际是上游问题
+- **清理方案 (A 方案,2026-08-02 落地):** 永远 throw, 删 fallback。理由:
+  1. thinking 三态配置(`packages/ai-provider/src/index.ts:57` `shouldDisableThinking`)已经接管问题根源: `auto` 模式对 DeepSeek 模型默认关 thinking, 真正需要兜底的窗口极小
+  2. 保留 short reasoning 兜底**反而是陷阱**:悄悄把"thinking 模式未给答案"埋了, 用户在 UI 看到奇怪的 JSON parse 错或生成空内容
+  3. 错误显式更友好 — 用户归档时看到"thinking 模式可能开了"立刻知道去 ModelManager 关, 不会以为是网络问题瞎 retry
+- **修改内容:** 删 `REASONING_MAX_LENGTH_FOR_FALLBACK` 常量 + `extractContent` reasoning_content 兜底分支 + 2 个相关测试(`falls back to short reasoning_content` + `does NOT fall back to reasoning_content when too long`), 新增 1 个测试 `throws empty content when content is empty even if reasoning_content has data (no fallback)`。
+- **Status:** [RESOLVED 2026-08-02 — 本会话 4KB 清理 commit]
+
+---
+
 ## 修复时间线
 
 | 日期 | Hash | 说明 |
 |------|------|------|
+| 2026-07-31 | `2a2fd1b` | [Bug] archive confirm 修 CharacterBranchState.status 类型契约 (边界 JSON.stringify) |
+| 2026-07-31 | `95ea5bb` | [Feature] AI Provider thinking 三态配置 (auto/enabled/disabled, schema + API + UI) |
+| 2026-07-31 | `5eb4efc` | [Bug] provider reasoning_content 4KB 兜底 + memory-optimizer 抛错替代静默 return (临时方案,见 [设计债]) |
+| 2026-07-31 | `3678a97` | [Docs] 同步 v3 archive confirm CharacterBranchState 写库已接通 (LOGIC.md) |
+| 2026-07-31 | `3b724b2` | [Bug] 接通 v3 archive confirm 写 CharacterBranchState 表 |
+| 2026-07-31 | `255e06a` | [Test] archive-character-branch-state-write 集成测试 (验证接通前 FAIL) |
+| 2026-07-31 | `077977b` | [Feature] 新增 commitCharacterBranchStateWrites (P0 修 v3 archive 不写表) |
+| 2026-07-31 | `eb62823` | [Test] character-extractor 单元测试 (验证函数未实现前 FAIL) |
+| 2026-07-30 | `1709482` | [Docs] 同步 v3 archive confirm PlotArc 写库已接通 (LOGIC.md) |
+| 2026-07-30 | `7b53e00` | [Bug] 接通 v3 archive confirm 写 PlotArc 表 |
+| 2026-07-30 | `d7ab7cb` | [Test] archive-plot-arc-write 集成测试 (验证接通前 FAIL) |
+| 2026-07-30 | `4f4d19c` | [Test/Review] 修 archive-plot-arc-write 测试代码质量 |
 | 2026-06-17 | `e077407` | [P0 #2] 段落感知内容截断,替代 `slice(0, 8000)` |
 | 2026-06-17 | `4def263` | [Bonus] cytoscape null `isHeadless` 修复 |
 | 2026-06-17 | `bd62a21` | [P0 #8 partial] `js-tiktoken` 7 处重复装收口到 `packages/ai-provider` 1 处 |

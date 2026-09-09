@@ -1,5 +1,9 @@
 import { api } from '../utils/api'
 
+// 三态 thinking 配置：auto 跟模型名启发式决定；enabled/disabled 显式覆盖。
+// 与 DeepSeek /v1/chat/completions 的 `thinking.type` 字段对应。
+export type ThinkingMode = 'auto' | 'enabled' | 'disabled'
+
 export interface AiProviderCreate {
   name: string
   apiKey?: string
@@ -8,6 +12,7 @@ export interface AiProviderCreate {
   contextLength?: number
   maxTokens?: number
   temperature?: number
+  thinking?: ThinkingMode
   isDefault?: boolean
   remarks?: string
 }
@@ -20,6 +25,7 @@ export interface AiProviderUpdate {
   contextLength?: number
   maxTokens?: number
   temperature?: number
+  thinking?: ThinkingMode
   isDefault?: boolean
   remarks?: string
 }
@@ -29,6 +35,7 @@ export interface AiProviderTest {
   apiKey?: string
   baseUrl?: string
   model: string
+  thinking?: ThinkingMode
   id?: string
 }
 

@@ -75,9 +75,6 @@ importers:
       '@novel-runtime/prompt-runtime':
         specifier: workspace:*
         version: link:../../packages/prompt-runtime
-      '@novel-runtime/scoring-engine':
-        specifier: workspace:*
-        version: link:../../packages/scoring-engine
       '@novel-runtime/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -230,16 +227,6 @@ importers:
       js-tiktoken:
         specifier: ^1.0.21
         version: 1.0.21
-    devDependencies:
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/scoring-engine:
-    dependencies:
-      '@novel-runtime/shared':
-        specifier: workspace:*
-        version: link:../shared
     devDependencies:
       typescript:
         specifier: ^5.7.0

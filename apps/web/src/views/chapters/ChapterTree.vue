@@ -36,15 +36,13 @@
         <!-- 嵌入现有 ChapterBranchTree 组件(emit 转发) -->
         <div v-else class="cap-card branch-card">
             <div class="branch-card__header">
-                <span class="cap-eyebrow">TIMELINE</span>
+                <span class="cap-eyebrow">CHAPTERS</span>
                 <span class="branch-card__divider" />
                 <span class="branch-card__stat">{{ treeData.length }} ROOT · {{ chapterStats.total }} CHAPTERS</span>
                 <span v-if="chapterStats.branches > 0" class="branch-card__stat branch-card__stat--branch">+ {{ chapterStats.branches }} BRANCH</span>
             </div>
             <ChapterBranchTree
                 :tree-data="treeData"
-                :selected-id="selectedId"
-                @select="(node: any) => emit('select', node)"
                 @develop="(node: any) => emit('develop', node)"
                 @edit="(node: any) => emit('edit', node)"
                 @view="(node: any) => emit('view', node)"
@@ -172,7 +170,6 @@ import ChapterBranchTree from "../../components/ChapterBranchTree.vue";
 const props = defineProps<{
     treeData: any[];
     loading: boolean;
-    selectedId: string;
     showCreateModal: boolean;
     createForm: { title: string; outline: string; isSideStory: boolean };
     showDevelopModal: boolean;
@@ -181,7 +178,6 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-    (e: "select", node: any): void;
     (e: "develop", node: any): void;
     (e: "edit", node: any): void;
     (e: "view", node: any): void;

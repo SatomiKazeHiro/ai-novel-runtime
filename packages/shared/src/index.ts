@@ -2,13 +2,8 @@
 
 export const ChapterStatus = {
   DRAFT: 'draft',
-  GENERATING: 'generating',
-  GENERATED: 'generated',
-  SCORED: 'scored',
-  SELECTED: 'selected',
   REVIEWING: 'reviewing',
-  ARCHIVED: 'archived',
-  REJECTED: 'rejected'
+  ARCHIVED: 'archived'
 } as const
 
 export type ChapterStatusType = typeof ChapterStatus[keyof typeof ChapterStatus]
@@ -79,7 +74,9 @@ export function formatCharacterSnapshot(characters: any[]): string {
     const temperament = safeJsonParse<string[]>(c.temperament, [])
 
     const statusStr = Object.entries(status).map(([k, v]) => `${k}:${v}`).join(', ')
-    const relStr = Object.entries(rels).slice(0, 2).map(([k, v]) => `${k}-${v}`).join(', ')
+    // TODO(统一预算): 关系全量注入，token 上限统一由 PromptPipeline 的 character 层预算调度，
+    // 不在各环节硬编码条数（此处原为 slice(0,2)，已砍）。等实际撑爆预算再在对应层优化。
+    const relStr = Object.entries(rels).map(([k, v]) => `${k}-${v}`).join(', ')
 
     const parts = [`【${c.name}】`]
     if (identity.length) parts.push(`身份[${identity.join(', ')}]`)
@@ -187,29 +184,6 @@ export function jaccardSimilarity(a: Set<number>, b: Set<number>): number {
   return intersection.size / union.size
 }
 
-export function generateFallbackContent(chapter: any, index: number, reason?: string): string {
-  const styles = ['克制冷静', '情绪充沛', '戏剧化']
-  const style = styles[index] || '默认'
-  const prefix = reason ? `（生成失败：${reason}）` : ''
-  const variant = index === 0
-    ? '他一贯冷静克制，即使局势紧张，面上也不见波澜。'
-    : index === 1
-      ? '情绪翻涌，难以自抑，眼中竟有泪光闪动。'
-      : '命运转折的时刻，风云突变，局势急转直下。'
-
-  return `【候选 ${String.fromCharCode(97 + index)} — ${style}风格】${prefix}
-
-${chapter.title}
-
-${chapter.outline || '暂无大纲'}
-
-夜风掠过窗台，城市的灯火在远处明明灭灭。他独自站在天台上，思绪如潮水般涌动。${variant}
-
-远处，警笛声隐约传来……
-
-【注：以上为降级模拟内容${reason ? '，真实 AI 生成失败原因：' + reason : ''}】`
-}
-
 export const DEFAULT_PIPELINE_BUDGET = {
   total: 64000,
   identity: 0,
@@ -221,7 +195,6 @@ export const DEFAULT_PIPELINE_BUDGET = {
   character: 12000,
   scene: 12000,
   memory: 8000,
-  timeline: 4000,
   plotArc: 3000,
   output: 16000
 } as const
@@ -237,7 +210,6 @@ export type BudgetConfig = {
   character: number
   scene: number
   memory: number
-  timeline: number
   plotArc: number
   output: number
 }
@@ -260,7 +232,6 @@ export function scaleBudget(contextLength: number): BudgetConfig {
     character: Math.floor(DEFAULT_PIPELINE_BUDGET.character * ratio),
     scene: Math.floor(DEFAULT_PIPELINE_BUDGET.scene * ratio),
     memory: Math.floor(DEFAULT_PIPELINE_BUDGET.memory * ratio),
-    timeline: Math.floor(DEFAULT_PIPELINE_BUDGET.timeline * ratio),
     plotArc: Math.floor(DEFAULT_PIPELINE_BUDGET.plotArc * ratio),
     output: Math.floor(DEFAULT_PIPELINE_BUDGET.output * ratio)
   }
@@ -268,8 +239,6 @@ export function scaleBudget(contextLength: number): BudgetConfig {
 
 export * from './archive.js'
 export * from './chapter-prompt.js'
-export * from './timeline.js'
-export * from './timeline-encoding.js'
 export * from './chapter.js'
 export * from './develop.js'
 export * from './prepare-archive.js'
@@ -278,3 +247,4 @@ export * from './yaml.js'
 export * from './schemas/profile.js'
 export * from './schemas/worker-task.js'
 export * from './extract-prompt.js'
+export * from './json-alias.js'

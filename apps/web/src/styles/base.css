@@ -423,6 +423,16 @@ a:hover { color: var(--accent-link-hover); }
   color: var(--color-error);
   border-color: rgba(185, 76, 76, 0.30);
 }
+.cap-chip.is-primary {
+  background: var(--accent);
+  color: var(--color-pure-white);
+  border-color: var(--accent);
+}
+.cap-chip.is-muted {
+  background: var(--color-stone-gray);
+  color: var(--color-mid-gray);
+  border-color: var(--border-default);
+}
 
 /* Inline mono code — warm-toned pill */
 .cap-code {

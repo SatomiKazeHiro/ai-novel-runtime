@@ -8,7 +8,6 @@ export function useChapterTree(storyId: () => string | undefined) {
 
   const chapterTree = ref<any[]>([])
   const loading = ref(false)
-  const selectedChapterId = ref('')
 
   // 弹窗状态
   const showCreateModal = ref(false)
@@ -30,10 +29,6 @@ export function useChapterTree(storyId: () => string | undefined) {
     } finally {
       loading.value = false
     }
-  }
-
-  function onNodeSelect(node: any) {
-    selectedChapterId.value = node.id
   }
 
   function findMaxNumber(nodes: any[]): number {
@@ -116,7 +111,6 @@ export function useChapterTree(storyId: () => string | undefined) {
   return reactive({
     chapterTree,
     loading,
-    selectedChapterId,
     showCreateModal,
     showDevelopModal,
     createForm,
@@ -124,7 +118,6 @@ export function useChapterTree(storyId: () => string | undefined) {
     developParentId,
     developForceSideStory,
     loadChapterTree,
-    onNodeSelect,
     onDevelop,
     handleDevelop,
     onDelete,

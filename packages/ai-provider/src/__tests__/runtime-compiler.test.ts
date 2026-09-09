@@ -115,10 +115,10 @@ describe('RuntimePromptCompiler', () => {
   })
 
   it('respects the workerType label in [Task: ...]', () => {
-    const scoringTask: WorkerTask = { workerType: 'scoring', taskPrompt: 'Score this.' }
-    const out = compiler.compile(FULL_BASE, scoringTask, '')
-    expect(out.systemMessage).toContain('[Task: scoring]')
-    expect(out.systemMessage).toContain('Score this.')
+    const graphTask: WorkerTask = { workerType: 'graph', taskPrompt: 'Extract graph.' }
+    const out = compiler.compile(FULL_BASE, graphTask, '')
+    expect(out.systemMessage).toContain('[Task: graph]')
+    expect(out.systemMessage).toContain('Extract graph.')
     expect(out.systemMessage).not.toContain('[Task: generation]')
   })
 

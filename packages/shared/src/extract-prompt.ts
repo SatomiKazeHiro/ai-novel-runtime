@@ -26,7 +26,7 @@ export interface ExtractPromptInput {
   /** 已有实体 type:key 列表 (来自 graphNode.findMany) */
   existingNodeKeys: string[]
 
-  /** N-1 全局图谱节点 (来自上一章 Chapter.graphSnapshot) */
+  /** N-1 全局图谱节点 (来自上一章 Chapter.cumulativeGraph) */
   previousSnapshotNodes: Array<{
     type: string
     key: string
@@ -42,14 +42,17 @@ export interface ExtractPromptInput {
   outline?: string
 }
 
-export type ExtractPromptMode = 'full' | 'slim'
+export type ExtractPromptMode = 'full' | 'slim' | 'memory-only'
 
 export interface BuildExtractPromptOptions {
   /**
    * 'full' — 喂入跨章上下文 (existingArcs + previousSnapshotNodes + existingNodeKeys)
    *          用于需要 AI 跨章推理的场景 (例如早期故事需要 AI 帮忙对齐 arc 命名)
    * 'slim' (default) — 不喂跨章上下文, AI 只输出本章事实;
-   *          跨章融合由 organizeGraph / optimizeMemories / plotConsolidate 各自负责
+   *          跨章融合由 cumulative-graph.ts 的 buildCumulativeGraph (relation 归一 + codeMerge) 负责
+   * 'memory-only' — v3 2026-07-30 引入, 给 memory-stage 专用: 沿用 full 的跨章注入, 但只输出
+   *          【任务1：记忆提取】(删【任务2：实体与关系提取】、删 characterStatusChanges /
+   *          timelinePosition / timelineEvents 字段)。节点/边由 graph-extract-stage 专责。
    */
   mode?: ExtractPromptMode
 }
@@ -61,7 +64,7 @@ export const PREV_SNAPSHOT_INVENTORY_CAP = 500
  * 构造 extractAll 调用的 prompt 字符串
  *
  * @param input 跨章上下文 + 本章正文
- * @param options.mode 'full' 喂跨章上下文; 'slim' (default) 不喂
+ * @param options.mode 'full' 喂跨章上下文; 'slim' (default) 不喂; 'memory-only' 只任务1
  * @returns 完整 prompt 字符串, 直接喂给 RuntimePromptCompiler.compile
  */
 export function buildExtractPrompt(
@@ -72,6 +75,9 @@ export function buildExtractPrompt(
 
   if (mode === 'full') {
     return buildFullPrompt(input)
+  }
+  if (mode === 'memory-only') {
+    return buildMemoryOnlyPrompt(input)
   }
   return buildSlimPrompt(input)
 }
@@ -106,31 +112,40 @@ function buildFullPrompt(input: ExtractPromptInput): string {
 本故事主角：${input.protagonistNames.join('、') || '无明确主角'}
 
 每条事件必须包含：
-- description: 简洁描述"有什么人做了什么"
-- participants: 参与该事件的所有角色名单
-- importance: 事件在本章的重要性（4~7）。如果事件有主角参与，请自行+1，最终为5~8。
+- description: 简洁描述"有什么人做了什么"（主角身份隐式包含在描述里）
+- importance: 1-10 整数
 
-importance 评分标准：
+importance 评分标准（按事件本身在本章的相对重要性打分，与 mainEvents / sideEvents 分流是独立判断）：
 - 7: 本章核心转折/高潮，占大量篇幅
 - 6: 重要推进，占中等篇幅
 - 5: 有一定作用，占少量篇幅
 - 4: 过渡/铺垫，篇幅很短
 
-**严禁返回 0、-1 或其他负数作为 importance 占位符；不确定时按 5 处理。**
+**事件分流**（按"是否独立完整地概括本章的一个情节节点"分流）：
 
-主角参与且达到 8 分的事件视为"主要事件"，放入 mainEvents；其他放入 sideEvents。
+- **mainEvents = 章节剧情里程碑**（1-3 个）
+  - 必须是能用一句话讲清的"章节关键剧情转折"
+  - 包含"什么时候、谁、做了什么、结果/影响"
+  - 一句话能独立成为章节的一段剧情概括
+  - 多 mainEvents 之间必须独立完整，不能是同一个事件的展开
+
+- **sideEvents = 上述主事件展开过程中的具体动作、对话、反应、细节**（4-8 条）
+  - 单看不能成为"读者会记住的章节节点"
+  - 是主事件的展开过程，不是新的里程碑
+  - 只保留对后续剧情有意义的细节，过滤琐碎动作
+
+**严禁 importance = 0、负数、null；不确定时按 5 处理。不确定属于 mainEvents 还是 sideEvents 时放 sideEvents。**
 
 **重要：mainEvents 和 sideEvents 数组的顺序必须和事件在文章中的出现顺序完全一致，不能打乱，更不能把结尾的事件放到数组开头。**
 
 事件格式示例：
 {
   "description": "许青向姜禾解释现代社会的身份制度和法律危险",
-  "participants": ["许青", "姜禾"],
   "importance": 6
 }
 
 提取字段：
-- mainEvents: 主要事件（对象数组，每个对象包含 description / participants / importance）
+- mainEvents: 主要事件（对象数组，每个对象包含 description / importance）
 - sideEvents: 次要事件（对象数组，格式同上）
 - emotions: 主要角色情绪变化（字符串数组）
 - foreshadowing: 新埋下的伏笔（字符串数组）
@@ -163,7 +178,7 @@ importance 评分标准：
 
 === 返回格式 ===
 {
-  "memories": { mainEvents, sideEvents, emotions, foreshadowing, relationshipChanges, characterStatusChanges, timelinePosition, timelineEvents, summary, scenes },
+  "memories": { mainEvents, sideEvents, emotions, foreshadowing, relationshipChanges, characterStatusChanges, summary, scenes },
   "graph": { "nodes": [...], "edges": [...] }
 }
 
@@ -204,31 +219,40 @@ function buildSlimPrompt(input: ExtractPromptInput): string {
 本故事主角：${input.protagonistNames.join('、') || '无明确主角'}
 
 每条事件必须包含：
-- description: 简洁描述"有什么人做了什么"
-- participants: 参与该事件的所有角色名单
-- importance: 事件在本章的重要性（4~7）。如果事件有主角参与，请自行+1，最终为5~8。
+- description: 简洁描述"有什么人做了什么"（主角身份隐式包含在描述里）
+- importance: 1-10 整数
 
-importance 评分标准：
+importance 评分标准（按事件本身在本章的相对重要性打分，与 mainEvents / sideEvents 分流是独立判断）：
 - 7: 本章核心转折/高潮，占大量篇幅
 - 6: 重要推进，占中等篇幅
 - 5: 有一定作用，占少量篇幅
 - 4: 过渡/铺垫，篇幅很短
 
-**严禁返回 0、-1 或其他负数作为 importance 占位符；不确定时按 5 处理。**
+**事件分流**（按"是否独立完整地概括本章的一个情节节点"分流）：
 
-主角参与且达到 8 分的事件视为"主要事件"，放入 mainEvents；其他放入 sideEvents。
+- **mainEvents = 章节剧情里程碑**（1-3 个）
+  - 必须是能用一句话讲清的"章节关键剧情转折"
+  - 包含"什么时候、谁、做了什么、结果/影响"
+  - 一句话能独立成为章节的一段剧情概括
+  - 多 mainEvents 之间必须独立完整，不能是同一个事件的展开
+
+- **sideEvents = 上述主事件展开过程中的具体动作、对话、反应、细节**（4-8 条）
+  - 单看不能成为"读者会记住的章节节点"
+  - 是主事件的展开过程，不是新的里程碑
+  - 只保留对后续剧情有意义的细节，过滤琐碎动作
+
+**严禁 importance = 0、负数、null；不确定时按 5 处理。不确定属于 mainEvents 还是 sideEvents 时放 sideEvents。**
 
 **重要：mainEvents 和 sideEvents 数组的顺序必须和事件在文章中的出现顺序完全一致，不能打乱，更不能把结尾的事件放到数组开头。**
 
 事件格式示例：
 {
   "description": "许青向姜禾解释现代社会的身份制度和法律危险",
-  "participants": ["许青", "姜禾"],
   "importance": 6
 }
 
 提取字段：
-- mainEvents: 主要事件（对象数组，每个对象包含 description / participants / importance）
+- mainEvents: 主要事件（对象数组，每个对象包含 description / importance）
 - sideEvents: 次要事件（对象数组，格式同上）
 - emotions: 主要角色情绪变化（字符串数组）
 - foreshadowing: 新埋下的伏笔（字符串数组）
@@ -258,9 +282,101 @@ importance 评分标准：
 
 === 返回格式 ===
 {
-  "memories": { mainEvents, sideEvents, emotions, foreshadowing, relationshipChanges, characterStatusChanges, timelinePosition, timelineEvents, summary, scenes },
+  "memories": { mainEvents, sideEvents, emotions, foreshadowing, relationshipChanges, characterStatusChanges, summary, scenes },
   "graph": { "nodes": [...], "edges": [...] }
 }
+
+章节大纲：${input.outline || '无大纲'}
+章节内容如下：
+${input.content}`
+}
+
+// ============================================================================
+// Memory-only mode — 给 memory-stage 专用(v3 memory system 拍板, 2026-07-30 spec D1-D3)
+//
+// 行为:
+//   - 沿用 full mode 的"任务1：记忆提取"段(包括重要性评分、事件顺序约束、importance 范围)
+//   - 沿用 previousEntitiesBlock(让 AI 复用 N-1 type:key)
+//   - **删除"任务2：实体与关系提取"段** (D2, 节点/边由 graph-extract-stage 专责)
+//   - 任务1 字段中删除 characterStatusChanges / timelinePosition / timelineEvents (D3, 角色状态归
+//     character-stage; TimelineEvent 表 v3 删除)
+//   - 输出 JSON 仅含 `memories` 块, 不要求 AI 输出 graph 字段, 减少 token 浪费
+// 用途: memory-stage 是 v3 archive 第一阶段, 单独调 AI 抽取本章记忆, 不重复 graph 任务。
+// ============================================================================
+
+function buildMemoryOnlyPrompt(input: ExtractPromptInput): string {
+  let previousEntitiesBlock = ''
+  if (input.previousSnapshotNodes.length > 0) {
+    const sorted = [...input.previousSnapshotNodes].sort((a, b) =>
+      (b.importance ?? 0) - (a.importance ?? 0)
+    )
+    const trimmed = sorted.slice(0, PREV_SNAPSHOT_INVENTORY_CAP)
+    const lines = trimmed.map(n => `- ${n.type}:${n.key} (${n.label})`)
+    previousEntitiesBlock = `\n\n=== N-1 全局图谱中的实体清单（用于 key 复用） ===\n本故事 N-1 章后的图谱共有 ${input.previousSnapshotNodes.length} 个实体，请严格复用以下 type:key，禁止再造新 key：\n${lines.join('\n')}\n注意：N-1 没有出现的实体才允许创建新 key。新 key 必须用英文小写、下划线分隔。`
+  }
+
+  return `请分析以下小说章节，仅完成【记忆提取】任务（实体与关系由独立 worker 负责）。返回严格 JSON 格式，不要 markdown 代码块，不要解释文字。
+
+=== 严格 JSON 格式要求（不要违反，否则会解析失败）===
+- 所有字段值必须是合法 JSON 值（数字、字符串、布尔、null、数组、对象）。绝对不要用 "&" 或 "..." 或 "etc" 之类占位符
+- 字符串里的 "&" 必须转义为 "&"（或者直接用"和"代替）
+- 数字字段（importance 等）必须是 0-10 的整数或小数，不要用任何非数字字符
+- 字段值如果不知道，请用 null 或空数组 []，不要用任何替代字符
+
+=== 任务1：记忆提取 ===
+提取对剧情有实质推动作用的信息。
+本故事主角：${input.protagonistNames.join('、') || '无明确主角'}
+
+每条事件必须包含：
+- description: 简洁描述"有什么人做了什么"（主角身份隐式包含在描述里）
+- importance: 1-10 整数
+
+importance 评分标准（按事件本身在本章的相对重要性打分，与 mainEvents / sideEvents 分流是独立判断）：
+- 7: 本章核心转折/高潮，占大量篇幅
+- 6: 重要推进，占中等篇幅
+- 5: 有一定作用，占少量篇幅
+- 4: 过渡/铺垫，篇幅很短
+
+**事件分流**（按"是否独立完整地概括本章的一个情节节点"分流）：
+
+- **mainEvents = 章节剧情里程碑**（1-3 个）
+  - 必须是能用一句话讲清的"章节关键剧情转折"
+  - 包含"什么时候、谁、做了什么、结果/影响"
+  - 一句话能独立成为章节的一段剧情概括
+  - 多 mainEvents 之间必须独立完整，不能是同一个事件的展开
+
+- **sideEvents = 上述主事件展开过程中的具体动作、对话、反应、细节**（4-8 条）
+  - 单看不能成为"读者会记住的章节节点"
+  - 是主事件的展开过程，不是新的里程碑
+  - 只保留对后续剧情有意义的细节，过滤琐碎动作
+
+**严禁 importance = 0、负数、null；不确定时按 5 处理。不确定属于 mainEvents 还是 sideEvents 时放 sideEvents。**
+
+**重要：mainEvents 和 sideEvents 数组的顺序必须和事件在文章中的出现顺序完全一致，不能打乱，更不能把结尾的事件放到数组开头。**
+
+事件格式示例：
+{
+  "description": "许青向姜禾解释现代社会的身份制度和法律危险",
+  "importance": 6,
+  "participants": "许青,姜禾"
+}
+
+提取字段（v3 收缩后，本章只输出这些字段；characterStatusChanges 不再要求）：
+- mainEvents: 主要事件（对象数组，每个对象包含 description / importance / participants）
+- sideEvents: 次要事件（对象数组，格式同上）
+- emotions: 主要角色情绪变化（字符串数组）
+- foreshadowing: 新埋下的伏笔（字符串数组）
+- relationshipChanges: 角色关系变化（字符串数组）
+- summary: 本章一句话摘要（50字以内；写 Chapter.summary 列，不进 Memory 表）
+- scenes: 推动剧情的关键地点（对象数组，如 [{ "location": "名称", "description": "场景描写（可选）", "event": "在此发生的事件概括", "importance": 1-10, "participants": "逗号分隔的参与者姓名" }]）
+  场景 importance 标准：7-10 核心剧情地点，4-6 有一定事件，1-3 路人提及/无实质事件
+- participants: 逗号分隔的参与者姓名，有明确参与者时填、无则留空（新角色也直接填名字）
+
+=== 返回格式 ===
+{
+  "memories": { mainEvents, sideEvents, emotions, foreshadowing, relationshipChanges, summary, scenes }
+}
+不要输出 graph / characterStatusChanges 字段。${previousEntitiesBlock}
 
 章节大纲：${input.outline || '无大纲'}
 章节内容如下：

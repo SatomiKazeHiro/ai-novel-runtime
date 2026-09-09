@@ -18,6 +18,20 @@ export interface AIProvider {
   readonly lastUsage?: TokenUsage | null
 }
 
+const DEFAULT_BASE_URLS: Record<string, string> = {
+  deepseek: 'https://api.deepseek.com',
+  openai: 'https://api.openai.com',
+  openrouter: 'https://openrouter.ai/api',
+  moonshot: 'https://api.moonshot.cn',
+  siliconflow: 'https://api.siliconflow.cn'
+}
+
+// 三态 thinking 配置：auto 跟模型名启发式决定；enabled/disabled 显式覆盖。
+// 与 DeepSeek /v1/chat/completions 的 `thinking.type` 字段对应：disabled
+// 直接发送 { type: 'disabled' }；enabled / 其他模型 auto 不发送该字段，
+// 由上游默认行为决定是否启用 reasoning。
+export type ThinkingMode = 'auto' | 'enabled' | 'disabled'
+
 export interface AIProviderConfig {
   name: string
   apiKey?: string
@@ -25,14 +39,28 @@ export interface AIProviderConfig {
   model: string
   maxTokens?: number
   temperature?: number
+  thinking?: ThinkingMode
 }
 
-const DEFAULT_BASE_URLS: Record<string, string> = {
-  deepseek: 'https://api.deepseek.com',
-  openai: 'https://api.openai.com',
-  openrouter: 'https://openrouter.ai/api',
-  moonshot: 'https://api.moonshot.cn',
-  siliconflow: 'https://api.siliconflow.cn'
+/**
+ * 纯函数：依据 thinking 配置与模型名判断是否要在请求 body 中发送
+ * `thinking: { type: 'disabled' }` 以关闭上游 reasoning 行为。
+ *
+ * 规则：
+ * - 'disabled' 永远发送（不论模型）
+ * - 'enabled'  永远不发送（让上游按自身默认走，可能启用可能不启用）
+ * - 'auto'     默认对 DeepSeek 模型关闭，其他模型保持上游默认
+ *
+ * 抽成纯函数是为了让请求体构造逻辑单点可测，避免 `generate` 与
+ * `generateWithRuntime` 两处重复判断逻辑导致行为漂移。
+ */
+export function shouldDisableThinking(
+  model: string,
+  thinking: ThinkingMode = 'auto'
+): boolean {
+  if (thinking === 'disabled') return true
+  if (thinking === 'enabled') return false
+  return /deepseek/i.test(model)
 }
 
 // 支持 OpenAI 兼容格式的 Provider 白名单
@@ -73,6 +101,16 @@ export class OpenAICompatibleProvider implements AIProvider {
     return headers
   }
 
+  /**
+   * 从 AI 响应里提取文本内容。thinking 三态配置 (auto/enabled/disabled)
+   * 在请求端尽量阻止上游产生 reasoning_content; 这里不再做 fallback,
+   * content 为空就返回 null, 让上层抛明确的 "empty content" 错 (而不是
+   * 把"纯思考过程"误当作答案回退)。
+   */
+  private extractContent(choice: any): string | null {
+    return choice?.message?.content || null
+  }
+
   private async callCompletions(body: any): Promise<any> {
     const apiKey = this.config.apiKey
     const baseUrl = this.getBaseUrl()
@@ -80,6 +118,12 @@ export class OpenAICompatibleProvider implements AIProvider {
     if (!apiKey) {
       throw new Error(`${this.config.name} API key is not configured`)
     }
+
+    // 统一在请求体入口应用 thinking 决策：让 generate 与 generateWithRuntime
+    // 都不必各自重复判断逻辑，shouldDisableThinking 是纯函数可单测。
+    const requestBody = shouldDisableThinking(this.config.model, this.config.thinking)
+      ? { ...body, thinking: { type: 'disabled' } }
+      : body
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 30000)
@@ -90,7 +134,7 @@ export class OpenAICompatibleProvider implements AIProvider {
         method: 'POST',
         signal: controller.signal,
         headers: this.getAuthHeaders(),
-        body: JSON.stringify(body)
+        body: JSON.stringify(requestBody)
       })
     } finally {
       clearTimeout(timeout)
@@ -173,7 +217,7 @@ export class OpenAICompatibleProvider implements AIProvider {
     })
 
     const choice = data.choices?.[0]
-    const content = choice?.message?.content
+    const content = this.extractContent(choice)
     if (!content) {
       const reason = choice?.finish_reason ? `(finish_reason=${choice.finish_reason})` : '(no choice)'
       const modelInfo = data.model ? ` model=${data.model}` : ''
@@ -208,7 +252,7 @@ export class OpenAICompatibleProvider implements AIProvider {
     })
 
     const choice = data.choices?.[0]
-    const content = choice?.message?.content
+    const content = this.extractContent(choice)
     if (!content) {
       const reason = choice?.finish_reason ? `(finish_reason=${choice.finish_reason})` : '(no choice)'
       const modelInfo = data.model ? ` model=${data.model}` : ''

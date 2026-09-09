@@ -113,8 +113,8 @@ describe('WorkerTaskYamlSchema', () => {
   it('applies default enabled=true', () => {
     const result = WorkerTaskYamlSchema.safeParse({
       name: 'x',
-      workerType: 'scoring',
-      taskPrompt: 'do scoring'
+      workerType: 'memory',
+      taskPrompt: 'extract memory'
     })
     expect(result.success).toBe(true)
     if (result.success) expect(result.data.enabled).toBe(true)
@@ -132,8 +132,8 @@ describe('WorkerTaskYamlSchema', () => {
   it('WORKER_TYPES matches runtime-compiler contract', () => {
     // 钉死枚举值, runtime-compiler 的 WorkerTask.workerType 改了这里也得改.
     expect(WORKER_TYPES).toEqual([
-      'generation', 'scoring', 'memory', 'graph',
-      'timeline', 'rewrite', 'memory_organize'
+      'generation', 'memory', 'graph',
+      'rewrite', 'memory_organize'
     ])
   })
 })

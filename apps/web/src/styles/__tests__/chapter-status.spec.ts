@@ -8,6 +8,8 @@ import {
 /**
  * CHAPTER_STATUSES 完整性保障 — 治本测试.
  *
+ * v2 状态机只有 3 值: draft / reviewing / archived.
+ *
  * 约束:
  *   1) 所有 Prisma ChapterStatus enum 值都在配置表里 (UI 不应显示 'unknown').
  *   2) 每个定义都有完整字段 (id / label / tone / order).
@@ -17,8 +19,7 @@ import {
  */
 
 const PRISMA_ENUM_VALUES = [
-  'draft', 'generating', 'generated', 'scored',
-  'selected', 'reviewing', 'archived', 'rejected'
+  'draft', 'reviewing', 'archived'
 ]
 
 describe('CHAPTER_STATUSES structure', () => {
@@ -60,18 +61,6 @@ describe('getChapterStatus lookup', () => {
     expect(archived.id).toBe('archived')
     expect(archived.label).toBe('已归档')
     expect(archived.tone).toBe('positive')
-  })
-
-  it('generating carries pulse flag (dot animation)', () => {
-    const g = getChapterStatus('generating')
-    expect(g.pulse).toBe(true)
-  })
-
-  it('non-generating statuses do NOT carry pulse', () => {
-    const others = CHAPTER_STATUSES.filter(s => s.id !== 'generating')
-    for (const s of others) {
-      expect(s.pulse, `${s.id} 不应有 pulse`).toBeUndefined()
-    }
   })
 
   it('returns neutral placeholder for unknown id (no throw)', () => {

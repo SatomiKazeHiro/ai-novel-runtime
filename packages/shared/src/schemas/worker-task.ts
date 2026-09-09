@@ -19,10 +19,8 @@ import { z } from 'zod'
 /** Worker 类型枚举 — 加新类型时同步更新 runtime-compiler. */
 export const WORKER_TYPES = [
   'generation',
-  'scoring',
   'memory',
   'graph',
-  'timeline',
   'rewrite',
   'memory_organize'
 ] as const

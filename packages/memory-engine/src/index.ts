@@ -11,6 +11,8 @@ export interface MemoryEntry {
   createdAt?: Date
   chapterNumber?: number // 该记忆所属章节的序号
   originUid?: string     // 事件起始UID
+  category?: string
+  participants?: string
 }
 
 function tokenize(text: string): number[] {
@@ -99,6 +101,11 @@ export class MemoryManager {
   /**
    * 语义检索：根据查询文本（如章节大纲）找到最相关的记忆
    * @param beforeChapterNumber 只检索该章节号之前的记忆（checkpoint 机制）
+   *
+   * v3 调整 (2026-07-30 spec D14):
+   *   - layer='global' 按 originUid 分组, 每个 UID 只取 fromChapterNumber 最大的那条(最新版本)
+   *   - layer='chapter' 不参与 UID 收缩(章节内 raw 提取独立, 不同章可有同 content)
+   *   - 旧版本仍按章节 checkpoint 过滤 + 番外排除保留
    */
   async searchRelevant(
     storyId: string,
@@ -114,7 +121,7 @@ export class MemoryManager {
     })
 
     // checkpoint 过滤 + 番外排除
-    const memories = beforeChapterNumber !== undefined
+    const filtered = beforeChapterNumber !== undefined
       ? allMemories.filter((m: any) => {
           if (m.layer === 'global') return true
           if (m.chapter?.isSideStory) return false // 番外记忆不纳入主线上下文
@@ -124,6 +131,23 @@ export class MemoryManager {
           if (m.layer === 'global') return true
           return !m.chapter?.isSideStory
         })
+
+    // v3 spec D14: 仅对 layer='global' 按 originUid 收缩到最新版本
+    //   同一 UID 多个历史版本只保留 fromChapterNumber 最大(且有 originUid 字段)那条
+    //   - originUid 为空(如老数据)保留, 视为无 UID 行不参与收缩
+    //   - chapter 层不收缩
+    const latestGlobalByUid = new Map<string, any>()
+    const noUidGlobal: any[] = []
+    for (const m of filtered) {
+      if (m.layer !== 'global') continue
+      if (!m.originUid) { noUidGlobal.push(m); continue }
+      const cur = latestGlobalByUid.get(m.originUid)
+      const curNum = cur?.fromChapterNumber ?? -Infinity
+      const mNum = m.fromChapterNumber ?? -Infinity
+      if (!cur || mNum > curNum) latestGlobalByUid.set(m.originUid, m)
+    }
+    const chapterRows = filtered.filter((m: any) => m.layer === 'chapter')
+    const memories = [...Array.from(latestGlobalByUid.values()), ...noUidGlobal, ...chapterRows]
 
     if (memories.length === 0) return []
 
@@ -147,7 +171,9 @@ export class MemoryManager {
           tags: safeJsonParse<string[]>(m.tags, []),
           createdAt: m.createdAt,
           chapterNumber: m.chapter?.number,
-          originUid: m.originUid
+          originUid: m.originUid,
+          category: m.category,
+          participants: m.participants
         } as MemoryEntry,
         score
       }
@@ -196,7 +222,13 @@ export class MemoryManager {
     }
     let uniqueEntries = Array.from(contentMap.values())
 
-    // 2. 同一 originUid 只取最新（最大 chapterNumber）
+    // 2. 同一 originUid 只取最新(最大 chapterNumber)
+    //    备注: searchRelevant 已对 layer='global' 按 UID 收缩到最新版本(2026-07-30 spec D14),
+    //    此处保留冗余是防御性 — 调用方如果直接调 formatForPrompt (不经 searchRelevant),仍能正确去重。
+    //    ⚠️ 字段说明: 这里用 chapterNumber(= chapter?.number) 而非 fromChapterNumber，两者当前等价——
+    //    global 记忆的 chapterId 也关联到归档章(非 null，见 chapters-archive.ts 写 globalRows 时
+    //    chapterId 取当前章 id)，所以 chapter.number === fromChapterNumber。勿误报为
+    //    "global 记忆 chapterId 为 null 导致去重失效"(已核实 v4 数据 global 层 chapterId 非空)。
     const uidMap = new Map<string, MemoryEntry>()
     const withoutUid: MemoryEntry[] = []
     for (const entry of uniqueEntries) {

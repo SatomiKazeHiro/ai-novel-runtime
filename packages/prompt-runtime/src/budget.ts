@@ -116,7 +116,6 @@ export class ContextBudgetManager {
       'Character': this.budget.character,
       'Scene': this.budget.scene,
       'Memory': this.budget.memory,
-      'Timeline': this.budget.timeline,
       'Output': this.budget.output
     }
 
@@ -138,7 +137,7 @@ export class ContextBudgetManager {
 
   compress(prompt: string, strategy: 'summary' | 'truncate' = 'truncate'): { prompt: string; compressed: string[] } {
     const compressed: string[] = []
-    const compressibleLayers = ['Memory', 'Lore', 'Timeline']
+    const compressibleLayers = ['Memory', 'Lore']
     let result = prompt
 
     for (const layerName of compressibleLayers) {
@@ -149,8 +148,7 @@ export class ContextBudgetManager {
         const tokens = countTokens(content, this.model)
         const budgetMap: Record<string, number> = {
           'Memory': this.budget.memory,
-          'Lore': this.budget.lore,
-          'Timeline': this.budget.timeline
+          'Lore': this.budget.lore
         }
         const budget = budgetMap[layerName] || this.budget.output
 

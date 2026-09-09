@@ -1,7 +1,7 @@
 import { PromptPipeline } from '@novel-runtime/prompt-runtime'
 import { MemoryManager } from '@novel-runtime/memory-engine'
 import { RuntimePromptCompiler } from '@novel-runtime/ai-provider'
-import { formatCharacterSnapshot, generateFallbackContent, DEFAULT_PIPELINE_BUDGET, scaleBudget } from '@novel-runtime/shared'
+import { formatCharacterSnapshot, DEFAULT_PIPELINE_BUDGET, scaleBudget } from '@novel-runtime/shared'
 import { loadRuntimeBase } from './runtime-loader.js'
 import { callAIWithLog } from './ai-call-logger.js'
 import { getActivePlotArcs } from './plot-extractor.js'
@@ -13,10 +13,9 @@ export function createGenerateProcessor(app: FastifyInstance) {
   return async (job: any) => {
     const {
       draftIds, chapterId, storyId, compiled, temperatures, maxTokens,
-      chapterTitle, chapterOutline, preLockStatus
+      chapterTitle, chapterOutline
     } = job.data
-    //                                  ↑ 新增:抢锁前章节状态,决定 status 恢复目标
-    app.log.info(`[Generate] Processing ${draftIds.length} drafts for chapter ${chapterId} (preLockStatus=${preLockStatus ?? 'draft'})`)
+    app.log.info(`[Generate] Processing ${draftIds.length} drafts for chapter ${chapterId}`)
 
     const prisma = app.prisma
     let successCount = 0
@@ -36,23 +35,27 @@ export function createGenerateProcessor(app: FastifyInstance) {
       //   generating — route 创建 draft 时的初始状态, "已入队等 worker 跑"
       //   completed  — worker 已成功处理
       //   failed     — worker 处理失败
-      //   selected   — 用户已选此 draft
       //   rejected   — 用户选了别的 draft, 此 draft 被淘汰
+      //
+      // v2: 不再有 'selected' —— 采纳哪个 draft 只看 Chapter.content 是否匹配,
+      // worker 不需要也不能翻 'selected' 状态。
       //
       // 关键: route 用 `status: 'generating'` 创建 draft (§routes/chapters-generate.ts:278),
       // 所以 worker 不能用 `status !== 'pending'` 来过滤, 否则永远跳过自己刚派出去的任务。
-      // 应当处理 pending + generating, 跳过其他四种 (用户决定 + 已完成)。
-      const SKIP_STATUSES = ['selected', 'rejected', 'completed', 'failed']
-      const current = await prisma.draft.findUnique({
-        where: { id: draftId },
-        select: { status: true }
-      })
-      if (!current || SKIP_STATUSES.includes(current.status)) {
-        app.log.info(`[Generate] Skipping draft ${draftId} (status=${current?.status ?? 'missing'}, user may have selected another draft already)`)
-        continue
-      }
-
+      // 应当处理 pending + generating, 跳过其他三种 (用户决定 + 已完成)。
+      const SKIP_STATUSES = ['rejected', 'completed', 'failed']
+      // 查状态也放进 try：单张卡的任何失败（查状态/调 AI/写库）只影响它自己，
+      // 不崩整个 job 连累同批剩余的 draft。
       try {
+        const current = await prisma.draft.findUnique({
+          where: { id: draftId },
+          select: { status: true }
+        })
+        if (!current || SKIP_STATUSES.includes(current.status)) {
+          app.log.info(`[Generate] Skipping draft ${draftId} (status=${current?.status ?? 'missing'}, user-decided or terminal)`)
+          continue
+        }
+
         app.log.info(`[Generate] Calling AI for draft ${draftId}, temp=${temperature}`)
         const result = await callAIWithLog(app, {
           storyId,
@@ -63,47 +66,48 @@ export function createGenerateProcessor(app: FastifyInstance) {
           maxTokens
         })
 
-        const fallbackChapter = { title: chapterTitle, outline: chapterOutline }
-        const content = result ?? generateFallbackContent(fallbackChapter, i, '未配置 API Key')
+        if (result === null) {
+          // 无 provider（未配置 API Key）→ 抛错标 failed，不生成降级模拟内容误导用户
+          throw new Error('未配置可用的 AI Provider，请检查 API Key 配置')
+        }
+        const content = result
 
-        await prisma.draft.update({
-          where: { id: draftId },
+        // 乐观锁：仅当 draft 仍处于 pending/generating 时才写 completed。
+        // 若 AI 调用期间被 select 置 rejected（用户已采用其他候选），count=0 → 放弃写回，不复活。
+        const updated = await prisma.draft.updateMany({
+          where: { id: draftId, status: { in: ['pending', 'generating'] } },
           data: {
             content,
             status: 'completed',
             compiledPrompt: JSON.stringify(compiled)
           }
         })
+        if (updated.count === 0) {
+          app.log.info(`[Generate] Draft ${draftId} was rejected during generation, skip completed write`)
+          continue
+        }
         successCount++
         app.log.info(`[Generate] Draft ${draftId} completed, ${content.length} chars`)
       } catch (err: any) {
         app.log.error(`[Generate] Draft ${draftId} failed: ${err.message}`)
-        await prisma.draft.update({
-          where: { id: draftId },
-          data: {
-            status: 'failed',
-            errorMessage: err.message
-          }
-        })
+        // 标 failed 也失败（DB 仍故障）时不崩整个 job
+        try {
+          await prisma.draft.update({
+            where: { id: draftId },
+            data: {
+              status: 'failed',
+              errorMessage: err.message
+            }
+          })
+        } catch (markErr: any) {
+          app.log.error(`[Generate] Failed to mark draft ${draftId} as failed: ${markErr.message}`)
+        }
         failCount++
       }
     }
 
-    // 恢复 chapter.status: 看 chapter 当前状态, 不无脑覆盖。
-    //   抢锁前 = draft  → 本次任务把 chapter 推到 'generated' (前提是 chapter 还在 generating)
-    //   抢锁前 = generated/selected → 仅当 chapter 还在 generating 时不写 (selected 是用户主动选的, 不要覆盖)
-    // 用户在 worker 跑到一半时 select, select route 已把 chapter.status 翻成 'selected',
-    // 这里 updateMany where status='generating' count=0, 不动 chapter.status — select 结果保留。
-    // 兜底:preLockStatus 缺失 (老 queue 残留 job) 按 'draft' 处理, 行为同旧版本。
-    const effectivePreLock = preLockStatus ?? 'draft'
-    const targetStatus = effectivePreLock === 'draft' ? 'generated' : effectivePreLock
-    const statusRestore = await prisma.chapter.updateMany({
-      where: { id: chapterId, status: 'generating' },
-      data: { status: targetStatus }
-    })
-    const restored = statusRestore.count > 0
-
-    app.log.info(`[Generate] Done for chapter ${chapterId}: ${successCount} success, ${failCount} failed, restored=${restored} target=${targetStatus}`)
+    // v2: worker 不再写 chapter.status, 候选生成与章节状态正交
+    app.log.info(`[Generate] Done for chapter ${chapterId}: ${successCount} success, ${failCount} failed`)
 
     return { successCount, failCount, total: draftIds.length }
   }

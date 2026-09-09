@@ -1,5 +1,4 @@
-import type { FastifyInstance } from 'fastify'
-import { ChapterStatus } from '@prisma/client'
+﻿import type { FastifyInstance } from 'fastify'
 import { generateQueue } from '../queue/index.js'
 import { getActivePlotArcs } from '../services/plot-extractor.js'
 import { PromptPipeline } from '@novel-runtime/prompt-runtime'
@@ -9,11 +8,9 @@ import {
   formatCharacterSnapshot,
   DEFAULT_PIPELINE_BUDGET,
   scaleBudget,
-  safeJsonParse,
   PreviewRequestSchema,
   GenerateRequestSchema,
-  SelectDraftRequestSchema,
-  formatTimelinePosition
+  SelectDraftRequestSchema
 } from '@novel-runtime/shared'
 import { loadRuntimeBase, loadWorkerTask } from '../services/runtime-loader.js'
 import { parseBody, getLastChapter, getOrThrowChapter } from './_helpers.js'
@@ -21,7 +18,7 @@ import { parseBody, getLastChapter, getOrThrowChapter } from './_helpers.js'
 /**
  * Generate 流：prompt preview / 多候选 generate / 选 candidate。
  *
- * 内部 helper：getCharactersWithLatestState（仅 preview + generate 用，保留在文件内闭包）。
+ * 内部 helper：getCharactersWithLatestState（仅 preview + generate 用，export 单测也用）。
  *
  * 路由路径：
  *   POST /api/chapters/:chapterId/preview   — 仅返回 compiled prompt,不调 AI
@@ -31,18 +28,30 @@ import { parseBody, getLastChapter, getOrThrowChapter } from './_helpers.js'
  * 注意：preview + generate 的 chapter 查询保留 inline `findUnique + include:{story:true} + 404`,
  * 因为它们要读 `chapter.story`。只有 select 用 `getOrThrowChapter`(无需 story)。
  */
+/**
+ * fallback 链: snapshot (CharacterBranchState) > Character base 字段 > '{}'
+ * 让新建但未归档的角色也能在 prompt 注入基础关系/状态。
+ * export 是为了支持单测。
+ */
+export async function getCharactersWithLatestState(
+  prisma: any,
+  storyId: string
+): Promise<Array<{ status: string; relationships: string; [k: string]: any }>> {
+  const characters = await prisma.character.findMany({ where: { storyId } })
+  return Promise.all(characters.map(async (c: any) => {
+    const latestState = await prisma.characterBranchState.findFirst({
+      where: { characterId: c.id },
+      orderBy: { fromChapterNumber: 'desc' }
+    })
+    return {
+      ...c,
+      status: latestState?.status ?? c.status ?? '{}',
+      relationships: latestState?.relationships ?? c.relationships ?? '{}'
+    }
+  }))
+}
+
 export async function chapterGenerateRoutes(app: FastifyInstance) {
-  // 辅助函数：获取角色的最新状态（历史表模式）。preview + generate 共用。
-  async function getCharactersWithLatestState(prisma: any, storyId: string) {
-    const characters = await prisma.character.findMany({ where: { storyId } })
-    return Promise.all(characters.map(async (c: any) => {
-      const latestState = await prisma.characterBranchState.findFirst({
-        where: { characterId: c.id },
-        orderBy: { fromChapterNumber: 'desc' }
-      })
-      return { ...c, status: latestState?.status || '{}', relationships: latestState?.relationships || '{}' }
-    }))
-  }
 
   // POST /api/chapters/:chapterId/preview
   app.post('/api/chapters/:chapterId/preview', async (request, reply) => {
@@ -70,7 +79,6 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     const charactersWithBranchState = await getCharactersWithLatestState(prisma, storyId)
 
     const loreItems = await prisma.loreItem.findMany({ where: { storyId } })
-    const timelineEvents = await prisma.timelineEvent.findMany({ where: { storyId }, orderBy: { position: 'asc' } })
 
     // 获取 checkpoint（最后一个归档章节号）
     const checkpointChapter = await prisma.chapter.findFirst({
@@ -82,6 +90,12 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     const memoryManager = new MemoryManager()
     const queryText = `${chapter.outline || ''} ${chapter.sceneLocation || ''} ${chapter.sceneMood || ''} ${chapter.sceneGoal || ''}`
     const relevantMemories = await memoryManager.searchRelevant(storyId, queryText, prisma, 20, checkpointNumber)
+    // 本章 temporary 记忆：用户手动加、只本章生效
+    const temporaryMemories = await prisma.memory.findMany({
+      where: { storyId, layer: 'temporary', chapterId },
+      orderBy: { createdAt: 'asc' }
+    })
+    const temporaryText = temporaryMemories.map(m => `- [临时] ${m.content}`).join('\n')
 
     const base = await loadRuntimeBase(storyId, prisma)
     const task = await loadWorkerTask(storyId, 'generation', prisma)
@@ -98,8 +112,7 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
       character: formatCharacterSnapshot(charactersWithBranchState),
       lore: loreItems.map(l => `【${l.name}】${l.content}`).join('\n') || '无世界观设定信息',
       scene: `标题：${chapter.title || '未设定'}\n地点：${chapter.sceneLocation || '未设定'}\n氛围：${chapter.sceneMood || '未设定'}\n目标：${chapter.sceneGoal || '未设定'}`,
-      memory: memoryManager.formatForPrompt(relevantMemories),
-      timeline: timelineEvents.map(t => `[${formatTimelinePosition(t.position)}] ${safeJsonParse<string[]>(t.events, []).join('；')}`).join('\n'),
+      memory: [memoryManager.formatForPrompt(relevantMemories), temporaryText].filter(Boolean).join('\n'),
       plotArc: plotArcText || undefined,
       output: `请根据以下大纲生成本章正文：\n\n${chapter.outline || '无大纲'}`
     })
@@ -143,47 +156,34 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     // 但前端总是会传 — 现在用 chapter.storyId 兜底,反而更稳。
     const storyId = body.storyId ?? chapter.storyId
 
-    // 允许 draft / generated / selected 三态生成候选
-    // - draft: 首次生成
-    // - generated: 已有候选不满意,再生成新的(追加)
-    // - selected: 已选了一个,想多看几个对比(追加,Chapter.content 不动)
-    // (Q#10 当时拒绝 generated 是因为"删旧+重建"无原子性,本改造改为纯加法,
-    // 旧候选全部保留,不存在脏窗口问题)
-    const GENERATE_ALLOWED_STATUSES = ['draft', 'generated', 'selected'] as const
-    if (!GENERATE_ALLOWED_STATUSES.includes(chapter.status as any)) {
+    // v2: archived 章节不允许再生成 (UI 也隐藏按钮,这里兜底)
+    if (chapter.status === 'archived') {
       return reply.status(400).send({
         success: false,
-        error: `章节当前状态为 ${chapter.status}，只允许 draft / generated / selected 状态生成候选`
+        error: '已归档章节不能生成新草稿'
       })
     }
 
-    // 状态机独占锁：原子性 updateMany（防止双击并发产生 2 批 draft）
-    const lockResult = await prisma.chapter.updateMany({
-      where: {
-        id: chapterId,
-        status: { in: [...GENERATE_ALLOWED_STATUSES] as ChapterStatus[] }
-      },
-      data: { status: 'generating' }
-    })
-    if (lockResult.count === 0) {
-      return reply.status(409).send({
-        success: false,
-        error: '章节正在生成中或状态不允许，请刷新后重试'
-      })
+    // 与 preview 对齐：主线只能在最新章节上生成（番外豁免，可从任意已归档父章节发展）
+    if (!chapter.isSideStory) {
+      const lastChapter = await getLastChapter(prisma, chapter.storyId)
+      if (lastChapter && lastChapter.id !== chapterId) {
+        return reply.status(400).send({
+          success: false,
+          error: '只能在最新章节上生成候选'
+        })
+      }
     }
-    // 后续代码已假设 chapter.status === 'generating'，无需重新读取
 
-    // 抢锁前的 chapter.status,worker 完成后用其恢复 chapter.status
-    // (而不是写死 'generated')。selected 状态重生成后保持 selected,这是
-    // 纯加法语义的关键:Chapter.content / 已选 draft 标记都不动。
-    const preLockStatus = chapter.status
+    // 无锁: 候选生成与章节状态正交; worker 用 Draft.status 判断是否跳过
+    // 双击并发会产生 2 批 draft — Draft 表的 (id_chapterId) 唯一索引允许同 chapter 多 draft,
+    // 用户最终看到候选数翻倍,无脏状态。
 
     const story = chapter.story
 
     const charactersWithBranchState = await getCharactersWithLatestState(prisma, storyId)
 
     const loreItems = await prisma.loreItem.findMany({ where: { storyId } })
-    const timelineEvents = await prisma.timelineEvent.findMany({ where: { storyId }, orderBy: { position: 'asc' } })
 
     const checkpointChapter = await prisma.chapter.findFirst({
       where: { storyId, status: 'archived' },
@@ -194,6 +194,12 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     const memoryManager = new MemoryManager()
     const queryText = `${chapter.outline || ''} ${chapter.sceneLocation || ''} ${chapter.sceneMood || ''} ${chapter.sceneGoal || ''}`
     const relevantMemories = await memoryManager.searchRelevant(storyId, queryText, prisma, 20, checkpointNumber)
+    // 本章 temporary 记忆：用户手动加、只本章生效
+    const temporaryMemories = await prisma.memory.findMany({
+      where: { storyId, layer: 'temporary', chapterId },
+      orderBy: { createdAt: 'asc' }
+    })
+    const temporaryText = temporaryMemories.map(m => `- [临时] ${m.content}`).join('\n')
 
     const base = await loadRuntimeBase(storyId, prisma)
     const task = await loadWorkerTask(storyId, 'generation', prisma)
@@ -225,8 +231,7 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
         character: formatCharacterSnapshot(charactersWithBranchState),
         lore: loreItems.map(l => `【${l.name}】${l.content}`).join('\n') || '无世界观设定信息',
         scene: `标题：${chapter.title || '未设定'}\n地点：${chapter.sceneLocation || '未设定'}\n氛围：${chapter.sceneMood || '未设定'}\n目标：${chapter.sceneGoal || '未设定'}`,
-        memory: memoryManager.formatForPrompt(relevantMemories),
-        timeline: timelineEvents.map(t => `[${formatTimelinePosition(t.position)}] ${safeJsonParse<string[]>(t.events, []).join('；')}`).join('\n'),
+        memory: [memoryManager.formatForPrompt(relevantMemories), temporaryText].filter(Boolean).join('\n'),
         plotArc: plotArcText || undefined,
         output: `请根据以下大纲生成本章正文（约2000-4000字）：\n\n${chapter.outline || '无大纲'}`
       })
@@ -278,8 +283,7 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
       temperatures: generatingDrafts.map((_, i) => temperatures[i] ?? (0.6 + i * 0.15)),
       maxTokens,
       chapterTitle: chapter.title,
-      chapterOutline: chapter.outline,
-      preLockStatus   // 透传给 worker,决定 status 恢复目标
+      chapterOutline: chapter.outline
     })
 
     app.log.info(`[Generate] Queued ${generatingDrafts.length} drafts for chapter ${chapterId}`)
@@ -297,46 +301,34 @@ export async function chapterGenerateRoutes(app: FastifyInstance) {
     const chapter = await getOrThrowChapter(prisma, chapterId, reply)
     if (chapter === null) return
 
-    // 允许 generated / scored / selected / generating 四态选择候选
-    // - generated / scored: 首次/评分后选择
-    // - selected: 已选了一个,看到新生成的更好的候选想切换
-    // - generating: 用户在 worker 跑的时候看到喜欢的就立即选;
-    //   配合 generate-processor 的"rejected draft 跳过 + chapter.status 不覆盖"
-    //   兜底,select 不会因为后续 worker 完成而被破坏
-    // 切换路径下,UI 的 handleAdoptDraft 已有"确认覆盖"对话框兜底
-    if (chapter.status !== 'generated' &&
-        chapter.status !== 'scored' &&
-        chapter.status !== 'selected' &&
-        chapter.status !== 'generating') {
+    // v2: archived 章节不允许选候选
+    if (chapter.status === 'archived') {
       return reply.status(400).send({
         success: false,
-        error: `章节当前状态为 ${chapter.status}，只允许 generated / scored / selected / generating 状态选择候选`
+        error: '已归档章节不能选择新候选'
       })
     }
 
-    // Cross-chapter isolation: draftId must belong to current chapterId.
-    // Use the compound unique key (id_chapterId) so the lookup is atomic.
+    // Cross-chapter isolation
     const draft = await prisma.draft.findUnique({
       where: { id_chapterId: { id: body.draftId, chapterId } }
     })
     if (!draft) return reply.status(404).send({ success: false, error: 'Draft not found' })
 
-    // 状态机独占锁：原子性 updateMany（防止双击 select 产生重复 chapter update）
-    const lockResult = await prisma.chapter.updateMany({
-      where: { id: chapterId, status: { in: ['generated', 'scored', 'selected', 'generating'] } },
-      data: { status: 'selected' }
-    })
-    if (lockResult.count === 0) {
-      return reply.status(409).send({
+    // 只能采用已生成完成且内容非空的候选：误选空文会导致候选集全灭 + 正文不变
+    if (draft.status !== 'completed' || !draft.content) {
+      return reply.status(400).send({
         success: false,
-        error: '章节正在被其他操作处理中或状态不允许，请刷新后重试'
+        error: '只能选择已生成完成的候选'
       })
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.draft.updateMany({ where: { chapterId }, data: { status: 'rejected' } })
-      await tx.draft.update({ where: { id: body.draftId }, data: { status: 'selected' } })
-      await tx.chapter.update({ where: { id: chapterId }, data: { status: 'selected', content: draft.content || undefined } })
+    // v2: 采用 = 仅把选中候选的 content 写到 Chapter.content。
+    // 不再置其他候选 rejected —— 候选是用户的素材库：采用后仍可参考/换用其他候选，
+    // 甚至用其他候选的内容替换当前正文的瑕疵部分。"哪个被采用"靠 chapter.content 匹配。
+    await prisma.chapter.update({
+      where: { id: chapterId },
+      data: { content: draft.content }
     })
 
     return { success: true }

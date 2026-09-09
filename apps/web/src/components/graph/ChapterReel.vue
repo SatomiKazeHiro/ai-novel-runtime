@@ -114,7 +114,6 @@ function goNext() {
 
 function statusTagType(status?: string): 'default' | 'info' | 'warning' | 'success' | 'error' {
   if (status === 'archived') return 'success'
-  if (status === 'failed') return 'error'
   if (status === 'reviewing') return 'warning'
   return 'default'
 }
@@ -150,7 +149,6 @@ function statusLabel(status: string): string {
     draft: '草稿',
     generating: '生成中',
     generated: '已生成',
-    scored: '已评分',
     selected: '已选',
     reviewing: '审阅',
     archived: '已归档',
